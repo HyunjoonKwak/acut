@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "스마트 폴더",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "identifier": "com.smartcategory.media",
   "build": {
     "frontendDist": "../dist",
@@ -44,6 +44,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

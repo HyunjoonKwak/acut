@@ -1,6 +1,6 @@
 [package]
 name = "smart-category"
-version = "0.2.1"
+version = "0.2.2"
 description = "스마트 폴더 - AI 기반 스마트 미디어 정리 도구"
 authors = ["스마트 폴더"]
 license = "MIT"

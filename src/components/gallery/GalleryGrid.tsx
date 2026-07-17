@@ -30,6 +30,8 @@ export function GalleryGrid() {
   const refreshCounter = useAppStore((s) => s.refreshCounter);
   const nasUploadedIds = useAppStore((s) => s.nasUploadedIds);
   const comments = useAppStore((s) => s.comments);
+  const tagFilter = useAppStore((s) => s.tagFilter);
+  const albumFilter = useAppStore((s) => s.albumFilter);
   const searchQueryRaw = useAppStore((s) => s.searchQuery);
 
   // Debounce the title-bar search so we don't hit SQLite on every keystroke
@@ -73,6 +75,8 @@ export function GalleryGrid() {
         folderPath: selectedFolder,
         mediaType: mediaFilter === "all" ? null : mediaFilter,
         searchQuery: searchQuery.trim() || null,
+        tagId: tagFilter?.id ?? null,
+        albumId: albumFilter?.id ?? null,
         offset: 0,
         limit: pageSize,
       });
@@ -82,7 +86,7 @@ export function GalleryGrid() {
       toast.error(`미디어 목록을 불러오지 못했습니다: ${e}`);
     }
     setLoading(false);
-  }, [selectedFolder, mediaFilter, searchQuery, refreshCounter, pageSize]);
+  }, [selectedFolder, mediaFilter, searchQuery, tagFilter, albumFilter, refreshCounter, pageSize]);
 
   const loadMore = useCallback(async () => {
     if (files.length >= total || loading) return;
@@ -92,6 +96,8 @@ export function GalleryGrid() {
         folderPath: selectedFolder,
         mediaType: mediaFilter === "all" ? null : mediaFilter,
         searchQuery: searchQuery.trim() || null,
+        tagId: tagFilter?.id ?? null,
+        albumId: albumFilter?.id ?? null,
         offset: files.length,
         limit: pageSize,
       });
@@ -104,7 +110,7 @@ export function GalleryGrid() {
       toast.error(`미디어 목록을 불러오지 못했습니다: ${e}`);
     }
     setLoading(false);
-  }, [files.length, total, loading, selectedFolder, mediaFilter, searchQuery, pageSize]);
+  }, [files.length, total, loading, selectedFolder, mediaFilter, searchQuery, tagFilter, albumFilter, pageSize]);
 
   // refreshCounter is a loadFiles dependency, so Phase 1 batch refreshes
   // re-run this with current folder/filter/search values (no stale closure)

@@ -143,6 +143,8 @@ pub fn get_media_files(
     folder_path: Option<&str>,
     media_type: Option<&str>,
     search: Option<&str>,
+    tag_id: Option<&str>,
+    album_id: Option<&str>,
     offset: i64,
     limit: i64,
 ) -> Result<Vec<MediaFile>, rusqlite::Error> {
@@ -194,6 +196,20 @@ pub fn get_media_files(
             "(mf.file_name LIKE ?{idx} ESCAPE '\\' OR mf.file_path LIKE ?{idx} ESCAPE '\\')"
         ));
         param_values.push(Box::new(format!("%{}%", escape_like(query))));
+    }
+    if let Some(tag) = tag_id {
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM media_tags mt WHERE mt.media_id = mf.id AND mt.tag_id = ?{})",
+            param_values.len() + 1
+        ));
+        param_values.push(Box::new(tag.to_string()));
+    }
+    if let Some(album) = album_id {
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM album_media am WHERE am.media_id = mf.id AND am.album_id = ?{})",
+            param_values.len() + 1
+        ));
+        param_values.push(Box::new(album.to_string()));
     }
 
     let where_clause = if conditions.is_empty() {
@@ -307,6 +323,8 @@ pub fn count_media_files(
     folder_path: Option<&str>,
     media_type: Option<&str>,
     search: Option<&str>,
+    tag_id: Option<&str>,
+    album_id: Option<&str>,
 ) -> Result<i64, rusqlite::Error> {
     let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -335,13 +353,27 @@ pub fn count_media_files(
         ));
         param_values.push(Box::new(format!("%{}%", escape_like(query))));
     }
+    if let Some(tag) = tag_id {
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM media_tags mt WHERE mt.media_id = mf.id AND mt.tag_id = ?{})",
+            param_values.len() + 1
+        ));
+        param_values.push(Box::new(tag.to_string()));
+    }
+    if let Some(album) = album_id {
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM album_media am WHERE am.media_id = mf.id AND am.album_id = ?{})",
+            param_values.len() + 1
+        ));
+        param_values.push(Box::new(album.to_string()));
+    }
 
     let where_clause = if conditions.is_empty() {
         String::new()
     } else {
         format!(" WHERE {}", conditions.join(" AND "))
     };
-    let query = format!("SELECT COUNT(*) FROM media_files{}", where_clause);
+    let query = format!("SELECT COUNT(*) FROM media_files mf{}", where_clause);
     let params_ref: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
     conn.query_row(&query, params_ref.as_slice(), |row| row.get(0))
 }

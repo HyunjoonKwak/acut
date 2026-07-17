@@ -184,3 +184,37 @@ pub async fn get_album_media(
         })
         .map_err(|e| format!("DB: {}", e))
 }
+
+/// Albums a given media file belongs to (inspector reverse lookup).
+#[tauri::command]
+pub async fn get_media_albums(
+    db: State<'_, Arc<Database>>,
+    media_id: String,
+) -> Result<Vec<Album>, String> {
+    let db_ref = db.inner().clone();
+    db_ref
+        .with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT a.id, a.name, a.description, a.cover_media_id, a.auto_generated, a.created_at
+                 FROM albums a
+                 JOIN album_media am ON a.id = am.album_id
+                 WHERE am.media_id = ?1
+                 ORDER BY a.name ASC",
+            )?;
+            let rows = stmt
+                .query_map(params![media_id], |row| {
+                    Ok(Album {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        description: row.get(2)?,
+                        cover_media_id: row.get(3)?,
+                        auto_generated: row.get(4)?,
+                        created_at: row.get(5)?,
+                        media_count: 0,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .map_err(|e| format!("DB: {}", e))
+}

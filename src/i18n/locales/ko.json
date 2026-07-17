@@ -65,7 +65,8 @@
     "grid": "격자",
     "list": "리스트",
     "map": "지도",
-    "thumbSize": "썸네일 크기 (⌘+ / ⌘−)"
+    "thumbSize": "썸네일 크기 (⌘+ / ⌘−)",
+    "clearFilter": "필터 해제"
   },
   "nav": {
     "dashboard": "대시보드",
@@ -127,7 +128,10 @@
     "watchActive": "감시 중",
     "tags": "태그",
     "albums": "앨범",
-    "map": "사진 지도"
+    "map": "사진 지도",
+    "manage": "관리",
+    "noTags": "태그가 없습니다",
+    "noAlbums": "앨범이 없습니다"
   },
   "gallery": {
     "noFiles": "파일이 없습니다",
@@ -330,7 +334,8 @@
     "commentPlaceholder": "이 사진에 메모를 남겨보세요 — 검색에서도 찾을 수 있습니다",
     "saveComment": "저장",
     "saving": "저장 중…",
-    "commentSaved": "코멘트를 저장했습니다"
+    "commentSaved": "코멘트를 저장했습니다",
+    "removeFromAlbum": "앨범에서 제거"
   },
   "tags": {
     "title": "태그 관리",

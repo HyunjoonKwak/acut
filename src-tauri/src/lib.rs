@@ -162,6 +162,7 @@ pub fn run() {
             commands::albums::add_media_to_album,
             commands::albums::remove_media_from_album,
             commands::albums::get_album_media,
+            commands::albums::get_media_albums,
             // Search
             commands::media::search_media,
             // GPS

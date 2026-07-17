@@ -65,7 +65,8 @@
     "grid": "Grid",
     "list": "List",
     "map": "Map",
-    "thumbSize": "Thumbnail size (⌘+ / ⌘−)"
+    "thumbSize": "Thumbnail size (⌘+ / ⌘−)",
+    "clearFilter": "Clear filter"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -127,7 +128,10 @@
     "watchActive": "Watching",
     "tags": "Tags",
     "albums": "Albums",
-    "map": "Photo Map"
+    "map": "Photo Map",
+    "manage": "Manage",
+    "noTags": "No tags yet",
+    "noAlbums": "No albums yet"
   },
   "gallery": {
     "noFiles": "No files found",
@@ -330,7 +334,8 @@
     "commentPlaceholder": "Leave a note — it's searchable too",
     "saveComment": "Save",
     "saving": "Saving…",
-    "commentSaved": "Comment saved"
+    "commentSaved": "Comment saved",
+    "removeFromAlbum": "Remove from album"
   },
   "tags": {
     "title": "Tag Manager",

@@ -28,6 +28,8 @@ pub async fn get_media_list(
     folder_path: Option<String>,
     media_type: Option<String>,
     search_query: Option<String>,
+    tag_id: Option<String>,
+    album_id: Option<String>,
     offset: Option<i64>,
     limit: Option<i64>,
 ) -> Result<MediaListResponse, String> {
@@ -36,14 +38,17 @@ pub async fn get_media_list(
     let folder = folder_path.as_deref();
     let mtype = media_type.as_deref();
     let sq = search_query.as_deref();
+    let tag = tag_id.as_deref();
+    let album = album_id.as_deref();
 
     let db_ref = db.inner().clone();
     db_ref
         .with_conn(|conn| {
-            let files = queries::get_media_files(conn, folder, mtype, sq, offset, limit)?;
+            let files =
+                queries::get_media_files(conn, folder, mtype, sq, tag, album, offset, limit)?;
             // Count under the same filters, otherwise pagination never ends
             // on a filtered result set
-            let total = queries::count_media_files(conn, folder, mtype, sq)?;
+            let total = queries::count_media_files(conn, folder, mtype, sq, tag, album)?;
             let (_, total_size) = queries::get_media_stats(conn)?;
             Ok(MediaListResponse {
                 files,

@@ -22,6 +22,7 @@ export function InspectorPanel() {
   const [mediaTags, setMediaTags] = useState<Tag[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [albums, setAlbums] = useState<Album[]>([]);
+  const [mediaAlbums, setMediaAlbums] = useState<Album[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [albumChoice, setAlbumChoice] = useState("");
   const [commentDraft, setCommentDraft] = useState("");
@@ -52,6 +53,12 @@ export function InspectorPanel() {
         if (!cancelled) setAlbums(list);
       } catch {
         // ignore
+      }
+      try {
+        const list = await invoke<Album[]>("get_media_albums", { mediaId });
+        if (!cancelled) setMediaAlbums(list);
+      } catch {
+        if (!cancelled) setMediaAlbums([]);
       }
     })();
     return () => {
@@ -104,6 +111,23 @@ export function InspectorPanel() {
       toast.success(
         t("inspector.addedToAlbum", { name: album?.name ?? "" }),
       );
+      const list = await invoke<Album[]>("get_media_albums", {
+        mediaId: media.id,
+      });
+      setMediaAlbums(list);
+      setAlbumChoice("");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const handleRemoveFromAlbum = async (albumId: string) => {
+    try {
+      await invoke("remove_media_from_album", {
+        albumId,
+        mediaIds: [media.id],
+      });
+      setMediaAlbums((prev) => prev.filter((a) => a.id !== albumId));
     } catch (e) {
       toast.error(String(e));
     }
@@ -228,6 +252,25 @@ export function InspectorPanel() {
           <p className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider mb-1.5">
             {t("inspector.albums")}
           </p>
+          {mediaAlbums.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {mediaAlbums.map((album) => (
+                <span
+                  key={album.id}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/10 text-accent text-[10px]"
+                >
+                  {album.name}
+                  <button
+                    onClick={() => handleRemoveFromAlbum(album.id)}
+                    className="hover:text-danger transition-colors"
+                    title={t("inspector.removeFromAlbum")}
+                  >
+                    <X size={9} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="flex gap-1">
             <select
               value={albumChoice}

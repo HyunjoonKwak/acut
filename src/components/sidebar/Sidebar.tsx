@@ -226,6 +226,8 @@ export function Sidebar() {
               setSelectedFolder(null);
               useAppStore.getState().setMediaFilter("all");
               useAppStore.getState().setGroupBy("none");
+              useAppStore.getState().setTagFilter(null);
+              useAppStore.getState().setAlbumFilter(null);
               useAppStore.getState().setCurrentView("gallery");
             }}
             isActive={currentView === "gallery" && selectedFolder === null && mediaFilter === "all" && groupBy === "none"}
@@ -239,6 +241,8 @@ export function Sidebar() {
               setSelectedFolder(null);
               useAppStore.getState().setMediaFilter("image");
               useAppStore.getState().setGroupBy("none");
+              useAppStore.getState().setTagFilter(null);
+              useAppStore.getState().setAlbumFilter(null);
               useAppStore.getState().setCurrentView("gallery");
             }}
             isActive={currentView === "gallery" && mediaFilter === "image"}
@@ -252,26 +256,16 @@ export function Sidebar() {
               setSelectedFolder(null);
               useAppStore.getState().setMediaFilter("video");
               useAppStore.getState().setGroupBy("none");
+              useAppStore.getState().setTagFilter(null);
+              useAppStore.getState().setAlbumFilter(null);
               useAppStore.getState().setCurrentView("gallery");
             }}
             isActive={currentView === "gallery" && mediaFilter === "video"}
           />
           <DateGroupList />
           <FolderGroupList />
-          <SidebarItem
-            icon={Tag}
-            label={t("sidebar.tags")}
-            tooltip={t("sidebar.tagsTip")}
-            onClick={() => useAppStore.getState().setCurrentView("tags")}
-            isActive={currentView === "tags"}
-          />
-          <SidebarItem
-            icon={FolderHeart}
-            label={t("sidebar.albums")}
-            tooltip={t("sidebar.albumsTip")}
-            onClick={() => useAppStore.getState().setCurrentView("albums")}
-            isActive={currentView === "albums"}
-          />
+          <TagFilterList />
+          <AlbumFilterList />
           <SidebarItem
             icon={MapPin}
             label={t("sidebar.map")}
@@ -651,6 +645,156 @@ function FolderTreeNode({ node, depth }: { node: FolderNode; depth: number }) {
         <div>
           {node.children.map((child) => (
             <FolderTreeNode key={child.fullPath} node={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tag / Album filter lists (library sidebar) ──
+
+interface TagInfo {
+  id: string;
+  name: string;
+}
+
+interface AlbumInfo {
+  id: string;
+  name: string;
+  media_count: number;
+}
+
+/** 태그 목록 — 클릭하면 갤러리를 해당 태그로 필터링한다. */
+function TagFilterList() {
+  const { t } = useTranslation();
+  const [isOpen, setIsOpen] = useState(false);
+  const [tags, setTags] = useState<TagInfo[]>([]);
+  const tagFilter = useAppStore((s) => s.tagFilter);
+  const refreshCounter = useAppStore((s) => s.refreshCounter);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    invoke<TagInfo[]>("get_tags")
+      .then(setTags)
+      .catch(() => {});
+  }, [isOpen, refreshCounter]);
+
+  const handleSelect = (tag: TagInfo) => {
+    const s = useAppStore.getState();
+    const isActive = s.tagFilter?.id === tag.id;
+    s.setTagFilter(isActive ? null : { id: tag.id, name: tag.name });
+    s.setCurrentView("gallery");
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-text-secondary hover:bg-bg-primary transition-colors">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
+        >
+          {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <Tag size={13} />
+          <span className="flex-1 truncate">{t("sidebar.tags")}</span>
+          {tagFilter && <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />}
+        </button>
+        <button
+          onClick={() => useAppStore.getState().setCurrentView("tags")}
+          className="text-[9px] text-text-secondary/70 hover:text-accent shrink-0 transition-colors"
+        >
+          {t("sidebar.manage")}
+        </button>
+      </div>
+      {isOpen && (
+        <div className="ml-6 space-y-0.5">
+          {tags.length === 0 && (
+            <p className="text-[10px] text-text-secondary/60 px-2 py-1">
+              {t("sidebar.noTags")}
+            </p>
+          )}
+          {tags.map((tag) => (
+            <button
+              key={tag.id}
+              onClick={() => handleSelect(tag)}
+              className={`w-full text-left px-2 py-1 rounded text-[11px] transition-colors ${
+                tagFilter?.id === tag.id
+                  ? "bg-accent/10 text-accent font-medium"
+                  : "text-text-secondary hover:bg-bg-primary hover:text-text-primary"
+              }`}
+            >
+              # {tag.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 앨범 목록 — 클릭하면 갤러리를 해당 앨범으로 필터링한다. */
+function AlbumFilterList() {
+  const { t } = useTranslation();
+  const [isOpen, setIsOpen] = useState(false);
+  const [albums, setAlbums] = useState<AlbumInfo[]>([]);
+  const albumFilter = useAppStore((s) => s.albumFilter);
+  const refreshCounter = useAppStore((s) => s.refreshCounter);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    invoke<AlbumInfo[]>("get_albums")
+      .then(setAlbums)
+      .catch(() => {});
+  }, [isOpen, refreshCounter]);
+
+  const handleSelect = (album: AlbumInfo) => {
+    const s = useAppStore.getState();
+    const isActive = s.albumFilter?.id === album.id;
+    s.setAlbumFilter(isActive ? null : { id: album.id, name: album.name });
+    s.setCurrentView("gallery");
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-text-secondary hover:bg-bg-primary transition-colors">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
+        >
+          {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <FolderHeart size={13} />
+          <span className="flex-1 truncate">{t("sidebar.albums")}</span>
+          {albumFilter && <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />}
+        </button>
+        <button
+          onClick={() => useAppStore.getState().setCurrentView("albums")}
+          className="text-[9px] text-text-secondary/70 hover:text-accent shrink-0 transition-colors"
+        >
+          {t("sidebar.manage")}
+        </button>
+      </div>
+      {isOpen && (
+        <div className="ml-6 space-y-0.5">
+          {albums.length === 0 && (
+            <p className="text-[10px] text-text-secondary/60 px-2 py-1">
+              {t("sidebar.noAlbums")}
+            </p>
+          )}
+          {albums.map((album) => (
+            <button
+              key={album.id}
+              onClick={() => handleSelect(album)}
+              className={`w-full flex items-center justify-between gap-2 text-left px-2 py-1 rounded text-[11px] transition-colors ${
+                albumFilter?.id === album.id
+                  ? "bg-accent/10 text-accent font-medium"
+                  : "text-text-secondary hover:bg-bg-primary hover:text-text-primary"
+              }`}
+            >
+              <span className="truncate">{album.name}</span>
+              <span className="text-[9px] text-text-secondary/60 tabular-nums shrink-0">
+                {album.media_count}
+              </span>
+            </button>
           ))}
         </div>
       )}

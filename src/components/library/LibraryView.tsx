@@ -24,6 +24,10 @@ export function LibraryView() {
   const thumbSize = useAppStore((s) => s.thumbSize);
   const setThumbSize = useAppStore((s) => s.setThumbSize);
   const inspectorMedia = useAppStore((s) => s.inspectorMedia);
+  const tagFilter = useAppStore((s) => s.tagFilter);
+  const setTagFilter = useAppStore((s) => s.setTagFilter);
+  const albumFilter = useAppStore((s) => s.albumFilter);
+  const setAlbumFilter = useAppStore((s) => s.setAlbumFilter);
 
   const activeTab = currentView === "map" ? "map" : viewMode;
 
@@ -76,6 +80,22 @@ export function LibraryView() {
       <div className="px-4 pt-3 pb-2 border-b border-border shrink-0 flex items-center gap-4">
         <AreaTabs tabs={tabs} activeId={activeTab} onSelect={onSelect} />
 
+        {/* Active tag/album filter chips */}
+        {tagFilter && (
+          <FilterChip
+            label={`# ${tagFilter.name}`}
+            title={t("libraryView.clearFilter")}
+            onClear={() => setTagFilter(null)}
+          />
+        )}
+        {albumFilter && (
+          <FilterChip
+            label={albumFilter.name}
+            title={t("libraryView.clearFilter")}
+            onClear={() => setAlbumFilter(null)}
+          />
+        )}
+
         {/* Thumbnail size slider (grid view only) */}
         {activeTab === "grid" && (
           <div
@@ -106,5 +126,28 @@ export function LibraryView() {
         {inspectorMedia && currentView !== "map" && <InspectorPanel />}
       </div>
     </div>
+  );
+}
+
+function FilterChip({
+  label,
+  title,
+  onClear,
+}: {
+  label: string;
+  title: string;
+  onClear: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 text-accent text-[10.5px] font-medium">
+      {label}
+      <button
+        onClick={onClear}
+        title={title}
+        className="hover:text-danger transition-colors leading-none"
+      >
+        ✕
+      </button>
+    </span>
   );
 }

@@ -54,6 +54,10 @@ interface AppState {
   setDateFilter: (date: string | null) => void;
   folderFilter: string | null;
   setFolderFilter: (folder: string | null) => void;
+  tagFilter: { id: string; name: string } | null;
+  setTagFilter: (filter: { id: string; name: string } | null) => void;
+  albumFilter: { id: string; name: string } | null;
+  setAlbumFilter: (filter: { id: string; name: string } | null) => void;
 
   // Refresh trigger
   refreshCounter: number;
@@ -151,6 +155,10 @@ export const useAppStore = create<AppState>((set) => ({
   setDateFilter: (date) => set({ dateFilter: date }),
   folderFilter: null,
   setFolderFilter: (folder) => set({ folderFilter: folder }),
+  tagFilter: null,
+  setTagFilter: (filter) => set({ tagFilter: filter }),
+  albumFilter: null,
+  setAlbumFilter: (filter) => set({ albumFilter: filter }),
 
   searchQuery: "",
   setSearchQuery: (query) => set({ searchQuery: query }),

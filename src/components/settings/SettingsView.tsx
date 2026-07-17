@@ -98,6 +98,29 @@ export function SettingsView() {
     updateConfig({ watch });
   };
 
+  // Scan exclusions (line-based editors)
+  const [excludeNamesDraft, setExcludeNamesDraft] = useState("");
+  const [excludeSuffixesDraft, setExcludeSuffixesDraft] = useState("");
+  useEffect(() => {
+    if (!config?.scan) return;
+    setExcludeNamesDraft(config.scan.exclude_dir_names.join("\n"));
+    setExcludeSuffixesDraft(config.scan.exclude_suffixes.join("\n"));
+  }, [config?.scan]);
+
+  const handleSaveScanExclusions = () => {
+    const parseLines = (text: string) =>
+      text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    updateConfig({
+      scan: {
+        exclude_dir_names: parseLines(excludeNamesDraft),
+        exclude_suffixes: parseLines(excludeSuffixesDraft),
+      },
+    });
+  };
+
   // Schedule
   const handleAddSchedule = async () => {
     if (!newScheduleName.trim() || !newScheduleCron.trim()) return;
@@ -273,6 +296,48 @@ export function SettingsView() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Scan exclusions */}
+            <div className="pt-4 border-t border-border">
+              <label className="text-xs font-medium text-text-primary block mb-1">
+                {t("settings.scanExclude")}
+              </label>
+              <p className="text-[10px] text-text-secondary mb-2">
+                {t("settings.scanExcludeDesc")}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <span className="text-[10px] text-text-secondary block mb-1">
+                    {t("settings.scanExcludeNames")}
+                  </span>
+                  <textarea
+                    value={excludeNamesDraft}
+                    onChange={(e) => setExcludeNamesDraft(e.target.value)}
+                    rows={6}
+                    spellCheck={false}
+                    className="w-full px-2 py-1.5 rounded-md text-[11px] font-mono bg-bg-primary border border-border text-text-primary focus:outline-none focus:border-accent/50 resize-y"
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] text-text-secondary block mb-1">
+                    {t("settings.scanExcludeSuffixes")}
+                  </span>
+                  <textarea
+                    value={excludeSuffixesDraft}
+                    onChange={(e) => setExcludeSuffixesDraft(e.target.value)}
+                    rows={6}
+                    spellCheck={false}
+                    className="w-full px-2 py-1.5 rounded-md text-[11px] font-mono bg-bg-primary border border-border text-text-primary focus:outline-none focus:border-accent/50 resize-y"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={handleSaveScanExclusions}
+                className="mt-2 px-4 py-1.5 rounded-md text-xs font-medium bg-accent text-white hover:bg-accent-hover transition-colors"
+              >
+                {t("settings.scanExcludeSave")}
+              </button>
             </div>
 
             {/* Reset */}

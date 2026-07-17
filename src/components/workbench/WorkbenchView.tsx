@@ -27,10 +27,6 @@ interface SourceFolder {
   name: string;
 }
 
-interface GroupSummary {
-  total_groups: number;
-}
-
 interface NasStatus {
   connected: boolean;
 }
@@ -43,6 +39,16 @@ interface McpStatus {
   running: boolean;
 }
 
+interface WorkbenchStats {
+  total_count: number;
+  total_size: number;
+  unuploaded_count: number;
+  undated_files: number;
+  date_format_folders: number;
+  dup_groups: number;
+  burst_groups: number;
+}
+
 /**
  * 작업대 — 자료를 가져오고, 고르고, 정리하고, NAS에 올리는
  * 전 과정을 지휘하는 메인 컨트롤 화면.
@@ -53,14 +59,14 @@ export function WorkbenchView() {
   const stats = useAppStore((s) => s.stats);
   const setStats = useAppStore((s) => s.setStats);
   const setIsScanning = useAppStore((s) => s.setIsScanning);
-  const nasUploadedIds = useAppStore((s) => s.nasUploadedIds);
   const refreshCounter = useAppStore((s) => s.refreshCounter);
   const triggerRefresh = useAppStore((s) => s.triggerRefresh);
   const config = useAppStore((s) => s.config);
 
   const [sources, setSources] = useState<SourceFolder[]>([]);
-  const [dupGroups, setDupGroups] = useState<number | null>(null);
-  const [burstGroups, setBurstGroups] = useState<number | null>(null);
+  // 작업 대상 — null이면 전체 라이브러리, 아니면 특정 소스 폴더 경로
+  const [scopePath, setScopePath] = useState<string | null>(null);
+  const [wbStats, setWbStats] = useState<WorkbenchStats | null>(null);
   const [nasConnected, setNasConnected] = useState<boolean | null>(null);
   const [watchCount, setWatchCount] = useState(0);
   const [mcpRunning, setMcpRunning] = useState(false);
@@ -84,16 +90,12 @@ export function WorkbenchView() {
         /* DB not ready */
       }
       try {
-        const summary = await invoke<GroupSummary>("get_duplicate_groups");
-        if (!cancelled) setDupGroups(summary.total_groups);
+        const stats = await invoke<WorkbenchStats>("get_workbench_stats", {
+          scope: scopePath,
+        });
+        if (!cancelled) setWbStats(stats);
       } catch {
-        if (!cancelled) setDupGroups(null);
-      }
-      try {
-        const summary = await invoke<GroupSummary>("get_bcut_groups");
-        if (!cancelled) setBurstGroups(summary.total_groups);
-      } catch {
-        if (!cancelled) setBurstGroups(null);
+        if (!cancelled) setWbStats(null);
       }
       try {
         const status = await invoke<NasStatus>("nas_status");
@@ -126,7 +128,7 @@ export function WorkbenchView() {
     return () => {
       cancelled = true;
     };
-  }, [refreshCounter]);
+  }, [refreshCounter, scopePath]);
 
   /** Register a path as a source and run the scan flow. */
   const addAndScan = useCallback(
@@ -184,9 +186,6 @@ export function WorkbenchView() {
     }
   };
 
-  const unuploaded = stats
-    ? Math.max(0, stats.total_count - nasUploadedIds.size)
-    : null;
   const enabledSchedules =
     config?.schedules.filter((s) => s.enabled).length ?? 0;
 
@@ -195,15 +194,36 @@ export function WorkbenchView() {
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-4xl mx-auto px-6 py-6">
-        {/* Header */}
-        <h1 className="text-[16px] font-bold text-text-primary">
-          {t("workbench.title")}
-        </h1>
+        {/* Header + working-set selector */}
+        <div className="flex items-center gap-3 mb-1">
+          <h1 className="text-[16px] font-bold text-text-primary">
+            {t("workbench.title")}
+          </h1>
+          {sources.length > 0 && (
+            <div className="flex items-center gap-1.5 ml-auto">
+              <span className="text-[10px] text-text-secondary">
+                {t("workbench.scopeLabel")}
+              </span>
+              <select
+                value={scopePath ?? ""}
+                onChange={(e) => setScopePath(e.target.value || null)}
+                className="h-7 px-2 rounded-md text-[11px] bg-bg-secondary border border-border text-text-primary focus:outline-none focus:border-accent/50 max-w-[220px]"
+              >
+                <option value="">{t("workbench.scopeAll")}</option>
+                {sources.map((folder) => (
+                  <option key={folder.path} value={folder.path}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
         <p className="text-[11px] text-text-secondary mb-4">
           {sources.length > 0
             ? t("workbench.subtitle", {
                 count: sources.length,
-                total: stats?.total_count?.toLocaleString() ?? 0,
+                total: (wbStats?.total_count ?? stats?.total_count)?.toLocaleString() ?? 0,
               })
             : t("workbench.subtitleEmpty")}
         </p>
@@ -255,9 +275,9 @@ export function WorkbenchView() {
           >
             <p className="text-[10.5px] text-text-secondary leading-relaxed">
               {t("workbench.stImportDesc", {
-                sources: sources.length,
-                total: stats?.total_count?.toLocaleString() ?? "—",
-                size: stats ? formatFileSize(stats.total_size) : "—",
+                sources: scopePath ? 1 : sources.length,
+                total: wbStats?.total_count?.toLocaleString() ?? "—",
+                size: wbStats ? formatFileSize(wbStats.total_size) : "—",
               })}
             </p>
             <div className="flex gap-1 mt-2">
@@ -284,8 +304,8 @@ export function WorkbenchView() {
           >
             <p className="text-[10.5px] text-text-secondary leading-relaxed">
               {t("workbench.stSelectDesc", {
-                dup: dupGroups ?? "—",
-                burst: burstGroups ?? "—",
+                dup: wbStats?.dup_groups ?? "—",
+                burst: wbStats?.burst_groups ?? "—",
               })}
             </p>
             <div className="flex gap-1 mt-2">
@@ -304,7 +324,10 @@ export function WorkbenchView() {
             title={t("workbench.stOrganize")}
           >
             <p className="text-[10.5px] text-text-secondary leading-relaxed">
-              {t("workbench.stOrganizeDesc")}
+              {t("workbench.stOrganizeDesc", {
+                undated: wbStats?.undated_files?.toLocaleString() ?? "—",
+                folders: wbStats?.date_format_folders ?? "—",
+              })}
             </p>
             <div className="flex gap-1 mt-2">
               <StationButton onClick={() => go("organize")}>
@@ -326,7 +349,7 @@ export function WorkbenchView() {
           >
             <p className="text-[10.5px] text-text-secondary leading-relaxed">
               {t("workbench.stUploadDesc", {
-                count: unuploaded?.toLocaleString() ?? "—",
+                count: wbStats?.unuploaded_count?.toLocaleString() ?? "—",
               })}
               <br />
               <span

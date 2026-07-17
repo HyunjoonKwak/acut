@@ -26,6 +26,7 @@ export function TreeNodeRow({
   selectedPaths,
   dropTargetPath,
   onNavigate,
+  onBrowse,
   onToggleSelect,
   onDragStart,
   onDragOverFolder,
@@ -41,6 +42,8 @@ export function TreeNodeRow({
   selectedPaths: ReadonlySet<string>;
   dropTargetPath: string | null;
   onNavigate: (path: string, name: string) => void;
+  /** Show this folder's contents in the right-hand pane */
+  onBrowse: (path: string) => void;
   onToggleSelect: (path: string, shiftKey: boolean) => void;
   onDragStart: (e: React.DragEvent, node: TreeNode) => void;
   onDragOverFolder: (path: string) => void;
@@ -71,11 +74,12 @@ export function TreeNodeRow({
   const handleClick = (e: React.MouseEvent) => {
     if (node.is_dir) {
       // ⌘/Ctrl-click selects a folder for copy/move/rename/trash;
-      // plain click just expands it
+      // plain click expands it and shows its contents on the right
       if (e.metaKey || e.ctrlKey) {
         onToggleSelect(node.path, e.shiftKey);
       } else {
         setIsOpen(!isOpen);
+        onBrowse(node.path);
       }
     } else {
       onToggleSelect(node.path, e.shiftKey);
@@ -200,6 +204,7 @@ export function TreeNodeRow({
               selectedPaths={selectedPaths}
               dropTargetPath={dropTargetPath}
               onNavigate={onNavigate}
+              onBrowse={onBrowse}
               onToggleSelect={onToggleSelect}
               onDragStart={onDragStart}
               onDragOverFolder={onDragOverFolder}

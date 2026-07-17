@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { formatFileSize } from "@/utils/format";
@@ -24,8 +24,9 @@ import {
   PencilLine,
   Trash2,
 } from "lucide-react";
+import { Folder, File as FileIcon } from "lucide-react";
 import { TreeNodeRow } from "./TreeNodeRow";
-import type { TreeNode, FileTypeFilter, FileOpResult } from "./types";
+import type { TreeNode, FileTypeFilter, FileOpResult, DirEntry } from "./types";
 
 const FILE_TYPE_LABELS: Record<FileTypeFilter, string> = {
   all: "전체",
@@ -52,6 +53,36 @@ export function TreePanel() {
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
 
+  // Right-hand contents pane (dual-pane browser)
+  const [browsePath, setBrowsePath] = useState<string | null>(null);
+  const [browseEntries, setBrowseEntries] = useState<DirEntry[]>([]);
+  const [browseTick, setBrowseTick] = useState(0);
+
+  useEffect(() => {
+    if (!browsePath) {
+      setBrowseEntries([]);
+      return;
+    }
+    let cancelled = false;
+    invoke<DirEntry[]>("list_directory", { path: browsePath })
+      .then((entries) => {
+        if (cancelled) return;
+        const sorted = [...entries].sort((a, b) => {
+          if (a.name === "..") return -1;
+          if (b.name === "..") return 1;
+          if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        setBrowseEntries(sorted);
+      })
+      .catch(() => {
+        if (!cancelled) setBrowseEntries([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [browsePath, browseTick]);
+
   const currentPath = breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].path : null;
 
   const loadTree = useCallback(async (path: string, name?: string) => {
@@ -65,6 +96,11 @@ export function TreePanel() {
       setRootNode(result);
       setSelectedPaths(new Set());
       setLastResult(null);
+      // Keep the contents pane where it was if still inside this tree
+      setBrowsePath((prev) =>
+        prev && (prev === path || prev.startsWith(path + "/")) ? prev : path,
+      );
+      setBrowseTick((t) => t + 1);
 
       const folderName = name ?? result.name;
       setBreadcrumbs((prev) => {
@@ -633,39 +669,153 @@ export function TreePanel() {
         </div>
       )}
 
-      {/* Tree content */}
-      <div className="flex-1 overflow-y-auto p-1">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-            <span className="ml-2 text-xs text-text-secondary">분석 중...</span>
+      {/* Dual pane: folder tree (left) + folder contents (right) */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left: tree */}
+        <div className="w-[42%] min-w-[240px] max-w-[440px] overflow-y-auto p-1 border-r border-border">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+              <span className="ml-2 text-xs text-text-secondary">분석 중...</span>
+            </div>
+          ) : (
+            rootNode.children.map((child) => (
+              <TreeNodeRow
+                key={child.path}
+                node={child}
+                depth={0}
+                searchQuery={searchQuery.toLowerCase()}
+                typeFilter={typeFilter}
+                showFiles={showFiles}
+                matchingPaths={matchingPaths}
+                selectedPaths={selectedPaths}
+                dropTargetPath={dropTargetPath}
+                onNavigate={handleNavigateTo}
+                onBrowse={setBrowsePath}
+                onToggleSelect={handleToggleSelect}
+                onDragStart={handleDragStart}
+                onDragOverFolder={handleDragOverFolder}
+                onDropOnFolder={handleDropOnFolder}
+                onDragEnd={handleDragEnd}
+              />
+            ))
+          )}
+          {!loading && rootNode.children.length === 0 && (
+            <div className="text-center py-8 text-xs text-text-secondary">
+              이 폴더는 비어있습니다
+            </div>
+          )}
+        </div>
+
+        {/* Right: contents of the browsed folder */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div className="px-3 py-1.5 border-b border-border/50 flex items-center gap-2 text-[10px] text-text-secondary shrink-0">
+            <Folder size={11} className="text-accent shrink-0" />
+            <span className="truncate flex-1" title={browsePath ?? ""}>
+              {browsePath
+                ? currentPath && browsePath.startsWith(currentPath)
+                  ? browsePath.slice(currentPath.length).replace(/^\//, "") ||
+                    rootNode.name
+                  : browsePath
+                : ""}
+            </span>
+            <span className="tabular-nums shrink-0">
+              {browseEntries.filter((e) => e.name !== "..").length}개 항목
+            </span>
           </div>
-        ) : (
-          rootNode.children.map((child) => (
-            <TreeNodeRow
-              key={child.path}
-              node={child}
-              depth={0}
-              searchQuery={searchQuery.toLowerCase()}
-              typeFilter={typeFilter}
-              showFiles={showFiles}
-              matchingPaths={matchingPaths}
-              selectedPaths={selectedPaths}
-              dropTargetPath={dropTargetPath}
-              onNavigate={handleNavigateTo}
-              onToggleSelect={handleToggleSelect}
-              onDragStart={handleDragStart}
-              onDragOverFolder={handleDragOverFolder}
-              onDropOnFolder={handleDropOnFolder}
-              onDragEnd={handleDragEnd}
-            />
-          ))
-        )}
-        {!loading && rootNode.children.length === 0 && (
-          <div className="text-center py-8 text-xs text-text-secondary">
-            이 폴더는 비어있습니다
+          <div
+            className="flex-1 overflow-y-auto"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              if (browsePath) {
+                e.preventDefault();
+                e.stopPropagation();
+                handleDropOnFolder(browsePath, e);
+              }
+            }}
+          >
+            {browseEntries.map((entry) => {
+              const isParent = entry.name === "..";
+              const isSelected = selectedPaths.has(entry.path);
+              return (
+                <div
+                  key={entry.path + entry.name}
+                  className={`flex items-center gap-2 px-3 py-1 cursor-pointer text-[11px] transition-colors ${
+                    isSelected
+                      ? "bg-accent/10 text-accent"
+                      : "hover:bg-bg-secondary/60 text-text-primary"
+                  }`}
+                  onClick={(e) => {
+                    if (isParent) return;
+                    if (e.metaKey || e.ctrlKey) {
+                      handleToggleSelect(entry.path, e.shiftKey);
+                    } else {
+                      setSelectedPaths(new Set([entry.path]));
+                    }
+                  }}
+                  onDoubleClick={() => {
+                    if (entry.is_dir) {
+                      setBrowsePath(entry.path);
+                    } else {
+                      invoke("preview_file", { path: entry.path }).catch(
+                        () => {},
+                      );
+                    }
+                  }}
+                  draggable={!isParent}
+                  onDragStart={(e) => {
+                    const paths = selectedPaths.has(entry.path)
+                      ? Array.from(selectedPaths)
+                      : [entry.path];
+                    e.dataTransfer.setData(
+                      "application/json",
+                      JSON.stringify(paths),
+                    );
+                    e.dataTransfer.effectAllowed = "copyMove";
+                  }}
+                  onDragOver={
+                    entry.is_dir && !isParent
+                      ? (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      : undefined
+                  }
+                  onDrop={
+                    entry.is_dir && !isParent
+                      ? (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleDropOnFolder(entry.path, e);
+                        }
+                      : undefined
+                  }
+                  title={entry.path}
+                >
+                  {entry.is_dir ? (
+                    <Folder
+                      size={13}
+                      className={`shrink-0 ${isParent ? "text-text-secondary/50" : "text-accent"}`}
+                    />
+                  ) : (
+                    <FileIcon size={13} className="text-text-secondary shrink-0" />
+                  )}
+                  <span className="flex-1 truncate">{entry.name}</span>
+                  {!entry.is_dir && (
+                    <span className="text-[9px] text-text-secondary/70 tabular-nums shrink-0">
+                      {formatFileSize(entry.size)}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            {browseEntries.length === 0 && (
+              <div className="text-center py-8 text-xs text-text-secondary">
+                이 폴더는 비어있습니다
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Status bar */}

@@ -143,10 +143,16 @@ export interface AppConfig {
   schedules: ScheduleConfig[];
   mcp_enabled: boolean;
   gallery: GalleryConfig;
+  scan: ScanConfig;
 }
 
 export interface GalleryConfig {
   thumb_size: number;
+}
+
+export interface ScanConfig {
+  exclude_dir_names: string[];
+  exclude_suffixes: string[];
 }
 
 export interface MediaComment {

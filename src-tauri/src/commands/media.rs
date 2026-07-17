@@ -362,3 +362,98 @@ pub async fn get_media_comments(
         })
         .map_err(|e| format!("DB: {}", e))
 }
+
+// ---------------------------------------------------------------------------
+// Workbench pipeline stats (scoped)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Serialize)]
+pub struct WorkbenchStats {
+    pub total_count: i64,
+    pub total_size: i64,
+    pub unuploaded_count: i64,
+    pub undated_files: i64,
+    pub date_format_folders: i64,
+    pub dup_groups: i64,
+    pub burst_groups: i64,
+}
+
+/// Pipeline numbers for the workbench, optionally scoped to one source
+/// folder — "작업 대상" 선택 시 모든 스테이션 수치가 이 범위 기준으로 나온다.
+#[tauri::command]
+pub async fn get_workbench_stats(
+    db: State<'_, Arc<Database>>,
+    scope: Option<String>,
+) -> Result<WorkbenchStats, String> {
+    let db_ref = db.inner().clone();
+    let scope_like = scope
+        .as_deref()
+        .map(|p| format!("{}/%", p.trim_end_matches('/')));
+
+    db_ref
+        .with_conn(|conn| {
+            // `/*SCOPE*/` in each template becomes a file-path filter when scoped
+            let run = |tpl: &str| -> Result<i64, rusqlite::Error> {
+                match &scope_like {
+                    Some(like) => {
+                        let sql = tpl.replace("/*SCOPE*/", "AND mf.file_path LIKE ?1");
+                        conn.query_row(&sql, params![like], |r| r.get(0))
+                    }
+                    None => {
+                        let sql = tpl.replace("/*SCOPE*/", "");
+                        conn.query_row(&sql, [], |r| r.get(0))
+                    }
+                }
+            };
+
+            let total_count =
+                run("SELECT COUNT(*) FROM media_files mf WHERE 1=1 /*SCOPE*/")?;
+            let total_size = run(
+                "SELECT COALESCE(SUM(mf.file_size), 0) FROM media_files mf WHERE 1=1 /*SCOPE*/",
+            )?;
+            let unuploaded_count = run(
+                "SELECT COUNT(*) FROM media_files mf
+                 WHERE NOT EXISTS (SELECT 1 FROM nas_uploads nu WHERE nu.media_id = mf.id)
+                 /*SCOPE*/",
+            )?;
+            // Files not inside a YYYY-MM-DD folder anywhere in their path
+            let undated_files = run(
+                "SELECT COUNT(*) FROM media_files mf
+                 WHERE mf.file_path NOT GLOB '*/[12][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/*'
+                 /*SCOPE*/",
+            )?;
+            // Folders named like YYYYMMDD — candidates for date-folder rename
+            let date_format_folders = run(
+                "SELECT COUNT(DISTINCT SUBSTR(mf.file_path, 1, LENGTH(mf.file_path) - LENGTH(mf.file_name) - 1))
+                 FROM media_files mf
+                 WHERE SUBSTR(mf.file_path, 1, LENGTH(mf.file_path) - LENGTH(mf.file_name) - 1)
+                       GLOB '*/[12][0-9][0-9][0-9][01][0-9][0-3][0-9]'
+                 /*SCOPE*/",
+            )?;
+            let dup_groups = run(
+                "SELECT COUNT(DISTINCT dm.group_id)
+                 FROM duplicate_members dm
+                 JOIN duplicate_groups dg ON dg.id = dm.group_id AND dg.status = 'pending'
+                 JOIN media_files mf ON mf.id = dm.media_id
+                 WHERE 1=1 /*SCOPE*/",
+            )?;
+            let burst_groups = run(
+                "SELECT COUNT(DISTINCT bm.group_id)
+                 FROM bcut_members bm
+                 JOIN bcut_groups bg ON bg.id = bm.group_id AND bg.status = 'pending'
+                 JOIN media_files mf ON mf.id = bm.media_id
+                 WHERE 1=1 /*SCOPE*/",
+            )?;
+
+            Ok(WorkbenchStats {
+                total_count,
+                total_size,
+                unuploaded_count,
+                undated_files,
+                date_format_folders,
+                dup_groups,
+                burst_groups,
+            })
+        })
+        .map_err(|e| format!("DB: {}", e))
+}

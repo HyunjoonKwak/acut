@@ -34,7 +34,7 @@
     "stSelectDesc": "중복 {{dup}}그룹 · 연사 {{burst}}그룹",
     "goSelect": "고르러 가기",
     "stOrganize": "정리",
-    "stOrganizeDesc": "날짜별 자동 분류와 폴더 다듬기",
+    "stOrganizeDesc": "날짜 미정리 {{undated}}장\n형식 다른 폴더 {{folders}}개",
     "stUpload": "올리기",
     "stUploadDesc": "미업로드 {{count}}장",
     "nasConnected": "NAS 연결됨",
@@ -55,7 +55,9 @@
     "schedule": "스케줄",
     "scheduleActive": "{{count}}개 활성",
     "running": "실행 중",
-    "off": "꺼짐"
+    "off": "꺼짐",
+    "scopeLabel": "작업 대상",
+    "scopeAll": "전체 라이브러리"
   },
   "hub": {
     "classify": "자동 분류",
@@ -297,7 +299,12 @@
     "mcpRunning": "실행 중",
     "mcpStopped": "중지됨",
     "save": "저장",
-    "reset": "초기화"
+    "reset": "초기화",
+    "scanExclude": "스캔 제외 목록",
+    "scanExcludeDesc": "스캔 시 건너뛸 폴더 이름과 번들 확장자 (줄 단위). 내장 디스크 전체 검색을 실용적으로 만듭니다.",
+    "scanExcludeNames": "폴더 이름",
+    "scanExcludeSuffixes": "번들 확장자 (.app 등)",
+    "scanExcludeSave": "저장"
   },
   "volume": {
     "title": "장치",

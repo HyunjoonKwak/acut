@@ -35,38 +35,13 @@ impl MediaType {
     }
 }
 
-/// Directory names that never contain user photos — pruned everywhere so a
+use crate::core::config::ScanConfig;
+
+/// Scan a directory tree for media files.
+/// System/junk directories are pruned per the user-editable `ScanConfig`
+/// (defaults cover Library, System, .app bundles, node_modules, …) so a
 /// whole-disk scan (e.g. adding "Macintosh HD" as a source) stays practical.
-const EXCLUDED_DIR_NAMES: &[&str] = &[
-    "Library",
-    "System",
-    "Applications",
-    "Volumes",
-    "node_modules",
-    "__MACOSX",
-    "Backups.backupdb",
-    "private",
-    "usr",
-    "bin",
-    "sbin",
-    "etc",
-    "var",
-    "dev",
-    "opt",
-    "cores",
-];
-
-/// macOS bundle directories that look like folders but are app internals.
-const EXCLUDED_BUNDLE_SUFFIXES: &[&str] = &[
-    ".app",
-    ".photoslibrary",
-    ".framework",
-    ".bundle",
-    ".xcodeproj",
-    ".xcassets",
-];
-
-pub fn scan_directory(dir: &Path) -> Vec<ScannedFile> {
+pub fn scan_directory(dir: &Path, exclude: &ScanConfig) -> Vec<ScannedFile> {
     let mut files = Vec::new();
 
     for entry in WalkDir::new(dir)
@@ -81,10 +56,18 @@ pub fn scan_directory(dir: &Path) -> Vec<ScannedFile> {
             if name.starts_with('.') {
                 return false;
             }
-            if EXCLUDED_DIR_NAMES.contains(&name.as_ref()) {
+            if exclude
+                .exclude_dir_names
+                .iter()
+                .any(|n| n == name.as_ref())
+            {
                 return false;
             }
-            if EXCLUDED_BUNDLE_SUFFIXES.iter().any(|s| name.ends_with(s)) {
+            if exclude
+                .exclude_suffixes
+                .iter()
+                .any(|s| !s.is_empty() && name.ends_with(s.as_str()))
+            {
                 return false;
             }
             true

@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub mcp_enabled: bool,
     #[serde(default)]
     pub gallery: GalleryConfig,
+    #[serde(default)]
+    pub scan: ScanConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +25,53 @@ pub struct GalleryConfig {
 impl Default for GalleryConfig {
     fn default() -> Self {
         Self { thumb_size: 160 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanConfig {
+    /// Directory names pruned everywhere during scans (system/junk folders)
+    pub exclude_dir_names: Vec<String>,
+    /// Bundle-style directory suffixes to prune (e.g. ".app")
+    pub exclude_suffixes: Vec<String>,
+}
+
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            exclude_dir_names: [
+                "Library",
+                "System",
+                "Applications",
+                "Volumes",
+                "node_modules",
+                "__MACOSX",
+                "Backups.backupdb",
+                "private",
+                "usr",
+                "bin",
+                "sbin",
+                "etc",
+                "var",
+                "dev",
+                "opt",
+                "cores",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            exclude_suffixes: [
+                ".app",
+                ".photoslibrary",
+                ".framework",
+                ".bundle",
+                ".xcodeproj",
+                ".xcassets",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        }
     }
 }
 
@@ -69,6 +118,7 @@ impl Default for AppConfig {
             schedules: Vec::new(),
             mcp_enabled: false,
             gallery: GalleryConfig::default(),
+            scan: ScanConfig::default(),
         }
     }
 }
@@ -109,6 +159,9 @@ impl AppConfig {
         if let Some(gallery) = partial.gallery {
             self.gallery = gallery;
         }
+        if let Some(scan) = partial.scan {
+            self.scan = scan;
+        }
     }
 }
 
@@ -120,4 +173,6 @@ pub struct PartialConfig {
     pub mcp_enabled: Option<bool>,
     #[serde(default)]
     pub gallery: Option<GalleryConfig>,
+    #[serde(default)]
+    pub scan: Option<ScanConfig>,
 }

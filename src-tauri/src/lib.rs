@@ -110,6 +110,8 @@ pub fn run() {
             // Comments (A-Cut inspector)
             commands::media::set_media_comment,
             commands::media::get_media_comments,
+            // Workbench pipeline stats
+            commands::media::get_workbench_stats,
             commands::organize::preview_organize,
             commands::organize::execute_organize,
             commands::undo::get_undo_history,

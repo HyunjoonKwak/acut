@@ -238,7 +238,12 @@ export function DuplicatesView() {
         setSelectedIdx(prev);
         setSelectedGroup(groups[prev]);
       }
+      if (e.code === "KeyS") {
+        e.preventDefault();
+        handleDismissGroup(selectedGroup.id);
+      }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [summary, selectedGroup, selectedIdx, focusIdx]
   );
 
@@ -459,7 +464,7 @@ export function DuplicatesView() {
                     : `유사 이미지 (${Math.round((selectedGroup.similarity_score ?? 0) * 100)}% 일치)`}
                 </span>
                 <span className="text-[9px] text-text-secondary/50 ml-auto">
-                  ←/→ 사진 이동 · Space 확대 · 아래에서 유지할 사진 선택
+                  ←/→ 사진 이동 · Space 확대 · S 건너뛰기
                 </span>
               </div>
 

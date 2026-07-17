@@ -34,7 +34,7 @@
     "stSelectDesc": "{{dup}} duplicate · {{burst}} burst groups",
     "goSelect": "Go select",
     "stOrganize": "Organize",
-    "stOrganizeDesc": "Auto-sort by date, tidy folders",
+    "stOrganizeDesc": "{{undated}} not in date folders\n{{folders}} folders to rename",
     "stUpload": "Upload",
     "stUploadDesc": "{{count}} not yet uploaded",
     "nasConnected": "NAS connected",
@@ -55,7 +55,9 @@
     "schedule": "Schedule",
     "scheduleActive": "{{count}} active",
     "running": "Running",
-    "off": "Off"
+    "off": "Off",
+    "scopeLabel": "Working set",
+    "scopeAll": "Whole library"
   },
   "hub": {
     "classify": "Auto sort",
@@ -297,7 +299,12 @@
     "mcpRunning": "Running",
     "mcpStopped": "Stopped",
     "save": "Save",
-    "reset": "Reset"
+    "reset": "Reset",
+    "scanExclude": "Scan exclusions",
+    "scanExcludeDesc": "Folder names and bundle suffixes skipped during scans (one per line).",
+    "scanExcludeNames": "Folder names",
+    "scanExcludeSuffixes": "Bundle suffixes (.app …)",
+    "scanExcludeSave": "Save"
   },
   "volume": {
     "title": "Devices",

@@ -39,6 +39,7 @@ pub async fn cancel_scan() -> Result<(), String> {
 pub async fn scan_directory(
     app: AppHandle,
     db: State<'_, Arc<Database>>,
+    config: State<'_, Arc<tokio::sync::RwLock<crate::core::config::AppConfig>>>,
     path: String,
 ) -> Result<ScanResult, String> {
     SCAN_CANCELLED.store(false, Ordering::SeqCst);
@@ -54,7 +55,8 @@ pub async fn scan_directory(
         phase: "scanning".into(),
     }).ok();
 
-    let files = scanner::scan_directory(dir);
+    let scan_cfg = config.read().await.scan.clone();
+    let files = scanner::scan_directory(dir, &scan_cfg);
     let total = files.len();
     let mut new_files = 0usize;
     let mut skipped = 0usize;

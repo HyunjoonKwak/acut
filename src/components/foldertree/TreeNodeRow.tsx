@@ -70,7 +70,13 @@ export function TreeNodeRow({
 
   const handleClick = (e: React.MouseEvent) => {
     if (node.is_dir) {
-      setIsOpen(!isOpen);
+      // ⌘/Ctrl-click selects a folder for copy/move/rename/trash;
+      // plain click just expands it
+      if (e.metaKey || e.ctrlKey) {
+        onToggleSelect(node.path, e.shiftKey);
+      } else {
+        setIsOpen(!isOpen);
+      }
     } else {
       onToggleSelect(node.path, e.shiftKey);
     }
@@ -113,7 +119,7 @@ export function TreeNodeRow({
         style={{ paddingLeft: `${depth * 18 + 4}px` }}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
-        draggable={!node.is_dir}
+        draggable
         onDragStart={(e) => onDragStart(e, node)}
         onDragOver={handleDragOver}
         onDrop={handleDrop}

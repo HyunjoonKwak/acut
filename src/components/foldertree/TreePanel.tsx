@@ -19,6 +19,10 @@ import {
   AlertCircle,
   CheckSquare,
   XSquare,
+  Copy,
+  FolderInput,
+  PencilLine,
+  Trash2,
 } from "lucide-react";
 import { TreeNodeRow } from "./TreeNodeRow";
 import type { TreeNode, FileTypeFilter, FileOpResult } from "./types";
@@ -165,13 +169,32 @@ export function TreePanel() {
         const sources: string[] = JSON.parse(data);
         const isMove = !e.altKey;
 
-        const result = isMove
-          ? await invoke<FileOpResult>("move_files", { sources, targetDir: targetPath })
-          : await invoke<FileOpResult>("copy_files", { sources, targetDir: targetPath });
+        let success = 0;
+        let failed = 0;
+        if (isMove) {
+          // move_paths handles files AND folders, records undo,
+          // and keeps library paths in sync
+          const result = await invoke<FileOpResult>("move_paths", {
+            sources,
+            targetDir: targetPath,
+          });
+          success = result.success;
+          failed = result.failed;
+        } else {
+          // copy_directory copies folder trees (and plain files)
+          for (const source of sources) {
+            try {
+              await invoke("copy_directory", { source, targetDir: targetPath });
+              success++;
+            } catch {
+              failed++;
+            }
+          }
+        }
 
         setLastResult(
-          `${isMove ? "이동" : "복사"} ${result.success}개 완료${
-            result.failed > 0 ? `, ${result.failed}개 실패` : ""
+          `${isMove ? "이동" : "복사"} ${success}개 완료${
+            failed > 0 ? `, ${failed}개 실패` : ""
           }`
         );
         setSelectedPaths(new Set());
@@ -211,6 +234,105 @@ export function TreePanel() {
       setError("폴더 생성에 실패했습니다.");
     }
   }, [currentPath, handleRefresh]);
+
+  // ── Folder-level operations (selection-based) ──
+
+  const handleCopyTo = useCallback(async () => {
+    if (selectedPaths.size === 0) return;
+    const target = await open({
+      directory: true,
+      multiple: false,
+      title: "복사할 위치 선택",
+    });
+    if (!target) return;
+
+    let success = 0;
+    let failed = 0;
+    for (const source of selectedPaths) {
+      try {
+        await invoke("copy_directory", {
+          source,
+          targetDir: target as string,
+        });
+        success++;
+      } catch {
+        failed++;
+      }
+    }
+    setLastResult(
+      `복사 ${success}개 완료${failed > 0 ? `, ${failed}개 실패` : ""}`
+    );
+    setSelectedPaths(new Set());
+    handleRefresh();
+  }, [selectedPaths, handleRefresh]);
+
+  const handleMoveTo = useCallback(async () => {
+    if (selectedPaths.size === 0) return;
+    const target = await open({
+      directory: true,
+      multiple: false,
+      title: "이동할 위치 선택",
+    });
+    if (!target) return;
+
+    try {
+      const result = await invoke<FileOpResult>("move_paths", {
+        sources: Array.from(selectedPaths),
+        targetDir: target as string,
+      });
+      setLastResult(
+        `이동 ${result.success}개 완료${
+          result.failed > 0 ? `, ${result.failed}개 실패` : ""
+        } · 히스토리에서 되돌릴 수 있습니다`
+      );
+    } catch (e) {
+      setLastResult(`이동 실패: ${e}`);
+    }
+    setSelectedPaths(new Set());
+    handleRefresh();
+  }, [selectedPaths, handleRefresh]);
+
+  const handleRenameSelected = useCallback(async () => {
+    if (selectedPaths.size !== 1) return;
+    const path = Array.from(selectedPaths)[0];
+    const current = path.split("/").pop() || "";
+    const name = prompt("새 이름:", current);
+    if (!name || name === current) return;
+
+    try {
+      await invoke("rename_path", { path, newName: name });
+      setLastResult(`이름 변경 완료: ${name}`);
+    } catch (e) {
+      setLastResult(`${e}`);
+    }
+    setSelectedPaths(new Set());
+    handleRefresh();
+  }, [selectedPaths, handleRefresh]);
+
+  const handleTrashSelected = useCallback(async () => {
+    if (selectedPaths.size === 0) return;
+    if (
+      !confirm(
+        `선택한 ${selectedPaths.size}개 항목을 휴지통으로 이동할까요?\n(폴더는 안의 내용까지 함께 이동됩니다)`
+      )
+    )
+      return;
+
+    try {
+      const result = await invoke<FileOpResult>("trash_paths", {
+        paths: Array.from(selectedPaths),
+      });
+      setLastResult(
+        `휴지통 이동 ${result.success}개${
+          result.failed > 0 ? `, ${result.failed}개 실패` : ""
+        }`
+      );
+    } catch (e) {
+      setLastResult(`${e}`);
+    }
+    setSelectedPaths(new Set());
+    handleRefresh();
+  }, [selectedPaths, handleRefresh]);
 
   // Pre-compute matching paths for O(N) filter
   const matchingPaths = useMemo(() => {
@@ -255,7 +377,7 @@ export function TreePanel() {
           <FolderTree size={40} className="mx-auto mb-3 text-text-secondary/20" />
           <p className="text-xs text-text-secondary mb-1">폴더 구조를 탐색합니다</p>
           <p className="text-[10px] text-text-secondary/60 mb-3">
-            트리 구조 확인 + 파일 이동/복사
+            트리 탐색 · 복사 / 이동 / 이름변경 / 휴지통 (⌘클릭으로 폴더 선택)
           </p>
           {error && (
             <div className="flex items-center gap-1.5 justify-center text-xs text-danger mb-3">
@@ -326,6 +448,46 @@ export function TreePanel() {
           >
             <FolderPlus size={12} />
           </button>
+
+          {/* Folder operations (selection-based) */}
+          <div className="w-px h-3.5 bg-border mx-0.5" />
+          <button
+            onClick={handleCopyTo}
+            disabled={selectedPaths.size === 0}
+            className="p-1 rounded hover:bg-bg-primary text-text-secondary disabled:opacity-30 transition-colors"
+            title="선택 항목 복사 (폴더 구조 포함)"
+          >
+            <Copy size={12} />
+          </button>
+          <button
+            onClick={handleMoveTo}
+            disabled={selectedPaths.size === 0}
+            className="p-1 rounded hover:bg-bg-primary text-text-secondary disabled:opacity-30 transition-colors"
+            title="선택 항목 이동"
+          >
+            <FolderInput size={12} />
+          </button>
+          <button
+            onClick={handleRenameSelected}
+            disabled={selectedPaths.size !== 1}
+            className="p-1 rounded hover:bg-bg-primary text-text-secondary disabled:opacity-30 transition-colors"
+            title="이름 변경 (1개 선택 시)"
+          >
+            <PencilLine size={12} />
+          </button>
+          <button
+            onClick={handleTrashSelected}
+            disabled={selectedPaths.size === 0}
+            className="p-1 rounded hover:bg-bg-primary text-text-secondary hover:text-danger disabled:opacity-30 transition-colors"
+            title="휴지통으로 이동"
+          >
+            <Trash2 size={12} />
+          </button>
+          {selectedPaths.size > 0 && (
+            <span className="text-[9px] text-accent tabular-nums shrink-0">
+              {selectedPaths.size} 선택
+            </span>
+          )}
 
           {/* Breadcrumbs */}
           <div className="flex items-center gap-1 text-[11px] text-text-secondary overflow-x-auto flex-1 min-w-0 ml-1">

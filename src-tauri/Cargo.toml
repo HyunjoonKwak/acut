@@ -1,6 +1,6 @@
 [package]
 name = "acut"
-version = "0.3.0"
+version = "0.3.1"
 description = "에이컷 - 사진을 고르고 정리해 NAS로 올리는 컬링 스테이션"
 authors = ["에이컷"]
 license = "MIT"

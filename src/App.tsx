@@ -1,6 +1,9 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/stores/appStore";
+import { useUpdateStore } from "@/stores/updateStore";
+import { toast } from "@/stores/toastStore";
 import { useScanProgress } from "@/hooks/useTauriEvents";
 import { TitleBar } from "@/components/layout/TitleBar";
 import { NavRail } from "@/components/layout/NavRail";
@@ -20,6 +23,7 @@ import { resumePhase1IfPending } from "@/utils/phase1";
 import type { AppConfig, MediaComment, MediaStats } from "@/types";
 
 function App() {
+  const { t } = useTranslation();
   const currentView = useAppStore((s) => s.currentView);
   const setStats = useAppStore((s) => s.setStats);
   const setConfig = useAppStore((s) => s.setConfig);
@@ -46,6 +50,20 @@ function App() {
     };
     loadInitial();
   }, [setStats, setConfig, refreshCounter]);
+
+  // Silent update check shortly after startup; nudge via toast + rail badge
+  const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const info = await checkForUpdate();
+      if (info?.update_available) {
+        toast.info(
+          t("settings.aboutUpdateToast", { version: info.latest_version })
+        );
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [checkForUpdate, t]);
 
   // Apply theme to document when config changes
   useEffect(() => {

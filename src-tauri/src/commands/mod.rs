@@ -13,5 +13,6 @@ pub mod schedule;
 pub mod sync;
 pub mod tags;
 pub mod undo;
+pub mod update;
 pub mod volume;
 pub mod watch;

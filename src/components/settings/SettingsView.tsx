@@ -14,15 +14,19 @@ import {
   Trash2,
   ToggleLeft,
   ToggleRight,
+  Info,
 } from "lucide-react";
 import type { AppConfig, ScheduleConfig, McpStatus } from "@/types";
+import { AboutTab } from "./AboutTab";
+import { useUpdateStore } from "@/stores/updateStore";
 
-type Tab = "general" | "watch" | "schedule" | "mcp";
+type Tab = "general" | "watch" | "schedule" | "mcp" | "about";
 
 export function SettingsView() {
   const { t, i18n } = useTranslation();
 
   const [activeTab, setActiveTab] = useState<Tab>("general");
+  const updateAvailable = useUpdateStore((s) => s.info?.update_available);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -196,6 +200,7 @@ export function SettingsView() {
     { id: "watch", label: t("settings.watch"), icon: Eye },
     { id: "schedule", label: t("settings.schedule"), icon: Clock },
     { id: "mcp", label: t("settings.mcp"), icon: Server },
+    { id: "about", label: t("settings.about"), icon: Info },
   ];
 
   if (loading || !config) {
@@ -234,6 +239,9 @@ export function SettingsView() {
             >
               <Icon size={14} />
               {tab.label}
+              {tab.id === "about" && updateAvailable && (
+                <span className="w-1.5 h-1.5 rounded-full bg-accent" />
+              )}
             </button>
           );
         })}
@@ -599,6 +607,9 @@ export function SettingsView() {
             </div>
           </div>
         )}
+
+        {/* About tab */}
+        {activeTab === "about" && <AboutTab />}
       </div>
     </div>
   );

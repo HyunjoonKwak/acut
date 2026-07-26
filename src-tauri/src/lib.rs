@@ -179,6 +179,10 @@ pub fn run() {
             commands::nas::nas_upload,
             commands::nas::nas_cancel_upload,
             commands::nas::nas_uploaded_media_ids,
+            // App update
+            commands::update::check_for_update,
+            commands::update::download_update,
+            commands::update::open_release_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

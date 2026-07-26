@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/stores/appStore";
+import { useUpdateStore } from "@/stores/updateStore";
 import {
   viewToArea,
   AREA_DEFAULT_VIEW,
@@ -35,6 +36,7 @@ export function NavRail() {
   const currentView = useAppStore((s) => s.currentView);
   const setCurrentView = useAppStore((s) => s.setCurrentView);
   const lastAreaViews = useAppStore((s) => s.lastAreaViews);
+  const updateAvailable = useUpdateStore((s) => s.info?.update_available);
   const activeArea = viewToArea(currentView);
 
   const goToArea = (area: AppArea) => {
@@ -62,6 +64,7 @@ export function NavRail() {
         label={t("rail.settings")}
         isActive={activeArea === "settings"}
         onClick={() => goToArea("settings")}
+        badge={updateAvailable}
       />
     </nav>
   );
@@ -72,22 +75,27 @@ function RailButton({
   label,
   isActive,
   onClick,
+  badge,
 }: {
   icon: React.ComponentType<{ size?: number }>;
   label: string;
   isActive: boolean;
   onClick: () => void;
+  badge?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       title={label}
-      className={`w-11 h-11 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
+      className={`relative w-11 h-11 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
         isActive
           ? "bg-accent/15 text-accent"
           : "text-text-secondary hover:text-text-primary hover:bg-bg-primary"
       }`}
     >
+      {badge && (
+        <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-accent" />
+      )}
       <Icon size={17} />
       <span className="text-[8px] font-medium leading-none">{label}</span>
     </button>

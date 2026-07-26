@@ -1,7 +1,8 @@
 {
   "app": {
     "name": "에이컷",
-    "search": "검색..."
+    "search": "검색...",
+    "statsTooltip": "라이브러리: 미디어 {{count}}개 · 전체 용량 {{size}}"
   },
   "rail": {
     "ariaLabel": "주 내비게이션",

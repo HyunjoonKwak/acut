@@ -1,7 +1,10 @@
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/stores/appStore";
+import { useUpdateStore } from "@/stores/updateStore";
 import { formatFileSize, formatCount } from "@/utils/format";
-import { Search, FolderOpen } from "lucide-react";
+import { Search, FolderOpen, ArrowUpCircle } from "lucide-react";
 
 /**
  * Slim top bar: app identity, global search, scan progress and library stats.
@@ -15,6 +18,16 @@ export function TitleBar() {
   const stats = useAppStore((s) => s.stats);
   const isScanning = useAppStore((s) => s.isScanning);
   const scanProgress = useAppStore((s) => s.scanProgress);
+  const updateInfo = useUpdateStore((s) => s.info);
+
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+  }, []);
+
+  const updateAvailable = updateInfo?.update_available;
 
   return (
     <header
@@ -31,6 +44,28 @@ export function TitleBar() {
           {t("app.name")}
         </span>
       </div>
+
+      {/* Version — click opens Settings (About tab has the updater) */}
+      {appVersion && (
+        <button
+          onClick={() => setCurrentView("settings")}
+          title={
+            updateAvailable
+              ? t("settings.aboutUpdateAvailable", {
+                  version: updateInfo.latest_version,
+                })
+              : t("settings.aboutVersion")
+          }
+          className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono tabular-nums transition-colors ${
+            updateAvailable
+              ? "text-accent bg-accent/10 hover:bg-accent/20"
+              : "text-text-secondary/70 hover:text-text-primary"
+          }`}
+        >
+          v{appVersion}
+          {updateAvailable && <ArrowUpCircle size={11} />}
+        </button>
+      )}
 
       {/* Search */}
       <div className="flex-1 max-w-sm mx-3">
@@ -70,7 +105,13 @@ export function TitleBar() {
 
       {/* Stats */}
       {stats && (
-        <div className="text-[10px] text-text-secondary/70 tabular-nums">
+        <div
+          className="text-[10px] text-text-secondary/70 tabular-nums"
+          title={t("app.statsTooltip", {
+            count: stats.total_count.toLocaleString(),
+            size: formatFileSize(stats.total_size),
+          })}
+        >
           {formatCount(stats.total_count)} · {formatFileSize(stats.total_size)}
         </div>
       )}

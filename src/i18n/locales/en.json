@@ -1,7 +1,8 @@
 {
   "app": {
     "name": "A-Cut",
-    "search": "Search..."
+    "search": "Search...",
+    "statsTooltip": "Library: {{count}} media files · {{size}} total"
   },
   "rail": {
     "ariaLabel": "Main navigation",

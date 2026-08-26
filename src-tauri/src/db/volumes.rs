@@ -120,9 +120,20 @@ pub fn volume_stat(path: impl AsRef<Path>) -> Result<(PathBuf, u64, u64)> {
         return Err(VolumeError::Io(std::io::Error::last_os_error()));
     }
     let mount = unsafe { std::ffi::CStr::from_ptr(st.f_mntonname.as_ptr()) };
-    let mount = PathBuf::from(std::ffi::OsStr::from_bytes(mount.to_bytes()));
+    let mount = normalize_mount(PathBuf::from(std::ffi::OsStr::from_bytes(mount.to_bytes())));
     let bsize = st.f_bsize as u64;
     Ok((mount, st.f_blocks * bsize, st.f_bavail * bsize))
+}
+
+/// macOS APFS는 Catalina부터 시스템 볼륨과 데이터 볼륨을 나눈다. 사용자 데이터의
+/// 실제 마운트 지점은 `/System/Volumes/Data`인데, 우리가 다루는 경로는 firmlink를
+/// 거친 `/Users/...`나 `/var/...`다. 그대로 두면 `strip_prefix`가 항상 실패한다.
+fn normalize_mount(p: PathBuf) -> PathBuf {
+    if p == Path::new("/System/Volumes/Data") {
+        PathBuf::from("/")
+    } else {
+        p
+    }
 }
 
 /// 경로 하나로 볼륨 정보를 모아 온다.
@@ -204,6 +215,30 @@ mod tests {
     #[test]
     fn unknown_uuid_is_not_found() {
         assert!(find_mount("00000000-0000-0000-0000-000000000000").is_none());
+    }
+
+    #[test]
+    fn data_volume_is_reported_as_root() {
+        // APFS 데이터 볼륨을 그대로 두면 사용자 경로에서 strip_prefix가 실패한다
+        assert_eq!(
+            normalize_mount(PathBuf::from("/System/Volumes/Data")),
+            PathBuf::from("/")
+        );
+        // 외장 볼륨은 그대로 둔다
+        assert_eq!(
+            normalize_mount(PathBuf::from("/Volumes/PHOTO 1")),
+            PathBuf::from("/Volumes/PHOTO 1")
+        );
+    }
+
+    #[test]
+    fn user_paths_are_relative_to_the_boot_volume() {
+        // 실제로 홈 디렉터리가 볼륨 상대경로로 바뀌어야 한다
+        let home = std::env::var("HOME").unwrap();
+        let v = describe(&home).expect("홈 볼륨");
+        let rel = to_relative(&v.mount_path, Path::new(&home));
+        assert!(rel.is_some(), "홈 경로가 볼륨 상대경로로 바뀌어야 한다");
+        assert!(!rel.unwrap().to_string_lossy().starts_with('/'));
     }
 
     #[test]

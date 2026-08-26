@@ -6,6 +6,7 @@ mod core;
 mod db;
 mod media;
 mod nas;
+mod scan;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;

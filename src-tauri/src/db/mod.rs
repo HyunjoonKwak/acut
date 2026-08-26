@@ -1,3 +1,5 @@
+pub mod conn;
+pub mod volumes;
 pub mod connection;
 pub mod migrations;
 pub mod queries;

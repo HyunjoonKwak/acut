@@ -1,0 +1,237 @@
+-- 에이컷 v2 스키마
+-- 대규모 로컬 라이브러리를 위한 오프라인 우선 사진 관리자
+--
+-- 설계 원칙
+--   1. 절대경로를 저장하지 않는다. 볼륨 UUID + 볼륨 내 상대경로.
+--      macOS 마운트 경로는 불안정하다 (같은 이름 볼륨이 있으면 "PHOTO 1"로 밀림).
+--   2. EXIF는 files 안에 인라인. 조인 없이 정렬·필터한다.
+--   3. taken_at은 항상 채워지고(폴백 체인), 어디서 나온 값인지 함께 남긴다.
+--   4. 고르기 결과는 그룹이 아니라 파일의 속성이다.
+--   5. 물리적 위치가 곧 처리 단계다 (작업대 / 내사진 / 공용).
+
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous  = NORMAL;
+PRAGMA foreign_keys = ON;
+
+-- ---------------------------------------------------------------------------
+-- 볼륨 — 여러 디스크에 흩어질 수 있다 (운영 SSD · 아카이브 · 백업)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS volumes (
+    uuid            TEXT PRIMARY KEY,          -- NSURLVolumeUUIDStringKey
+    name            TEXT NOT NULL,             -- 표시용. 바뀔 수 있다
+    last_mount_path TEXT,                      -- 마지막으로 본 마운트 지점
+    role            TEXT NOT NULL,             -- library | archive | backup
+    total_bytes     INTEGER,
+    free_bytes      INTEGER,
+    is_online       INTEGER NOT NULL DEFAULT 0,
+    last_seen_at    INTEGER
+);
+
+-- ---------------------------------------------------------------------------
+-- 폴더 — 경로 문자열 대신 정규화. inode로 외부 이동을 따라간다
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS folders (
+    id          INTEGER PRIMARY KEY,
+    volume_uuid TEXT NOT NULL REFERENCES volumes(uuid) ON DELETE CASCADE,
+    rel_path    TEXT NOT NULL,                 -- 볼륨 내 상대경로 (NFC 정규화)
+    parent_id   INTEGER REFERENCES folders(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    inode       INTEGER,                       -- Finder에서 이름을 바꿔도 추적
+    area        INTEGER NOT NULL,              -- 0 작업대 · 1 내사진 · 2 공용 · 3 기타
+    event_date  TEXT,                          -- 'YYYY-MM-DD' — 이벤트 폴더면
+    event_name  TEXT,                          -- '거제통영 가족여행'
+    file_count  INTEGER NOT NULL DEFAULT 0,    -- 캐시. 재귀 아님
+    scanned_at  INTEGER,
+    UNIQUE (volume_uuid, rel_path)
+);
+CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
+CREATE INDEX IF NOT EXISTS idx_folders_area   ON folders(area);
+CREATE INDEX IF NOT EXISTS idx_folders_inode  ON folders(volume_uuid, inode);
+CREATE INDEX IF NOT EXISTS idx_folders_event  ON folders(event_date);
+
+-- ---------------------------------------------------------------------------
+-- 파일 — EXIF 인라인. 이 테이블 하나로 정렬·필터가 끝나야 한다
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS files (
+    id          INTEGER PRIMARY KEY,
+    folder_id   INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,                 -- NFC 정규화
+    ext         TEXT,                          -- 소문자, 점 없음
+    size        INTEGER NOT NULL,
+    kind        INTEGER NOT NULL,              -- 0 사진 · 1 영상 · 2 RAW
+
+    -- 시각 --------------------------------------------------------------
+    -- taken_at은 절대 NULL이 아니다. 폴백 체인의 결과가 항상 들어간다:
+    --   EXIF DateTimeOriginal → 파일명 파싱 → min-plausible(mtime, birthtime) → now
+    -- 정렬은 오직 이 컬럼으로 한다 (COALESCE 금지 — 인덱스를 못 탄다)
+    taken_at        INTEGER NOT NULL,
+    taken_at_source INTEGER NOT NULL,          -- 0 exif · 1 파일명 · 2 파일시각 · 3 불명
+    created_at      INTEGER,                   -- birthtime
+    modified_at     INTEGER,                   -- mtime
+
+    -- 동일성 ------------------------------------------------------------
+    quick_hash  TEXT,                          -- xxHash64, 앞뒤 일부
+    full_hash   TEXT,                          -- SHA-256, 전체
+
+    -- 이미지 속성 -------------------------------------------------------
+    width       INTEGER,
+    height      INTEGER,
+    orientation INTEGER,
+    duration_ms INTEGER,                       -- 영상
+
+    -- 고르기 결과 — 그룹이 아니라 파일의 속성 -----------------------------
+    culling_flag INTEGER NOT NULL DEFAULT 0,   -- 0 미판정 · 1 남김 · 2 제외
+    rating       INTEGER NOT NULL DEFAULT 0,   -- 0~5
+    favorite     INTEGER NOT NULL DEFAULT 0,
+    comment      TEXT,
+
+    -- EXIF 인라인 -------------------------------------------------------
+    cam_make    TEXT,
+    cam_model   TEXT,
+    lens        TEXT,
+    iso         INTEGER,
+    aperture    REAL,
+    shutter     TEXT,                          -- '1/250' 형태 그대로
+    focal_mm    REAL,
+    gps_lat     REAL,
+    gps_lon     REAL,
+    gps_alt     REAL,
+    geo_name    TEXT,                          -- 역지오코딩 캐시 ('거제시')
+
+    -- 품질 점수 (고르기용) ------------------------------------------------
+    sharpness   REAL,
+    exposure    REAL,
+
+    -- AI — 나중에 채운다. 컬럼은 미리 둔다 (재인덱싱 방지) ------------------
+    embedding   BLOB,
+
+    inode       INTEGER,
+    scanned_at  INTEGER NOT NULL,
+    UNIQUE (folder_id, name)
+);
+
+-- 정렬·필터가 전부 인덱스를 타야 한다
+CREATE INDEX IF NOT EXISTS idx_files_taken     ON files(taken_at DESC);
+CREATE INDEX IF NOT EXISTS idx_files_folder    ON files(folder_id, taken_at DESC);
+CREATE INDEX IF NOT EXISTS idx_files_full_hash ON files(full_hash) WHERE full_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_files_quick     ON files(size, quick_hash);
+CREATE INDEX IF NOT EXISTS idx_files_culling   ON files(culling_flag) WHERE culling_flag <> 0;
+CREATE INDEX IF NOT EXISTS idx_files_rating    ON files(rating) WHERE rating > 0;
+CREATE INDEX IF NOT EXISTS idx_files_kind      ON files(kind, taken_at DESC);
+CREATE INDEX IF NOT EXISTS idx_files_gps       ON files(gps_lat, gps_lon) WHERE gps_lat IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_files_camera    ON files(cam_model) WHERE cam_model IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_files_inode     ON files(inode);
+
+-- ---------------------------------------------------------------------------
+-- 썸네일 — 무효화 키를 함께 저장한다. 원본이 바뀌면 다시 만든다
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS thumbs (
+    file_id    INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    rel_path   TEXT,                           -- 캐시 루트 기준 상대경로
+    src_size   INTEGER NOT NULL,               -- 만들 당시 원본 크기
+    src_mtime  INTEGER NOT NULL,               -- 만들 당시 원본 수정시각
+    width      INTEGER,
+    height     INTEGER,
+    state      INTEGER NOT NULL DEFAULT 0,     -- 0 대기 · 1 완료 · 2 실패
+    error      TEXT,
+    updated_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_thumbs_state ON thumbs(state) WHERE state <> 1;
+
+-- ---------------------------------------------------------------------------
+-- 태그
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tags (
+    id    INTEGER PRIMARY KEY,
+    name  TEXT NOT NULL UNIQUE,
+    color TEXT
+);
+CREATE TABLE IF NOT EXISTS file_tags (
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    tag_id  INTEGER NOT NULL REFERENCES tags(id)  ON DELETE CASCADE,
+    PRIMARY KEY (file_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);
+
+-- ---------------------------------------------------------------------------
+-- 고르기 그룹 — 중복 · 잡동사니 · 같은 순간 · (나중) 시각적 유사
+-- 판정 결과는 files.culling_flag에 남고, 그룹은 작업 단위일 뿐이다
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS groups (
+    id         INTEGER PRIMARY KEY,
+    kind       INTEGER NOT NULL,               -- 0 완전중복 · 1 잡동사니 · 2 같은순간 · 3 시각유사
+    reason     TEXT,                           -- '스크린샷' 등 세부 사유
+    size_bytes INTEGER NOT NULL DEFAULT 0,     -- 정리하면 확보되는 용량
+    state      INTEGER NOT NULL DEFAULT 0,     -- 0 대기 · 1 처리됨 · 2 보류
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    file_id  INTEGER NOT NULL REFERENCES files(id)  ON DELETE CASCADE,
+    is_best  INTEGER NOT NULL DEFAULT 0,       -- 자동 선정된 대표
+    score    REAL,
+    PRIMARY KEY (group_id, file_id)
+);
+CREATE INDEX IF NOT EXISTS idx_groups_state   ON groups(kind, state);
+CREATE INDEX IF NOT EXISTS idx_gmembers_file  ON group_members(file_id);
+
+-- ---------------------------------------------------------------------------
+-- NAS 상태 — 어떤 파일이 아직 안 올라갔는지
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS nas_state (
+    file_id     INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    area        INTEGER NOT NULL,              -- 1 개인 · 2 공용
+    remote_path TEXT,
+    uploaded_at INTEGER,
+    full_hash   TEXT                           -- 올린 시점의 해시. 바뀌면 재업로드
+);
+CREATE INDEX IF NOT EXISTS idx_nas_hash ON nas_state(full_hash);
+
+-- ---------------------------------------------------------------------------
+-- 작업 저널 — 이동·삭제·이름변경을 배치 단위로 되돌린다
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS batches (
+    id         INTEGER PRIMARY KEY,
+    kind       TEXT NOT NULL,                  -- move | trash | rename | organize | upload
+    label      TEXT,                           -- 사람이 읽을 설명
+    item_count INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    undone_at  INTEGER
+);
+CREATE TABLE IF NOT EXISTS journal (
+    id       INTEGER PRIMARY KEY,
+    batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+    file_id  INTEGER,                          -- 삭제 후엔 끊길 수 있다
+    op       TEXT NOT NULL,
+    from_vol TEXT, from_path TEXT,
+    to_vol   TEXT, to_path   TEXT,
+    ok       INTEGER NOT NULL DEFAULT 1,
+    error    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_journal_batch ON journal(batch_id);
+
+-- ---------------------------------------------------------------------------
+-- 설정
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- 나중에 — 얼굴/인물. 지금은 자리만 잡아둔다
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS persons (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT,
+    cover_file INTEGER REFERENCES files(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS faces (
+    id        INTEGER PRIMARY KEY,
+    file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+    bbox      TEXT,
+    embedding BLOB
+);
+CREATE INDEX IF NOT EXISTS idx_faces_file   ON faces(file_id);
+CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id);

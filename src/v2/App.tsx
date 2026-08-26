@@ -3,6 +3,7 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import Cull from "./Cull";
 
 // ── 타입 (Rust 쪽과 맞춰야 한다) ─────────────────────────────────────
 type FileRow = {
@@ -79,6 +80,7 @@ export default function App() {
   const [scanMsg, setScanMsg] = useState<string>("");
   const [thumbSize, setThumbSize] = useState(180);
   const [selected, setSelected] = useState<number | null>(null);
+  const [culling, setCulling] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // 요청이 겹치지 않게 — 스크롤이 빠르면 같은 페이지를 두 번 부를 수 있다
@@ -229,6 +231,12 @@ export default function App() {
             >
               다시 스캔
             </button>
+            <button
+              onClick={() => setCulling(true)}
+              className="h-7 px-3 rounded-md bg-[#F0B429] text-[#231A00] font-semibold"
+            >
+              고르기
+            </button>
           </>
         )}
         <div className="flex-1" />
@@ -346,6 +354,10 @@ export default function App() {
           {loading && <div className="py-4 text-center text-[#6D7B7E]">불러오는 중…</div>}
         </main>
       </div>
+
+      {culling && lib && (
+        <Cull cacheRoot={lib.cache_root} onClose={() => { setCulling(false); loadFirst(); }} />
+      )}
 
       {/* 상태바 */}
       <div className="h-7 shrink-0 flex items-center gap-4 px-3 bg-[#1C2123] border-t border-[#242C2E] text-[11.5px] text-[#7C8A8D] tabular-nums">

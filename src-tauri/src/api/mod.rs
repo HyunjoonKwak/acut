@@ -6,6 +6,8 @@
 //! 6만 장 그리드에서는 문자열 복사 비용이 그대로 렉이 된다. 프론트는 받은 경로를
 //! `convertFileSrc`로 바꿔 `<img src>`에 넣으면 된다 — 웹뷰가 파일을 직접 읽는다.
 
+pub mod cull;
+
 use crate::db::conn::Db;
 use crate::db::query::{self, Cursor, Filter, Page};
 use crate::media::cache;
@@ -44,7 +46,7 @@ impl AppState {
         }
     }
 
-    fn current(&self) -> Result<Library, String> {
+    pub(crate) fn current(&self) -> Result<Library, String> {
         self.library
             .lock()
             .map_err(|_| "상태를 읽을 수 없습니다".to_string())?
@@ -53,7 +55,7 @@ impl AppState {
     }
 }
 
-fn err<E: std::fmt::Display>(e: E) -> String {
+pub(crate) fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod ai;
+mod api;
 mod commands;
 mod core;
 mod db;
@@ -43,6 +44,11 @@ pub fn run() {
             let database =
                 Database::new(&app_data_dir).expect("Failed to initialize database");
             app.manage(Arc::new(database));
+
+            // v2 — 재설계된 데이터 계층. 기존 것과 별도 파일을 쓴다.
+            let v2 = db::conn::Db::open(app_data_dir.join("acut-v2.db"))
+                .expect("v2 데이터베이스를 열 수 없습니다");
+            app.manage(api::AppState::new(v2));
             app.manage(commands::nas::NasState::default());
 
             // Load config
@@ -65,6 +71,18 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // ── v2 (재설계) ──────────────────────────────────
+            api::library_open,
+            api::library_reopen,
+            api::library_stats,
+            api::volumes_list,
+            api::scan_start,
+            api::scan_cancel,
+            api::files_page,
+            api::files_summary,
+            api::files_mark,
+            api::file_detail,
+            api::folders_list,
             commands::scan::scan_directory,
             commands::scan::cancel_scan,
             commands::scan::process_phase1,

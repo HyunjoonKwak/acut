@@ -136,14 +136,14 @@ fn parse_digits(d: &[u8]) -> Option<i64> {
         let (y, mo, da) = (num(&d[0..4]), num(&d[4..6]), num(&d[6..8]));
         let (h, mi, s) = (num(&d[8..10]), num(&d[10..12]), num(&d[12..14]));
         if valid_date(y, mo, da) && h < 24 && mi < 60 && s < 60 {
-            return to_unix(y, mo, da, h, mi, s);
+            return Some(civil_to_unix(y, mo, da, h, mi, s));
         }
         return None;
     }
     if d.len() == 8 {
         let (y, mo, da) = (num(&d[0..4]), num(&d[4..6]), num(&d[6..8]));
         if valid_date(y, mo, da) {
-            return to_unix(y, mo, da, 0, 0, 0);
+            return Some(civil_to_unix(y, mo, da, 0, 0, 0));
         }
     }
     None
@@ -158,7 +158,7 @@ fn valid_date(y: i64, mo: i64, da: i64) -> bool {
 /// 시간대를 적용하지 않는 이유: 파일명의 시각은 촬영 기기의 지역 시각이고,
 /// 우리는 그 값을 날짜 폴더로 쓸 뿐이다. 여기서 UTC 변환을 하면 자정 근처
 /// 사진이 하루 밀린다. 지역 시각을 그대로 두는 편이 폴더 분류에 맞다.
-fn to_unix(y: i64, mo: i64, da: i64, h: i64, mi: i64, s: i64) -> Option<i64> {
+pub fn civil_to_unix(y: i64, mo: i64, da: i64, h: i64, mi: i64, s: i64) -> i64 {
     // days_from_civil (Howard Hinnant 알고리즘)
     let y2 = if mo <= 2 { y - 1 } else { y };
     let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
@@ -167,7 +167,7 @@ fn to_unix(y: i64, mo: i64, da: i64, h: i64, mi: i64, s: i64) -> Option<i64> {
     let doy = (153 * mp + 2) / 5 + da - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = era * 146_097 + doe - 719_468;
-    Some(days * 86_400 + h * 3_600 + mi * 60 + s)
+    days * 86_400 + h * 3_600 + mi * 60 + s
 }
 
 #[cfg(test)]
@@ -176,7 +176,7 @@ mod tests {
 
     const NOW: i64 = 1_800_000_000; // 2027년 어딘가
     fn t(y: i64, mo: i64, d: i64, h: i64, mi: i64, s: i64) -> i64 {
-        to_unix(y, mo, d, h, mi, s).unwrap()
+        civil_to_unix(y, mo, d, h, mi, s)
     }
 
     // ── 파일명 파싱 ────────────────────────────────────────────────────

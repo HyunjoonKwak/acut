@@ -17,6 +17,7 @@ use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
 pub mod kinds;
+pub mod thumbs;
 
 pub use kinds::Kind;
 
@@ -494,5 +495,51 @@ mod real {
         }
         println!();
         assert!(p.found > 1000, "실제 라이브러리를 찾아야 한다");
+    }
+
+    /// 스캔 + 썸네일 전체 파이프라인.
+    /// `cargo test --release --lib scan::real::full_pipeline -- --ignored --nocapture`
+    #[test]
+    #[ignore = "실제 라이브러리 전체 · 수 분 걸린다"]
+    fn full_pipeline() {
+        let root = Path::new("/Volumes/MAIN SSD/MERGE/사진통합작업");
+        if !root.is_dir() {
+            eprintln!("라이브러리 없음 — 건너뜀");
+            return;
+        }
+        // 캐시는 쓰기 가능한 임시 폴더에 만든다 (원본 볼륨을 건드리지 않는다)
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path().join("acut.db")).unwrap();
+
+        let t0 = std::time::Instant::now();
+        let p = scan_folder(&db, root, 1, |_| {}).expect("스캔");
+        let scan_s = t0.elapsed().as_secs_f64();
+        println!("\n═══ 1단계 스캔 ═══");
+        println!("  {}장 · {:.1}초 · {:.0}장/초", p.found, scan_s, p.found as f64 / scan_s);
+
+        let vol = crate::db::volumes::describe(root).unwrap();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let t1 = std::time::Instant::now();
+        let last = std::sync::Mutex::new(std::time::Instant::now());
+        let tp = thumbs::generate(&db, &vol.uuid, &vol.mount_path, tmp.path(), cancel, |pr| {
+            let mut l = last.lock().unwrap();
+            if l.elapsed().as_secs() >= 5 {
+                eprintln!("   썸네일 {}/{} · {:.0}s", pr.done, pr.total, t1.elapsed().as_secs_f64());
+                *l = std::time::Instant::now();
+            }
+        })
+        .expect("썸네일");
+        let thumb_s = t1.elapsed().as_secs_f64();
+
+        println!("\n═══ 2단계 썸네일 ═══");
+        println!("  대상 {}장 · 성공 {} · 실패 {}", tp.total, tp.done - tp.failed, tp.failed);
+        println!("  {:.1}초 · {:.0}장/초 · {:.1}ms/장",
+                 thumb_s, tp.total as f64 / thumb_s, thumb_s * 1000.0 / tp.total as f64);
+
+        let (bytes, count) = crate::media::cache::cache_stats(&crate::media::cache::cache_root(tmp.path()));
+        println!("  캐시 {}개 · {:.0} MB (원본 대비 {:.1}%)",
+                 count, bytes as f64 / 1024.0 / 1024.0,
+                 bytes as f64 / 373.5 / 1024.0 / 1024.0 / 1024.0 * 100.0);
+        println!("\n  전체 {:.1}초\n", scan_s + thumb_s);
     }
 }

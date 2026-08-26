@@ -4,6 +4,7 @@ mod ai;
 mod api;
 mod commands;
 mod core;
+mod cull;
 mod db;
 mod media;
 mod nas;

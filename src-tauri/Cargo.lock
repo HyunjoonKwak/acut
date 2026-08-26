@@ -8,6 +8,8 @@ version = "0.3.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
  "glob",
  "image",
  "kamadak-exif",

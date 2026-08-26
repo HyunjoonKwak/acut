@@ -4,6 +4,7 @@ mod ai;
 mod commands;
 mod core;
 mod db;
+mod media;
 mod nas;
 
 use std::sync::Arc;

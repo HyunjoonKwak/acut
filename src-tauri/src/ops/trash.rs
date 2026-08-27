@@ -88,18 +88,8 @@ fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
     })
 }
 
-fn open_batch(db: &Db, kind: &str, label: &str) -> Result<i64> {
-    db.write(|c| {
-        c.execute(
-            "INSERT INTO batches(kind,label,created_at) VALUES(?1,?2,strftime('%s','now'))",
-            rusqlite::params![kind, label],
-        )?;
-        Ok(c.last_insert_rowid())
-    })
-}
-
 /// 겹치지 않는 이름을 찾는다. 같은 이름이 이미 휴지통에 있으면 뒤에 번호를 붙인다.
-fn free_path(want: PathBuf) -> PathBuf {
+pub fn free_path(want: PathBuf) -> PathBuf {
     if !want.exists() {
         return want;
     }
@@ -124,7 +114,7 @@ fn free_path(want: PathBuf) -> PathBuf {
 ///
 /// `.acut`은 라이브러리 안에 있으니 실제로는 언제나 rename이다. 그래도
 /// 폴백을 둔다 — 라이브러리가 심볼릭 링크로 다른 장치를 가리킬 수 있다.
-fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+pub fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -140,15 +130,18 @@ fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
 /// 제외로 판정한 것들을 휴지통으로 옮긴다.
 pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
     let items = load(db, ids, false)?;
-    let batch_id = open_batch(db, "trash", label)?;
+    let batch_id = super::open_batch(db, "trash", label)?;
     let mut out = Outcome { batch_id, ..Default::default() };
 
     for it in &items {
-        let (Some(lib_dir), Some(mount)) = (
-            libraries::get(db, it.library_id)?.and_then(|l| l.dir),
+        let lib = libraries::get(db, it.library_id)?;
+        let (Some(lib_dir), Some(lib_rel), Some(mount)) = (
+            lib.as_ref().and_then(|l| l.dir.clone()),
+            lib.as_ref().map(|l| l.rel_path.clone()),
             crate::db::volumes::find_mount(&it.volume_uuid),
         ) else {
-            record(db, batch_id, it, None, Err("디스크가 연결되어 있지 않습니다"))?;
+            super::record(db, batch_id, "trash", it.id, &it.volume_uuid, &it.vol_rel, None,
+                Err("디스크가 연결되어 있지 않습니다"))?;
             out.failed += 1;
             out.first_error.get_or_insert("디스크가 연결되어 있지 않습니다".into());
             continue;
@@ -164,7 +157,10 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
 
         match move_file(&src, &dest) {
             Ok(()) => {
-                record(db, batch_id, it, Some(&dest_rel), Ok(()))?;
+                // 저널 경로는 언제나 볼륨 기준이다 — 되돌릴 때 마운트만 붙이면 된다
+                let to_vol_rel = crate::media::cache::rel_path(&lib_rel, &dest_rel);
+                super::record(db, batch_id, "trash", it.id, &it.volume_uuid, &it.vol_rel,
+                    Some(&to_vol_rel), Ok(()))?;
                 db.write(|c| {
                     c.execute(
                         "UPDATE files SET trashed_at = strftime('%s','now'),
@@ -178,26 +174,22 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
             }
             Err(e) => {
                 let msg = e.to_string();
-                record(db, batch_id, it, None, Err(&msg))?;
+                super::record(db, batch_id, "trash", it.id, &it.volume_uuid, &it.vol_rel, None,
+                    Err(&msg))?;
                 out.failed += 1;
                 out.first_error.get_or_insert(msg);
             }
         }
     }
 
-    db.write(|c| {
-        c.execute(
-            "UPDATE batches SET item_count = ?2 WHERE id = ?1",
-            rusqlite::params![batch_id, out.moved as i64],
-        )
-    })?;
+    super::close_batch(db, batch_id, out.moved)?;
     Ok(out)
 }
 
 /// 휴지통에서 제자리로 되돌린다. 평점·판정은 그대로 살아 있다.
 pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
     let items = load(db, ids, true)?;
-    let batch_id = open_batch(db, "restore", "휴지통에서 되돌리기")?;
+    let batch_id = super::open_batch(db, "restore", "휴지통에서 되돌리기")?;
     let mut out = Outcome { batch_id, ..Default::default() };
 
     let paths: std::collections::HashMap<i64, String> = db.read(|c| {
@@ -237,12 +229,7 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
             }
         }
     }
-    db.write(|c| {
-        c.execute(
-            "UPDATE batches SET item_count = ?2 WHERE id = ?1",
-            rusqlite::params![batch_id, out.moved as i64],
-        )
-    })?;
+    super::close_batch(db, batch_id, out.moved)?;
     Ok(out)
 }
 
@@ -252,7 +239,7 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
 /// 확인한다. 심볼릭 링크나 `..`으로 밖을 가리키면 건너뛴다.
 pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
     let items = load(db, ids, true)?;
-    let batch_id = open_batch(db, "delete", "휴지통 비우기")?;
+    let batch_id = super::open_batch(db, "delete", "휴지통 비우기")?;
     let mut out = Outcome { batch_id, ..Default::default() };
 
     let paths: std::collections::HashMap<i64, String> = db.read(|c| {
@@ -289,12 +276,7 @@ pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
         out.moved += 1;
         out.bytes += it.size;
     }
-    db.write(|c| {
-        c.execute(
-            "UPDATE batches SET item_count = ?2 WHERE id = ?1",
-            rusqlite::params![batch_id, out.moved as i64],
-        )
-    })?;
+    super::close_batch(db, batch_id, out.moved)?;
     Ok(out)
 }
 
@@ -307,31 +289,6 @@ fn is_inside(path: &Path, root: &Path) -> bool {
         .canonicalize()
         .or_else(|_| path.parent().map(Path::canonicalize).unwrap_or_else(|| path.canonicalize()));
     real.map(|p| p.starts_with(&root)).unwrap_or(false)
-}
-
-fn record(
-    db: &Db,
-    batch_id: i64,
-    it: &Item,
-    to_path: Option<&str>,
-    r: std::result::Result<(), &str>,
-) -> Result<()> {
-    db.write(|c| {
-        c.execute(
-            "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok,error)
-             VALUES(?1,?2,'trash',?3,?4,?3,?5,?6,?7)",
-            rusqlite::params![
-                batch_id,
-                it.id,
-                it.volume_uuid,
-                it.vol_rel,
-                to_path,
-                r.is_ok() as i32,
-                r.err(),
-            ],
-        )
-    })?;
-    Ok(())
 }
 
 /// 휴지통에 든 것들의 개수와 용량.

@@ -6,6 +6,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import Cull from "./Cull";
 import Viewer from "./Viewer";
 import ScrollBar from "./ScrollBar";
+import Organize from "./Organize";
 import FilterBar, {
   EMPTY as EMPTY_PICKS,
   isEmpty as picksAreEmpty,
@@ -54,6 +55,14 @@ type Stats = {
 /** 캐시 용량 — 디스크를 훑어야 해서 자주 부르지 않는다 */
 type CacheUsage = { bytes: number; files: number };
 type Counted = { files: number; bytes: number };
+type Batch = {
+  id: number;
+  kind: string;
+  label: string | null;
+  item_count: number;
+  created_at: number;
+  undone_at: number | null;
+};
 type Outcome = {
   batch_id: number;
   moved: number;
@@ -124,7 +133,12 @@ export default function App() {
   const [busy, setBusy] = useState("");
   const [scanMsg, setScanMsg] = useState<string>("");
   const [thumbSize, setThumbSize] = useState(180);
+  /// 키보드·뷰어가 기준으로 삼는 한 장
   const [selected, setSelected] = useState<number | null>(null);
+  /// 여러 장 고르기. 정리는 이 묶음을 옮긴다.
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [organizing, setOrganizing] = useState(false);
+  const [batches, setBatches] = useState<Batch[]>([]);
   const [culling, setCulling] = useState(false);
   /// 뷰어에 띄운 사진의 rows 안 위치. null이면 뷰어가 닫힌 상태
   const [viewerAt, setViewerAt] = useState<number | null>(null);
@@ -227,6 +241,7 @@ export default function App() {
       setStats(st);
       setBuckets(bk);
       refreshTrash();
+      refreshBatches();
     } catch {
       /* 아직 등록된 라이브러리가 없을 수 있다 */
     }
@@ -429,6 +444,10 @@ export default function App() {
     };
   }, [seekTo]);
 
+  /// 고른 것들의 배열. `[...picked]`를 그대로 넘기면 렌더마다 새 배열이라
+  /// 정리 패널의 제안 요청이 끝없이 다시 돈다.
+  const pickedIds = useMemo(() => [...picked], [picked]);
+
   /// 뷰어가 훑고 다닐 목록 — 지금 화면에 올라온 순서 그대로
   const ids = useMemo(() => rows.map((r) => r.id), [rows]);
 
@@ -465,52 +484,6 @@ export default function App() {
     if (viewerAt !== null && viewerAt >= rows.length - 5) loadMore();
   }, [viewerAt, rows.length, loadMore]);
 
-  // 그리드 키보드 — 뷰어를 열지 않고도 판정하고 옮겨 다닌다.
-  // 뷰어와 같은 배열이라 손이 기억한 대로 눌린다.
-  useEffect(() => {
-    if (viewerAt !== null || culling) return;
-    const onKey = (e: KeyboardEvent) => {
-      // 찾기 입력칸에 쓰는 중이면 가로채지 않는다
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
-
-      const i =
-        selected === null ? -1 : rows.findIndex((r) => r.id === selected);
-      const move = (d: number) => {
-        const n = i < 0 ? 0 : i + d;
-        if (n < 0 || n >= rows.length) return;
-        e.preventDefault();
-        setSelected(rows[n].id);
-      };
-      switch (e.key) {
-        case " ":
-        case "Enter":
-          if (i < 0) return;
-          e.preventDefault();
-          setViewerAt(i);
-          return;
-        case "ArrowRight":
-          return move(1);
-        case "ArrowLeft":
-          return move(-1);
-        case "ArrowDown":
-          return move(cols);
-        case "ArrowUp":
-          return move(-cols);
-      }
-      if (i < 0) return;
-      const r = rows[i];
-      if (/^[0-5]$/.test(e.key)) markOne(r.id, { rating: +e.key });
-      else if (e.key === "p")
-        markOne(r.id, { cullingFlag: r.culling_flag === 1 ? 0 : 1 });
-      else if (e.key === "x")
-        markOne(r.id, { cullingFlag: r.culling_flag === 2 ? 0 : 2 });
-      else if (e.key === "f") markOne(r.id, { favorite: !r.favorite });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [viewerAt, culling, selected, rows, cols, markOne]);
-
   /// 접힌 마디의 자식은 그리지 않는다. 3,161줄을 통째로 그리면 사이드바가
   /// 느려지고 스크롤 막대가 실오라기가 된다.
   const visibleFolders = useMemo(
@@ -538,6 +511,124 @@ export default function App() {
       return next;
     });
   }, []);
+
+  /// 타일을 누를 때. ⌘은 하나씩 더하고, ⇧는 기준점부터 여기까지.
+  const pick = useCallback(
+    (id: number, e: React.MouseEvent) => {
+      if (e.metaKey || e.ctrlKey) {
+        setPicked((prev) => {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+        setSelected(id);
+        return;
+      }
+      if (e.shiftKey && selected !== null) {
+        const a = rows.findIndex((r) => r.id === selected);
+        const b = rows.findIndex((r) => r.id === id);
+        if (a >= 0 && b >= 0) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          setPicked(new Set(rows.slice(lo, hi + 1).map((r) => r.id)));
+          setSelected(id);
+          return;
+        }
+      }
+      setPicked(new Set([id]));
+      setSelected(id);
+    },
+    [rows, selected],
+  );
+
+  const refreshBatches = useCallback(async () => {
+    try {
+      setBatches(await invoke<Batch[]>("batches_recent", { limit: 20 }));
+    } catch {
+      /* 아직 아무 작업도 없다 */
+    }
+  }, []);
+
+  /// 가장 최근의 아직 안 물린 작업을 되돌린다 (⌘Z).
+  const undoLast = useCallback(async () => {
+    const last = batches.find((b) => b.undone_at === null);
+    if (!last) return;
+    setBusy("되돌리는 중…");
+    try {
+      const r = await invoke<Outcome>("batch_undo", { batchId: last.id });
+      setBusy(
+        r.failed > 0 ? `${r.failed}장 실패 — ${r.first_error ?? ""}` : "",
+      );
+      await Promise.all([
+        loadFirst(),
+        refreshMeta(),
+        refreshLibs(),
+        refreshBatches(),
+      ]);
+    } catch (e) {
+      setBusy(String(e));
+    }
+  }, [batches, loadFirst, refreshMeta, refreshLibs, refreshBatches]);
+
+  // 그리드 키보드 — 뷰어를 열지 않고도 판정하고 옮겨 다닌다.
+  // 뷰어와 같은 배열이라 손이 기억한 대로 눌린다.
+  useEffect(() => {
+    if (viewerAt !== null || culling || organizing) return;
+    const onKey = (e: KeyboardEvent) => {
+      // 찾기 입력칸에 쓰는 중이면 가로채지 않는다
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+
+      const i =
+        selected === null ? -1 : rows.findIndex((r) => r.id === selected);
+      const move = (d: number) => {
+        const n = i < 0 ? 0 : i + d;
+        if (n < 0 || n >= rows.length) return;
+        e.preventDefault();
+        setSelected(rows[n].id);
+        // ⇧를 잡고 움직이면 묶음이 늘어난다
+        setPicked((prev) =>
+          e.shiftKey ? new Set([...prev, rows[n].id]) : new Set([rows[n].id]),
+        );
+      };
+      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        undoLast();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+        e.preventDefault();
+        setPicked(new Set(rows.map((r) => r.id)));
+        return;
+      }
+      switch (e.key) {
+        case " ":
+        case "Enter":
+          if (i < 0) return;
+          e.preventDefault();
+          setViewerAt(i);
+          return;
+        case "ArrowRight":
+          return move(1);
+        case "ArrowLeft":
+          return move(-1);
+        case "ArrowDown":
+          return move(cols);
+        case "ArrowUp":
+          return move(-cols);
+      }
+      if (i < 0) return;
+      const r = rows[i];
+      if (/^[0-5]$/.test(e.key)) markOne(r.id, { rating: +e.key });
+      else if (e.key === "p")
+        markOne(r.id, { cullingFlag: r.culling_flag === 1 ? 0 : 1 });
+      else if (e.key === "x")
+        markOne(r.id, { cullingFlag: r.culling_flag === 2 ? 0 : 2 });
+      else if (e.key === "f") markOne(r.id, { favorite: !r.favorite });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewerAt, culling, organizing, selected, rows, cols, markOne, undoLast]);
 
   /// 되돌릴 수 없는 일은 여기서 확인 문구를 만들고, 프론트가 물어본 뒤에만 부른다.
   const runTrashOp = useCallback(
@@ -635,6 +726,31 @@ export default function App() {
             >
               고르기
             </button>
+            {picked.size > 0 && (
+              <>
+                <span className="text-[#49B8B4] tabular-nums text-[12.5px]">
+                  {picked.size.toLocaleString()}장 선택
+                </span>
+                <button
+                  onClick={() => setOrganizing(true)}
+                  disabled={libId === null}
+                  title={
+                    libId === null
+                      ? "옮겨 넣을 라이브러리를 왼쪽에서 고르세요"
+                      : undefined
+                  }
+                  className="h-7 px-3 rounded-md bg-[#49B8B4] text-[#08191a] font-semibold disabled:opacity-40"
+                >
+                  정리
+                </button>
+                <button
+                  onClick={() => setPicked(new Set())}
+                  className="h-7 px-2 rounded-md text-[#8D9A9C]"
+                >
+                  선택 해제
+                </button>
+              </>
+            )}
           </>
         )}
         <div className="flex-1" />
@@ -881,7 +997,7 @@ export default function App() {
                       return (
                         <button
                           key={r.id}
-                          onClick={() => setSelected(r.id)}
+                          onClick={(e) => pick(r.id, e)}
                           onDoubleClick={() => setViewerAt(start + ci)}
                           className="text-left"
                         >
@@ -889,8 +1005,9 @@ export default function App() {
                             className="rounded overflow-hidden bg-[#0F1314] relative"
                             style={{
                               aspectRatio: "1/1",
-                              boxShadow:
-                                selected === r.id
+                              boxShadow: picked.has(r.id)
+                                ? "0 0 0 2px #49B8B4"
+                                : selected === r.id
                                   ? "0 0 0 2px #6C6CE8"
                                   : undefined,
                             }}
@@ -973,6 +1090,28 @@ export default function App() {
             onSeek={seekTo}
           />
 
+          {organizing && libId !== null && (
+            <Organize
+              ids={pickedIds}
+              libraryId={libId}
+              onDone={async (o) => {
+                setBusy(
+                  o.failed > 0
+                    ? `${o.moved}장 옮김 · ${o.failed}장 실패 — ${o.first_error ?? ""}`
+                    : `${o.moved}장 옮겼습니다`,
+                );
+                setPicked(new Set());
+                await Promise.all([
+                  loadFirst(),
+                  refreshMeta(),
+                  refreshLibs(),
+                  refreshBatches(),
+                ]);
+              }}
+              onClose={() => setOrganizing(false)}
+            />
+          )}
+
           {/* 크게 보기 — 기본은 콘텐츠 영역만 덮는다 */}
           {viewerAt !== null && (
             <Viewer
@@ -1022,6 +1161,15 @@ export default function App() {
               </span>
             )}
           </>
+        )}
+        {batches.some((b) => b.undone_at === null) && (
+          <button
+            onClick={undoLast}
+            title={`되돌리기: ${batches.find((b) => b.undone_at === null)?.label ?? ""}`}
+            className="text-[#8D9A9C] hover:text-[#EAEFEF]"
+          >
+            ↩ 되돌리기 <span className="text-[10px] font-mono">⌘Z</span>
+          </button>
         )}
         {!filterIsEmpty && (
           <span className="text-[#49B8B4]">

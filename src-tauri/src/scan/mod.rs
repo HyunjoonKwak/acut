@@ -12,7 +12,6 @@ use crate::db::conn::Db;
 use crate::media::{exif, taken_at};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
@@ -110,7 +109,7 @@ pub fn scan_folder(
     // 이미 아는 파일은 건너뛴다 — (상대경로, 이름) → (크기, 수정시각)
     let known = load_known(db, library_id)?;
 
-    let counter = AtomicUsize::new(0);
+    let last_emit = std::sync::Mutex::new(std::time::Instant::now());
     let now = now_secs();
 
     // 무거운 부분(EXIF 읽기)만 병렬로. DB 쓰기는 뒤에서 한 번에 한다.
@@ -147,8 +146,17 @@ pub fn scan_folder(
             // 메타데이터라는 뜻이라 의미가 같다 — 출처가 EXIF가 아니라 컨테이너일 뿐.
             let (ts, src) = taken_at::resolve(m.taken_at, &f.name, f.mtime, f.birthtime, now);
 
-            let n = counter.fetch_add(1, Ordering::Relaxed);
-            if n % 500 == 0 {
+            // 스캔 쪽도 시간 기준으로. 500장마다면 숫자가 껑충 뛴다.
+            let due = {
+                let mut l = last_emit.lock().unwrap();
+                if l.elapsed() >= std::time::Duration::from_millis(50) {
+                    *l = std::time::Instant::now();
+                    true
+                } else {
+                    false
+                }
+            };
+            if due {
                 on_progress(&progress.lock().unwrap().clone());
             }
             Some((f, m, ts, src, duration_ms))

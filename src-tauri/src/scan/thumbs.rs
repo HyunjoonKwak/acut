@@ -10,8 +10,9 @@ use crate::db::conn::Db;
 use crate::media::{cache, thumbnail};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ThumbProgress {
@@ -174,7 +175,26 @@ pub fn generate_with(
         return Ok(progress.lock().unwrap().clone());
     }
 
-    let counter = AtomicUsize::new(0);
+    // 진행 알림은 **시간 기준**으로 흘린다.
+    //
+    // 예전엔 "200장마다"였는데, 청크 저장(500장)과 리듬이 겹쳐 숫자가 몇백씩
+    // 껑충 뛰었다. 초당 몇 장이든 화면은 초당 20번 갱신되도록 하면 늘 매끄럽고,
+    // 빨라져도 이벤트가 폭주하지 않는다.
+    let last_emit = Mutex::new(Instant::now());
+    let tick = |force: bool| {
+        let due = {
+            let mut l = last_emit.lock().unwrap();
+            if force || l.elapsed() >= Duration::from_millis(50) {
+                *l = Instant::now();
+                true
+            } else {
+                false
+            }
+        };
+        if due {
+            on_progress(&progress.lock().unwrap().clone());
+        }
+    };
 
     // **청크마다 DB에 쓴다.** 예전에는 전부 메모리에 모았다가 맨 끝에 한 번
     // 썼는데, 8만 장 도중에 앱이 죽으면 몇 분치가 통째로 사라졌다 — 실제로
@@ -197,9 +217,12 @@ pub fn generate_with(
                 // 이미 파일이 있으면 다시 만들지 않는다. DB만 새로 만든 경우가 여기 해당한다.
                 // 다만 2차(화질 올리기)에서는 그 파일이 바로 키워야 할 대상이므로 건너뛴다.
                 if out.is_file() && accept_px < cache::THUMB_PX {
-                    let mut p = progress.lock().unwrap();
-                    p.reused += 1;
-                    p.done += 1;
+                    {
+                        let mut p = progress.lock().unwrap();
+                        p.reused += 1;
+                        p.done += 1;
+                    }
+                    tick(false);
                     return Some((
                         j.file_id,
                         Some(cache::thumb_rel(&key)),
@@ -229,7 +252,6 @@ pub fn generate_with(
                         accept_px,
                     )
                 };
-                let n = counter.fetch_add(1, Ordering::Relaxed);
                 let row = match r {
                     Ok(sz) => {
                         progress.lock().unwrap().done += 1;
@@ -251,15 +273,13 @@ pub fn generate_with(
                         (j.file_id, None, j.size, j.mtime, None, None, 2, Some(e.to_string()))
                     }
                 };
-                if n % 200 == 0 {
-                    on_progress(&progress.lock().unwrap().clone());
-                }
+                tick(false);
                 Some(row)
             })
             .collect();
 
         write_rows(db, &results)?;
-        on_progress(&progress.lock().unwrap().clone());
+        tick(true);
     }
 
     // exFAT이 파일마다 만든 `._` 사이드카를 치운다. 한 장에 16KB라

@@ -10,6 +10,7 @@ dependencies = [
  "chrono",
  "core-foundation 0.10.1",
  "core-foundation-sys",
+ "filetime",
  "glob",
  "image",
  "kamadak-exif",

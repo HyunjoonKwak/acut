@@ -7,6 +7,7 @@ import Cull from "./Cull";
 import Viewer from "./Viewer";
 import Compare from "./Compare";
 import Shortcuts from "./Shortcuts";
+import Import from "./Import";
 import ScrollBar from "./ScrollBar";
 import Filmstrip from "./Filmstrip";
 import Organize from "./Organize";
@@ -203,6 +204,8 @@ export default function App() {
   const [comparing, setComparing] = useState<number[] | null>(null);
   /// 단축키 한 장 (`?`)
   const [helping, setHelping] = useState(false);
+  /// 가져오기 상자
+  const [importing, setImporting] = useState(false);
   /// 「⋯」를 연 라이브러리. 지우기는 이 안에 숨겨 둔다.
   const [menuFor, setMenuFor] = useState<number | null>(null);
   /// 사이드바가 무엇을 보여줄지, 펴져 있는지, 얼마나 넓은지
@@ -1237,6 +1240,14 @@ export default function App() {
               <MenuItem
                 onClick={() => {
                   close();
+                  setImporting(true);
+                }}
+              >
+                가져오기…
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  close();
                   addLibrary();
                 }}
               >
@@ -1458,7 +1469,8 @@ export default function App() {
                     );
                   })
                 )}
-                <div className="px-2 pt-2">
+                <div className="px-2 pt-2 flex flex-wrap gap-1">
+                  <Btn onClick={() => setImporting(true)}>↓ 가져오기…</Btn>
                   <Btn onClick={addLibrary}>＋ 라이브러리 추가…</Btn>
                 </div>
               </>
@@ -1736,6 +1748,22 @@ export default function App() {
       <ContextMenu at={ctxAt} items={ctxItems} onClose={() => setCtxAt(null)} />
 
       {helping && <Shortcuts onClose={() => setHelping(false)} />}
+
+      {importing && (
+        <Import
+          libs={libs}
+          libId={libId}
+          onDone={async () => {
+            await Promise.all([
+              loadFirst(),
+              refreshMeta(),
+              refreshLibs(),
+              refreshBatches(),
+            ]);
+          }}
+          onClose={() => setImporting(false)}
+        />
+      )}
 
       {comparing && (
         <Compare

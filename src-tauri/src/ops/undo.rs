@@ -65,6 +65,22 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
         });
     }
 
+    // 가져오기는 되돌릴 곳이 없다. 원본은 카드에 그대로 있고, 되돌린다는 건
+    // 「들여온 벌을 무른다」는 뜻이다. 그렇다고 지워 버리면 그것대로 되돌릴
+    // 수 없으니 휴지통으로 보낸다.
+    if kind == "import" {
+        let ids: Vec<i64> = db.read(|c| {
+            let mut st = c.prepare(
+                "SELECT file_id FROM journal WHERE batch_id = ?1 AND ok = 1 AND file_id IS NOT NULL",
+            )?;
+            let it = st.query_map([batch_id], |r| r.get(0))?;
+            it.collect::<rusqlite::Result<Vec<_>>>()
+        })?;
+        let out = crate::ops::trash::to_trash(db, &ids, "가져오기 되돌리기")?;
+        mark_undone(db, batch_id)?;
+        return Ok(Outcome { batch_id, ..out });
+    }
+
     // 휴지통은 전용 경로가 있다 — trashed_at·trash_path를 함께 되돌려야 한다
     if kind == "trash" {
         let ids: Vec<i64> = db.read(|c| {

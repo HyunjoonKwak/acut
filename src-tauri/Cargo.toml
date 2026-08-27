@@ -77,3 +77,5 @@ thiserror = "2.0"
 
 [dev-dependencies]
 tempfile = "3"
+# 가져오기 시험에서 «찍은 날»을 못으로 박는다 — EXIF가 없으면 수정시각이 쓰인다
+filetime = "0.2"

@@ -91,6 +91,8 @@ pub fn run() {
             api::library_add,
             api::library_remove,
             api::library_stats,
+            api::import_preview,
+            api::import_run,
             api::cache_usage,
             api::cache_clear,
             api::cache_migrate,

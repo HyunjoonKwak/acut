@@ -1,0 +1,80 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import StatusActions from "./StatusActions";
+import { useData } from "./dataStore";
+import { useJob } from "./jobStore";
+import { useView } from "./viewStore";
+
+const noop = {
+  stopJob: vi.fn(),
+  restoreAll: vi.fn(),
+  emptyTrash: vi.fn(),
+  cleanExcluded: vi.fn(),
+  undoLast: vi.fn(),
+};
+
+describe("상태바 오른쪽", () => {
+  beforeEach(() => {
+    useData.setState({ busy: "", toClean: null, batches: [], stats: null });
+    useJob.setState({ job: null });
+    useView.setState({ viewTrash: false });
+  });
+
+  it("도는 일이 있으면 진행과 멈추기만 보인다", async () => {
+    useJob.setState({ job: { label: "썸네일", done: 1234, total: 78857 } });
+    useData.setState({ toClean: { files: 5, bytes: 1 } });
+    render(<StatusActions {...noop} />);
+    expect(screen.getByText(/썸네일 1,234/)).toBeInTheDocument();
+    expect(screen.queryByText(/치우기/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "멈추기" }));
+    expect(noop.stopJob).toHaveBeenCalled();
+  });
+
+  it("제외한 것이 있으면 치우기 버튼이 뜬다", async () => {
+    useData.setState({ toClean: { files: 12, bytes: 3_000_000 } });
+    render(<StatusActions {...noop} />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "제외 12장 치우기" }),
+    );
+    expect(noop.cleanExcluded).toHaveBeenCalled();
+  });
+
+  it("휴지통을 보고 있으면 되돌리기·비우기", () => {
+    useView.setState({ viewTrash: true });
+    render(<StatusActions {...noop} />);
+    expect(
+      screen.getByRole("button", { name: "전부 되돌리기" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "영구히 비우기" }),
+    ).toBeInTheDocument();
+  });
+
+  it("아직 안 물린 작업이 있으면 되돌리기가 뜬다", async () => {
+    useData.setState({
+      batches: [
+        {
+          id: 1,
+          kind: "move",
+          label: "정리",
+          item_count: 3,
+          created_at: 0,
+          undone_at: 99,
+        },
+        {
+          id: 2,
+          kind: "trash",
+          label: "휴지통",
+          item_count: 1,
+          created_at: 0,
+          undone_at: null,
+        },
+      ],
+    });
+    render(<StatusActions {...noop} />);
+    const b = screen.getByTitle("되돌리기: 휴지통");
+    await userEvent.click(b);
+    expect(noop.undoLast).toHaveBeenCalled();
+  });
+});

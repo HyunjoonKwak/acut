@@ -78,7 +78,41 @@ pub fn thumb_rel(key: &str) -> String {
     format!("{}/{}.jpg", &key[0..2], key)
 }
 
+/// macOS가 exFAT에 만드는 AppleDouble 사이드카를 치운다.
+///
+/// 두 라이브러리 볼륨이 모두 exFAT인데, exFAT은 확장 속성을 담지 못한다.
+/// 그래서 macOS가 파일마다 `._이름` 사이드카를 하나 더 만든다 —
+/// **한 장에 16KB씩**이다. 실측: PHOTO 1에 64,108개 = 1,001MB.
+///
+/// 우리 캐시 파일에 붙는 확장 속성은 `com.apple.provenance` 하나뿐이고
+/// 우리가 쓰지 않는다. 사이드카를 지워도 잃는 것이 없다.
+///
+/// 캐시 폴더 안만 훑는다. 원본 사진 쪽은 건드리지 않는다.
+pub fn purge_sidecars(root: &Path) -> (usize, u64) {
+    let mut n = 0;
+    let mut bytes = 0;
+    let Ok(shards) = std::fs::read_dir(root) else {
+        return (0, 0);
+    };
+    for shard in shards.flatten() {
+        let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
+        for f in files.flatten() {
+            if !f.file_name().to_string_lossy().starts_with("._") {
+                continue;
+            }
+            let size = f.metadata().map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(f.path()).is_ok() {
+                n += 1;
+                bytes += size;
+            }
+        }
+    }
+    (n, bytes)
+}
+
 /// 캐시 전체 용량과 개수. 설정 화면에서 보여준다.
+///
+/// 사이드카(`._…`)는 세지 않는다 — 우리 캐시가 아니라 파일시스템이 만든 것이다.
 pub fn cache_stats(root: &Path) -> (u64, usize) {
     let mut bytes = 0;
     let mut count = 0;
@@ -88,6 +122,9 @@ pub fn cache_stats(root: &Path) -> (u64, usize) {
     for shard in shards.flatten() {
         let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
         for f in files.flatten() {
+            if f.file_name().to_string_lossy().starts_with("._") {
+                continue;
+            }
             if let Ok(m) = f.metadata() {
                 bytes += m.len();
                 count += 1;
@@ -174,6 +211,27 @@ mod tests {
         assert_eq!(thumb_rel(&key), format!("{}/{}.jpg", &key[0..2], key));
     }
 
+    /// exFAT에서 macOS가 만드는 `._` 사이드카는 우리 캐시가 아니다.
+    /// 세면 캐시 용량이 두 배로 보이고, 지우면 1GB가 돌아온다.
+    #[test]
+    fn sidecars_are_not_counted_and_can_be_purged() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("thumbs");
+        std::fs::create_dir_all(root.join("ab")).unwrap();
+        std::fs::write(root.join("ab").join("abcd.jpg"), b"12345").unwrap();
+        std::fs::write(root.join("ab").join("._abcd.jpg"), vec![0u8; 16384]).unwrap();
+
+        assert_eq!(cache_stats(&root), (5, 1), "사이드카는 캐시 용량이 아니다");
+
+        let (n, bytes) = purge_sidecars(&root);
+        assert_eq!((n, bytes), (1, 16384));
+        assert!(root.join("ab").join("abcd.jpg").is_file(), "진짜 캐시는 남는다");
+        assert!(!root.join("ab").join("._abcd.jpg").exists());
+
+        // 두 번 돌려도 안전하다
+        assert_eq!(purge_sidecars(&root), (0, 0));
+    }
+
     #[test]
     fn stats_and_clear() {
         let dir = tempfile::tempdir().unwrap();
@@ -185,5 +243,101 @@ mod tests {
         clear(&root).unwrap();
         assert!(!root.exists());
         assert_eq!(cache_stats(&root), (0, 0), "없는 폴더는 0");
+    }
+}
+
+#[cfg(test)]
+mod audit {
+    use super::*;
+
+    /// 캐시에 실제 사진보다 많은 파일이 쌓였는지 본다.
+    /// `cargo test --lib media::cache::audit -- --ignored --nocapture`
+    #[test]
+    #[ignore = "실제 라이브러리 필요"]
+    fn cache_has_no_orphans() {
+        let db_path = std::path::PathBuf::from(std::env::var("HOME").unwrap())
+            .join("Library/Application Support/com.acut.media/acut-v2.db");
+        if !db_path.is_file() {
+            return;
+        }
+        let c = rusqlite::Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+
+        // 라이브러리마다: 캐시 폴더와, 그 안에 있어야 할 키들
+        let libs: Vec<(i64, String, String)> = {
+            let mut st = c
+                .prepare(
+                    "SELECT l.id, l.rel_path, v.last_mount_path
+                     FROM libraries l JOIN volumes v ON v.uuid = l.volume_uuid",
+                )
+                .unwrap();
+            let it = st
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap();
+            it.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+
+        for (id, lib_rel, mount) in libs {
+            let dir = if lib_rel.is_empty() {
+                std::path::PathBuf::from(&mount)
+            } else {
+                std::path::Path::new(&mount).join(&lib_rel)
+            };
+            let root = cache_root(&dir);
+            if !root.is_dir() {
+                continue;
+            }
+
+            let mut want = std::collections::HashSet::new();
+            let mut st = c
+                .prepare(
+                    "SELECT fo.rel_path || CASE WHEN fo.rel_path='' THEN '' ELSE '/' END || fi.name,
+                            fi.size, COALESCE(fi.modified_at,0)
+                     FROM files fi JOIN folders fo ON fo.id=fi.folder_id
+                     WHERE fo.library_id = ?1",
+                )
+                .unwrap();
+            let rows = st
+                .query_map([id], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                })
+                .unwrap();
+            for row in rows {
+                let (rel, size, mtime) = row.unwrap();
+                want.insert(key_for(&rel, size as u64, mtime));
+            }
+
+            let mut have = 0usize;
+            let mut orphan = 0usize;
+            let mut samples: Vec<String> = Vec::new();
+            for shard in std::fs::read_dir(&root).unwrap().flatten() {
+                let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
+                for f in files.flatten() {
+                    have += 1;
+                    let n = f.file_name().to_string_lossy().into_owned();
+                    let k = n.trim_end_matches(".jpg").to_string();
+                    if !want.contains(&k) {
+                        orphan += 1;
+                        if samples.len() < 3 {
+                            samples.push(n);
+                        }
+                    }
+                }
+            }
+            println!(
+                "\n라이브러리 {id}: 파일 {} · 캐시 {have} · 고아 {orphan}",
+                want.len()
+            );
+            for s in &samples {
+                println!("   고아 예: {s}");
+            }
+        }
     }
 }

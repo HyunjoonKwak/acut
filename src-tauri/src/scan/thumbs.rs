@@ -22,6 +22,30 @@ pub struct ThumbProgress {
 }
 
 /// 썸네일이 필요한 파일 하나.
+/// DB에 쓸 한 줄: (파일 id, 캐시 상대경로, 원본 크기, 원본 수정시각, 폭, 높이, 상태, 오류)
+type Row = (i64, Option<String>, i64, i64, Option<u32>, Option<u32>, i32, Option<String>);
+
+fn write_rows(db: &Db, rows: &[Row]) -> Result<(), super::ScanError> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    db.transaction(|tx| {
+        let mut up = tx.prepare(
+            "INSERT INTO thumbs(file_id, rel_path, src_size, src_mtime, width, height, state, error, updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'))
+             ON CONFLICT(file_id) DO UPDATE SET
+               rel_path=excluded.rel_path, src_size=excluded.src_size,
+               src_mtime=excluded.src_mtime, width=excluded.width, height=excluded.height,
+               state=excluded.state, error=excluded.error, updated_at=excluded.updated_at",
+        )?;
+        for (id, rel, size, mtime, w, h, state, err) in rows {
+            up.execute(rusqlite::params![id, rel, size, mtime, w, h, state, err])?;
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
 struct Job {
     file_id: i64,
     full_path: PathBuf,
@@ -97,9 +121,17 @@ pub fn generate(
 
     let counter = AtomicUsize::new(0);
 
-    // (file_id, rel_path, w, h, state, error)
-    let results: Vec<(i64, Option<String>, i64, i64, Option<u32>, Option<u32>, i32, Option<String>)> =
-        jobs.par_iter()
+    // **청크마다 DB에 쓴다.** 예전에는 전부 메모리에 모았다가 맨 끝에 한 번
+    // 썼는데, 8만 장 도중에 앱이 죽으면 몇 분치가 통째로 사라졌다 — 실제로
+    // 63,852장이 디스크에만 남고 DB에는 한 줄도 없었다. 화면도 끝날 때까지
+    // 0으로 멈춰 있어 멎은 것처럼 보인다.
+    const CHUNK: usize = 500;
+    for part in jobs.chunks(CHUNK) {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let results: Vec<Row> = part
+            .par_iter()
             .filter_map(|j| {
                 if cancel.load(Ordering::Relaxed) {
                     return None;
@@ -164,20 +196,16 @@ pub fn generate(
             })
             .collect();
 
-    db.transaction(|tx| {
-        let mut up = tx.prepare(
-            "INSERT INTO thumbs(file_id, rel_path, src_size, src_mtime, width, height, state, error, updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,strftime('%s','now'))
-             ON CONFLICT(file_id) DO UPDATE SET
-               rel_path=excluded.rel_path, src_size=excluded.src_size,
-               src_mtime=excluded.src_mtime, width=excluded.width, height=excluded.height,
-               state=excluded.state, error=excluded.error, updated_at=excluded.updated_at",
-        )?;
-        for (id, rel, size, mtime, w, h, state, err) in &results {
-            up.execute(rusqlite::params![id, rel, size, mtime, w, h, state, err])?;
-        }
-        Ok(())
-    })?;
+        write_rows(db, &results)?;
+        on_progress(&progress.lock().unwrap().clone());
+    }
+
+    // exFAT이 파일마다 만든 `._` 사이드카를 치운다. 한 장에 16KB라
+    // 8만 장이면 1GB가 넘는다. 우리 캐시 폴더 안만 훑는다.
+    let (n, bytes) = cache::purge_sidecars(&root);
+    if n > 0 {
+        log::info!("사이드카 {n}개 정리 ({:.0}MB)", bytes as f64 / 1024.0 / 1024.0);
+    }
 
     let out = progress.lock().unwrap().clone();
     on_progress(&out);

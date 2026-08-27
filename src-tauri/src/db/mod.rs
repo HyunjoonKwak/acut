@@ -7,6 +7,8 @@ pub mod migrations;
 pub mod tree;
 pub mod upgrade;
 pub mod queries;
+pub mod backup;
+pub mod settings;
 pub mod smart;
 pub mod tags;
 

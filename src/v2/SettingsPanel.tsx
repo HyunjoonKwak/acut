@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { Btn } from "./ui";
-import { fmtBytes } from "./format";
+import { fmtBytes, fmtDateTime } from "./format";
 import { useConfirm } from "./confirmContext";
+
+type Backup = { path: string; name: string; bytes: number; made_at: number };
 
 function Head({ children }: { children: React.ReactNode }) {
   return (
@@ -30,6 +32,31 @@ export default function SettingsPanel({
   const ask = useConfirm();
   const [ver, setVer] = useState("");
   const [busy, setBusy] = useState(false);
+
+  /// 백업 목록. 판정·평점·태그 78,857장분이 파일 하나라 잃으면 끝이다.
+  const [backups, setBackups] = useState<Backup[]>([]);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupMsg, setBackupMsg] = useState("");
+  const reloadBackups = useCallback(() => {
+    invoke<Backup[]>("db_backups")
+      .then(setBackups)
+      .catch(() => setBackups([]));
+  }, []);
+  useEffect(reloadBackups, [reloadBackups]);
+
+  const backupNow = async () => {
+    setBackingUp(true);
+    setBackupMsg("");
+    try {
+      const b = await invoke<Backup>("db_backup");
+      setBackupMsg(`${b.name} · ${fmtBytes(b.bytes)}`);
+      reloadBackups();
+    } catch (e) {
+      setBackupMsg(String(e));
+    } finally {
+      setBackingUp(false);
+    }
+  };
 
   useEffect(() => {
     getVersion()
@@ -71,6 +98,39 @@ export default function SettingsPanel({
           비우기
         </Btn>
       </div>
+
+      <Head>DB 백업</Head>
+      <div className="px-3 text-[11.5px] text-fg-mute leading-relaxed">
+        판정·평점·태그가 든 파일의 사본입니다. 최신 3벌을 남깁니다.
+        <br />
+        되돌리려면 앱을 끄고 사본을 제자리에 놓으세요 — 복원 버튼은 다음에.
+      </div>
+      <div className="px-2 pt-2 flex gap-1">
+        <Btn tone="accent" disabled={backingUp} onClick={backupNow}>
+          {backingUp ? "만드는 중…" : "지금 백업"}
+        </Btn>
+        <Btn onClick={() => invoke("db_backups_reveal").catch(() => {})}>
+          Finder에서 보기
+        </Btn>
+      </div>
+      {backupMsg && (
+        <div className="px-3 pt-1.5 text-[11.5px] text-fg-dim tabular-nums">
+          {backupMsg}
+        </div>
+      )}
+      {backups.length > 0 && (
+        <div className="px-3 pt-2 space-y-0.5">
+          {backups.map((b) => (
+            <div
+              key={b.name}
+              className="flex items-baseline gap-2 text-[11.5px] tabular-nums"
+            >
+              <span className="text-fg-dim">{fmtDateTime(b.made_at)}</span>
+              <span className="text-fg-faint">{fmtBytes(b.bytes)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Head>에이컷</Head>
       <div className="px-3 text-[12px] text-fg-dim leading-relaxed">

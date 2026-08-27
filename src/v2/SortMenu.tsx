@@ -1,32 +1,5 @@
 import { Btn, Menu, MenuItem, MenuSep } from "./ui";
-
-/** 백엔드 `db::query::SortBy`와 이름이 같아야 한다 */
-export type SortBy =
-  | "taken_at"
-  | "created_at"
-  | "modified_at"
-  | "name"
-  | "size"
-  | "pixels"
-  | "duration";
-
-export type Sort = { by: SortBy; desc: boolean };
-
-export const DEFAULT_SORT: Sort = { by: "taken_at", desc: true };
-
-/** Lap의 정렬 목록과 같다 */
-const ITEMS: { by: SortBy; label: string }[] = [
-  { by: "taken_at", label: "촬영일" },
-  { by: "created_at", label: "생성일" },
-  { by: "modified_at", label: "수정일" },
-  { by: "name", label: "이름" },
-  { by: "size", label: "크기" },
-  { by: "pixels", label: "픽셀 크기" },
-  { by: "duration", label: "재생시간" },
-];
-
-export const sortLabel = (s: Sort) =>
-  ITEMS.find((i) => i.by === s.by)?.label ?? "정렬";
+import { SORT_ITEMS as ITEMS, sortLabel, type Sort } from "./sortItems";
 
 export default function SortMenu({
   value,

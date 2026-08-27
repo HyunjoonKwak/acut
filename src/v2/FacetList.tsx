@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 export type Facet = { value: string; label: string; count: number };
@@ -21,20 +21,23 @@ export default function FacetList({
   selected: string | null;
   onPick: (value: string | null) => void;
 }) {
-  const [items, setItems] = useState<Facet[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 결과를 «어느 조건에 대한 것인지»와 함께 둔다. 조건이 바뀌면 열쇠가
+  // 안 맞아 저절로 «세는 중»이 된다 — 효과 안에서 loading을 따로 켤 일이 없다.
+  const key = useMemo(() => JSON.stringify([kind, filter]), [kind, filter]);
+  const [got, setGot] = useState<{ key: string; items: Facet[] } | null>(null);
 
   useEffect(() => {
     let live = true;
-    setLoading(true);
     invoke<Facet[]>("files_facets", { filter, kind })
-      .then((f) => live && setItems(f))
-      .catch(() => live && setItems([]))
-      .finally(() => live && setLoading(false));
+      .then((f) => live && setGot({ key, items: f }))
+      .catch(() => live && setGot({ key, items: [] }));
     return () => {
       live = false;
     };
-  }, [kind, filter]);
+  }, [kind, filter, key]);
+
+  const items = got?.key === key ? got.items : (got?.items ?? []);
+  const loading = got?.key !== key;
 
   if (loading && items.length === 0) {
     return <div className="px-3 py-2 text-[12px] text-fg-mute">세는 중…</div>;

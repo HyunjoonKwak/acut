@@ -733,3 +733,77 @@ pub fn import_run(app: AppHandle, source: String, library_id: i64) -> Result<(),
     });
     Ok(())
 }
+
+// ── 설정 ───────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn settings_get(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
+    crate::db::settings::get(&state.db, &key).map_err(err)
+}
+
+#[tauri::command]
+pub fn settings_set(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    crate::db::settings::set(&state.db, &key, &value).map_err(err)
+}
+
+#[tauri::command]
+pub fn settings_remove(state: State<'_, AppState>, key: String) -> Result<(), String> {
+    crate::db::settings::remove(&state.db, &key).map_err(err)
+}
+
+// ── 백업 ───────────────────────────────────────────────────────────────
+
+fn backup_dir(state: &AppState) -> PathBuf {
+    state.cache_base.join("backups")
+}
+
+/// DB 사본을 한 벌 만든다. 켜 둔 채로 해도 된다.
+#[tauri::command]
+pub fn db_backup(state: State<'_, AppState>) -> Result<crate::db::backup::Backup, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    crate::db::backup::make(&state.db, &backup_dir(&state), now).map_err(err)
+}
+
+#[tauri::command]
+pub fn db_backups(state: State<'_, AppState>) -> Result<Vec<crate::db::backup::Backup>, String> {
+    crate::db::backup::list(&backup_dir(&state)).map_err(err)
+}
+
+/// 백업 폴더를 Finder에서 연다.
+#[tauri::command]
+pub fn db_backups_reveal(state: State<'_, AppState>) -> Result<(), String> {
+    let dir = backup_dir(&state);
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    std::process::Command::new("open")
+        .arg(&dir)
+        .spawn()
+        .map_err(err)?;
+    Ok(())
+}
+
+/// 파일을 기본 앱으로 연다 — 뷰어가 못 트는 영상은 QuickTime이 튼다.
+#[tauri::command]
+pub fn open_in_default_app(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let (uuid, rel): (String, String) = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT fo.volume_uuid,
+                        fo.rel_path || CASE WHEN fo.rel_path = '' THEN '' ELSE '/' END || fi.name
+                 FROM files fi JOIN folders fo ON fo.id = fi.folder_id WHERE fi.id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+        })
+        .map_err(err)?;
+    let mount = crate::db::volumes::find_mount(&uuid).ok_or("디스크가 연결되어 있지 않습니다")?;
+    let path = mount.join(&rel);
+    if !path.exists() {
+        return Err(format!("파일이 없습니다: {}", path.display()));
+    }
+    std::process::Command::new("open").arg(&path).spawn().map_err(err)?;
+    Ok(())
+}

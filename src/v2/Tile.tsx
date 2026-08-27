@@ -58,6 +58,8 @@ export default function Tile({
   const [ready, setReady] = useState(false);
   const timer = useRef<number | null>(null);
   const video = useRef<HTMLVideoElement>(null);
+  /// 미리보기 잠금의 열쇠 — 이 타일이 사는 동안 같은 객체
+  const key = useRef<object>({});
   const isVideo = file.kind === 1;
 
   const stop = useCallback(() => {
@@ -74,7 +76,7 @@ export default function Tile({
     }
     setReady(false);
     setPlaying(false);
-    releaseHoverPreview(stop);
+    releaseHoverPreview(key.current);
   }, []);
 
   useEffect(() => stop, [stop]);
@@ -83,7 +85,7 @@ export default function Tile({
     if (!isVideo || playing || timer.current !== null) return;
     timer.current = window.setTimeout(() => {
       timer.current = null;
-      claimHoverPreview(stop);
+      claimHoverPreview(key.current, stop);
       setPlaying(true);
     }, HOVER_DELAY_MS);
   };

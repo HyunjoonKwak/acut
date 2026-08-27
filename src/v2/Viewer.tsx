@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fmtBytes, fmtDateTime, fmtDuration } from "./format";
 import TagEditor from "./TagEditor";
@@ -36,6 +36,7 @@ export default function Viewer({
   onMark,
   fullScreen,
   onToggleFullScreen,
+  kindOf,
 }: {
   ids: number[];
   index: number;
@@ -48,19 +49,34 @@ export default function Viewer({
   /// 켜면 창 전체를 덮는다. 끄면 콘텐츠 영역만 덮어 폴더 목록이 남는다.
   fullScreen: boolean;
   onToggleFullScreen: () => void;
+  /** 사진인지 영상인지를 상세를 읽기 전에 알려 준다. 없으면 상세를 기다린다. */
+  kindOf?: (id: number) => number | undefined;
 }) {
   const id = ids[index];
+  const player = useRef<HTMLVideoElement>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [zoom, setZoom] = useState(false);
   const [showInfo, setShowInfo] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
+  // 불러왔는지·실패했는지·확대했는지를 **어느 사진에 대해서**인지와 함께 둔다.
+  // 사진이 바뀌면 id가 안 맞아 저절로 초기 상태가 된다 — 효과에서 셋을
+  // 되돌릴 일이 없다.
+  const [loadedId, setLoadedId] = useState<number | null>(null);
+  const [failedId, setFailedId] = useState<number | null>(null);
+  const [zoomId, setZoomId] = useState<number | null>(null);
+  const loading = loadedId !== id && failedId !== id;
+  const failed = failedId === id;
+  const zoom = zoomId === id;
+  const setZoom = useCallback(
+    (v: boolean | ((z: boolean) => boolean)) =>
+      setZoomId((cur) => {
+        const now = cur === id;
+        const next = typeof v === "function" ? v(now) : v;
+        return next ? id : null;
+      }),
+    [id],
+  );
 
   useEffect(() => {
     if (id == null) return;
-    setLoading(true);
-    setFailed(false);
-    setZoom(false);
     invoke<Detail>("file_detail", { id })
       .then(setDetail)
       .catch(() => setDetail(null));
@@ -107,10 +123,16 @@ export default function Viewer({
         case "k":
           step(-1);
           break;
-        case " ":
+        case " ": {
           e.preventDefault();
-          setZoom((z) => !z);
+          // 영상은 재생·정지, 사진은 확대
+          const v = player.current;
+          if (v) {
+            if (v.paused) v.play().catch(() => {});
+            else v.pause();
+          } else setZoom((z) => !z);
           break;
+        }
         case "i":
           setShowInfo((s) => !s);
           break;
@@ -136,7 +158,9 @@ export default function Viewer({
 
   if (id == null) return null;
   const src = `photo://localhost/${id}`;
-  const isVideo = detail?.kind === 1;
+  // 상세가 오기 전에도 알 수 있으면 그걸 쓴다 — 정지 프레임이 한 번
+  // 그려졌다가 영상으로 바뀌면 깜빡인다.
+  const isVideo = (kindOf?.(id) ?? detail?.kind) === 1;
 
   return (
     <div
@@ -191,29 +215,59 @@ export default function Viewer({
         {/* 사진 */}
         <div
           className={`flex-1 relative min-w-0 ${zoom ? "overflow-auto" : "overflow-hidden flex items-center justify-center"}`}
-          onClick={() => setZoom((z) => !z)}
+          onClick={() => !isVideo && setZoom((z) => !z)}
         >
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center text-fg-faint text-[13px] pointer-events-none">
               불러오는 중…
             </div>
           )}
-          {/* 영상도 QuickLook이 대표 프레임을 준다. 재생은 아직 못 한다. */}
           {failed ? (
             <div className="flex flex-col items-center gap-2 text-fg-mute text-[13px]">
-              읽을 수 없는 파일입니다
+              {isVideo
+                ? "이 앱이 틀 수 없는 영상입니다"
+                : "읽을 수 없는 파일입니다"}
               <span className="text-[11.5px] text-fg-faint">
                 {detail?.name}
               </span>
+              {/* WebKit이 H.264·HEVC·VP9까지만 튼다. 나머지(ProRes 등)는 QuickTime에 맡긴다. */}
+              {isVideo && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    invoke("open_in_default_app", { id }).catch(() => {});
+                  }}
+                  className="mt-1 h-control px-3 rounded-md bg-raised text-fg text-[12px] hover:bg-hover"
+                >
+                  QuickTime으로 열기
+                </button>
+              )}
             </div>
+          ) : isVideo ? (
+            /* 영상 — 타일에서 쓰던 video:// 그대로. QuickLook 프레임을 포스터로
+               깔아 두어 첫 프레임이 오기 전에도 빈 화면이 아니다. */
+            <video
+              ref={player}
+              key={id}
+              src={`video://localhost/${id}`}
+              poster={src}
+              controls
+              autoPlay
+              playsInline
+              onLoadedData={() => setLoadedId(id)}
+              onError={() => setFailedId(id)}
+              onClick={(e) => e.stopPropagation()}
+              className="max-w-full max-h-full"
+              style={{
+                opacity: loading ? 0.001 : 1,
+                transition: "opacity .12s",
+              }}
+            />
           ) : (
             <img
               src={src}
-              onLoad={() => setLoading(false)}
-              onError={() => {
-                setLoading(false);
-                setFailed(true);
-              }}
+              onLoad={() => setLoadedId(id)}
+              onError={() => setFailedId(id)}
               className={
                 zoom
                   ? "max-w-none cursor-zoom-out"
@@ -223,8 +277,8 @@ export default function Viewer({
             />
           )}
 
-          {/* 영상임을 알린다 — 정지 프레임이라 사진과 구분이 안 된다 */}
-          {isVideo && !failed && !loading && (
+          {/* 영상 배지 — 재생기가 아직 안 떴을 때만. 떴으면 컨트롤이 말해 준다 */}
+          {isVideo && !failed && loading && (
             <span className="absolute bottom-4 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/60 text-fg text-[12px] pointer-events-none">
               ▶ 영상
               {detail?.durationMs ? ` · ${fmtDuration(detail.durationMs)}` : ""}

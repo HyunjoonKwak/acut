@@ -12,8 +12,10 @@ import ScrollBar from "./ScrollBar";
 import Filmstrip from "./Filmstrip";
 import Organize from "./Organize";
 import Tile from "./Tile";
-import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
-import GroupMenu, { type GroupBy } from "./GroupMenu";
+import SortMenu from "./SortMenu";
+import { type Sort } from "./sortItems";
+import { usePref } from "./prefs";
+import GroupMenu from "./GroupMenu";
 import { layout, headerLabel, HEADER_H } from "./gridLayout";
 import { CAPTION_H } from "./gridStyle";
 import ViewBar from "./ViewBar";
@@ -23,7 +25,7 @@ import ContextMenu, {
 } from "./ContextMenu";
 import Rail from "./Rail";
 import { visible } from "./folderTree";
-import { sourceTitle, type Source } from "./railItems";
+import { sourceTitle } from "./railItems";
 import TagPanel from "./TagPanel";
 import SmartPanel from "./SmartPanel";
 import SearchPanel from "./SearchPanel";
@@ -45,13 +47,7 @@ import {
 } from "./ui";
 import FacetList from "./FacetList";
 import Calendar from "./Calendar";
-import {
-  justify,
-  ratio,
-  type GridStyle,
-  type JustifiedRow,
-  type Scaling,
-} from "./gridStyle";
+import { justify, ratio, type JustifiedRow } from "./gridStyle";
 import { useCountUp } from "./useCountUp";
 import FilterButton from "./FilterBar";
 import {
@@ -147,7 +143,7 @@ export default function App() {
   /// 등록된 라이브러리 전부
   const [libs, setLibs] = useState<Library[]>([]);
   /// 지금 보고 있는 라이브러리. null이면 전부 섞어서 본다.
-  const [libId, setLibId] = useState<number | null>(null);
+  const [libId, setLibId] = usePref("libId");
   const [rows, setRows] = useState<FileRow[]>([]);
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [done, setDone] = useState(false);
@@ -169,14 +165,15 @@ export default function App() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   /// 찾기 줄에서 고른 것들
   const [picks, setPicks] = useState<Picks>(EMPTY_PICKS);
-  const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
-  const [group, setGroup] = useState<GroupBy>("none");
-  const [gridStyle, setGridStyle] = useState<GridStyle>("card");
+  /// 켰다 꺼도 남는 것들은 prefs.ts에 있다 (settings 테이블)
+  const [sort, setSort] = usePref("sort");
+  const [group, setGroup] = usePref("group");
+  const [gridStyle, setGridStyle] = usePref("gridStyle");
   /// 필름스트립 — 그리드 아래에 고른 사진을 크게 띄운다.
   /// 자리만 잡아 뒀다. Lap의 Content.vue가 그리드와 MediaViewer를 위아래로
   /// 나누는 구조인데, 지금은 크게 보기(뷰어)로 충분해서 뒤로 미뤘다.
-  const [filmstrip, setFilmstrip] = useState(false);
-  const [scaling, setScaling] = useState<Scaling>("cover");
+  const [filmstrip, setFilmstrip] = usePref("filmstrip");
+  const [scaling, setScaling] = usePref("scaling");
   /// 휴지통을 보고 있는가
   const [viewTrash, setViewTrash] = useState(false);
   /// 휴지통에 든 것 / 제외 판정만 하고 아직 안 치운 것
@@ -192,9 +189,9 @@ export default function App() {
   } | null>(null);
   /// 되돌릴 수 없는 일을 하기 전에 묻는다
   const ask = useConfirm();
-  const [thumbSize, setThumbSize] = useState(180);
+  const [thumbSize, setThumbSize] = usePref("thumbSize");
   /// 사진 아래에 이름·날짜·크기를 적을지. 줄 높이가 달라지므로 rowH가 안다.
-  const [caption, setCaption] = useState(true);
+  const [caption, setCaption] = usePref("caption");
   /// 키보드·뷰어가 기준으로 삼는 한 장
   const [selected, setSelected] = useState<number | null>(null);
   /// 여러 장 고르기. 정리는 이 묶음을 옮긴다.
@@ -209,9 +206,9 @@ export default function App() {
   /// 「⋯」를 연 라이브러리. 지우기는 이 안에 숨겨 둔다.
   const [menuFor, setMenuFor] = useState<number | null>(null);
   /// 사이드바가 무엇을 보여줄지, 펴져 있는지, 얼마나 넓은지
-  const [source, setSource] = useState<Source>("all");
-  const [panelOpen, setPanelOpen] = useState(true);
-  const [panelW, setPanelW] = useState(224);
+  const [source, setSource] = usePref("source");
+  const [panelOpen, setPanelOpen] = usePref("panelOpen");
+  const [panelW, setPanelW] = usePref("panelW");
   const dragPanel = useRef(false);
   /// 우클릭 메뉴가 뜬 자리와 그때 잡힌 사진들
   const [ctxAt, setCtxAt] = useState<MenuAt>(null);
@@ -675,6 +672,10 @@ export default function App() {
 
   /// 뷰어가 훑고 다닐 목록 — 지금 화면에 올라온 순서 그대로
   const ids = useMemo(() => rows.map((r) => r.id), [rows]);
+  /// 뷰어가 상세를 읽기 전에 사진·영상을 가르게 — 정지 프레임이 한 번
+  /// 그려졌다 영상으로 바뀌는 깜빡임을 막는다
+  const kinds = useMemo(() => new Map(rows.map((r) => [r.id, r.kind])), [rows]);
+  const kindOf = useCallback((id: number) => kinds.get(id), [kinds]);
 
   /// 뷰어에서 판정을 바꾸면 그리드도 같이 바뀌어야 한다
   const markOne = useCallback(
@@ -1742,6 +1743,7 @@ export default function App() {
               onMark={markOne}
               fullScreen={viewerFull}
               onToggleFullScreen={() => setViewerFull((f) => !f)}
+              kindOf={kindOf}
             />
           )}
         </div>

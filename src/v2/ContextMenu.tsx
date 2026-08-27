@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 export type MenuItem =
   | {
@@ -10,6 +10,12 @@ export type MenuItem =
       run: () => void | Promise<void>;
     }
   | { kind: "sep" };
+
+/** 한 줄·구분선·안팎 여백의 높이 (px). 클래스와 같이 바꿔야 한다. */
+const MENU_W = 180;
+const ROW_H = 30;
+const SEP_H = 9;
+const PAD_V = 4;
 
 export type MenuAt = { x: number; y: number } | null;
 
@@ -29,21 +35,22 @@ export default function ContextMenu({
   onClose: () => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
-  useEffect(() => {
-    if (!at) {
-      setPos(null);
-      return;
-    }
-    const el = box.current;
-    const w = el?.offsetWidth ?? 180;
-    const h = el?.offsetHeight ?? 200;
-    setPos({
-      left: Math.min(at.x, window.innerWidth - w - 8),
+  /// 화면 밖으로 나가지 않게 자리를 잡는다.
+  ///
+  /// 그려 놓고 재서 옮기지 않는다 — 한 프레임 보였다 튀고, 그걸 감추려고
+  /// visibility를 만지는 것이 더 번거롭다. 줄 높이는 정해져 있으니 셈으로
+  /// 충분하다.
+  const pos = useMemo(() => {
+    if (!at) return null;
+    const h =
+      items.reduce((a, it) => a + (it.kind === "sep" ? SEP_H : ROW_H), 0) +
+      PAD_V * 2;
+    return {
+      left: Math.min(at.x, window.innerWidth - MENU_W - 8),
       top: Math.min(at.y, window.innerHeight - h - 8),
-    });
-  }, [at, items.length]);
+    };
+  }, [at, items]);
 
   useEffect(() => {
     if (!at) return;
@@ -67,12 +74,7 @@ export default function ContextMenu({
     <div
       ref={box}
       className="fixed z-50 min-w-[180px] bg-raised rounded-md ring-1 ring-line-strong shadow-2xl py-1"
-      style={{
-        left: pos?.left ?? at.x,
-        top: pos?.top ?? at.y,
-        // 자리를 재기 전에는 보이지 않게 — 깜빡이며 옮겨가는 것을 막는다
-        visibility: pos ? "visible" : "hidden",
-      }}
+      style={{ left: pos?.left ?? at.x, top: pos?.top ?? at.y }}
     >
       {items.map((it, i) =>
         it.kind === "sep" ? (

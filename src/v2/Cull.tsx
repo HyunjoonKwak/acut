@@ -40,11 +40,16 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   const [kind, setKind] = useState(2); // 같은 순간이 가장 많다
   const [groups, setGroups] = useState<Group[]>([]);
   const [idx, setIdx] = useState(0);
-  const [members, setMembers] = useState<Member[]>([]);
+  /// 구성원 — 어느 그룹의 것인지와 함께. 그룹이 바뀌면 안 맞아 빈 목록이 된다.
+  const [got, setGot] = useState<{ groupId: number; list: Member[] } | null>(
+    null,
+  );
   const [summary, setSummary] = useState<Summary[]>([]);
   const [busy, setBusy] = useState("");
-  /// 크게 보기 — 구성원 목록 안 위치. null이면 닫힌 상태
-  const [viewerAt, setViewerAt] = useState<number | null>(null);
+  /// 크게 보기 — 어느 그룹의 몇 번째. 그룹이 바뀌면 저절로 닫힌다.
+  const [viewer, setViewer] = useState<{ groupId: number; at: number } | null>(
+    null,
+  );
   const [viewerFull, setViewerFull] = useState(false);
 
   /// 캐시가 라이브러리마다 따로 있어 주소 앞에 라이브러리 id가 붙는다
@@ -67,21 +72,43 @@ export default function Cull({ onClose }: { onClose: () => void }) {
     setIdx(0);
   }, []);
 
+  // 갈래를 바꾸면 요약과 그룹을 새로 읽는다. 다른 데서 쓰는 loadSummary·
+  // loadGroups를 여기서 부르지 않는 이유: 컴파일러가 그 안의 setState를
+  // «효과 안에서 바로»로 본다. 여기서는 then으로 풀어 쓴다.
   useEffect(() => {
-    loadSummary();
-    loadGroups(kind);
-  }, [kind, loadSummary, loadGroups]);
+    let live = true;
+    invoke<Summary[]>("cull_summary").then((s) => live && setSummary(s));
+    invoke<Group[]>("cull_groups", { kind, limit: 200, offset: 0 }).then(
+      (g) => {
+        if (!live) return;
+        setGroups(g);
+        setIdx(0);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [kind]);
 
   // 현재 그룹의 구성원
+  const current = groups[idx];
   useEffect(() => {
-    const g = groups[idx];
-    if (!g) {
-      setMembers([]);
-      return;
-    }
-    setViewerAt(null);
-    invoke<Member[]>("cull_members", { groupId: g.id }).then(setMembers);
-  }, [groups, idx]);
+    if (!current) return;
+    let live = true;
+    invoke<Member[]>("cull_members", { groupId: current.id }).then(
+      (list) => live && setGot({ groupId: current.id, list }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [current]);
+  const members = current && got?.groupId === current.id ? got.list : [];
+  const viewerAt = current && viewer?.groupId === current.id ? viewer.at : null;
+  const setViewerAt = useCallback(
+    (at: number | null) =>
+      setViewer(at === null || !current ? null : { groupId: current.id, at }),
+    [current],
+  );
 
   // 스캔 진행
   useEffect(() => {
@@ -128,8 +155,16 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       const g = groups[idx];
       if (!g) return;
       await invoke("cull_set_best", { groupId: g.id, fileId });
-      setMembers((m) =>
-        m.map((x) => ({ ...x, is_best: x.file_id === fileId })),
+      setGot((cur) =>
+        cur && cur.groupId === g.id
+          ? {
+              ...cur,
+              list: cur.list.map((x) => ({
+                ...x,
+                is_best: x.file_id === fileId,
+              })),
+            }
+          : cur,
       );
     },
     [groups, idx],

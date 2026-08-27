@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // src-tauri/target은 Rust 빌드 산출물이다. 안 빼면 codegen된 JS 30개가
+  // 파싱 오류로 잡혀 진짜 오류가 묻힌다.
+  globalIgnores(['dist', 'src-tauri/target', 'src-tauri/gen']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

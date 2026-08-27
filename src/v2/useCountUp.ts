@@ -16,11 +16,19 @@ export function useCountUp(target: number): number {
   const cur = useRef(target);
 
   useEffect(() => {
-    // 뒤로 가거나(새 작업 시작) 크게 벌어지면 따라가지 않고 그냥 맞춘다
+    // 뒤로 가거나(새 작업 시작) 크게 벌어지면 따라가지 않고 그냥 맞춘다.
+    // 이것도 프레임에서 한다 — 효과 안에서 바로 setState하면 렌더가 겹친다.
     if (target < cur.current || target - cur.current > 100_000) {
-      cur.current = target;
-      setShown(target);
-      return;
+      cancelAnimationFrame(raf.current);
+      raf.current = requestAnimationFrame(() => {
+        cur.current = target;
+        setShown(target);
+        raf.current = 0;
+      });
+      return () => {
+        cancelAnimationFrame(raf.current);
+        raf.current = 0;
+      };
     }
 
     const step = () => {

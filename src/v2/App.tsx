@@ -6,6 +6,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import Cull from "./Cull";
 import Viewer from "./Viewer";
 import ScrollBar from "./ScrollBar";
+import FilterBar, {
+  EMPTY as EMPTY_PICKS,
+  isEmpty as picksAreEmpty,
+  type Picks,
+} from "./FilterBar";
 
 // ── 타입 (Rust 쪽과 맞춰야 한다) ─────────────────────────────────────
 type FileRow = {
@@ -101,6 +106,8 @@ export default function App() {
   const [sel, setSel] = useState<{ path: string; rel: string } | null>(null);
   /// 펼쳐 둔 마디들 (라이브러리 기준 경로)
   const [open, setOpen] = useState<Set<string>>(new Set());
+  /// 찾기 줄에서 고른 것들
+  const [picks, setPicks] = useState<Picks>(EMPTY_PICKS);
   const [scanMsg, setScanMsg] = useState<string>("");
   const [thumbSize, setThumbSize] = useState(180);
   const [selected, setSelected] = useState<number | null>(null);
@@ -131,8 +138,8 @@ export default function App() {
   }, []);
 
   const filter = useMemo(
-    () => ({ library_id: libId, folder_path: sel?.rel ?? null }),
-    [libId, sel],
+    () => ({ ...picks, library_id: libId, folder_path: sel?.rel ?? null }),
+    [picks, libId, sel],
   );
 
   const loadFirst = useCallback(async () => {
@@ -223,7 +230,7 @@ export default function App() {
     setDone(false);
     loadFirst();
     refreshMeta();
-  }, [libs.length, libId, sel, loadFirst, refreshMeta]);
+  }, [libs.length, libId, sel, picks, loadFirst, refreshMeta]);
 
   // 스캔·썸네일 진행 상황
   useEffect(() => {
@@ -424,20 +431,51 @@ export default function App() {
     if (viewerAt !== null && viewerAt >= rows.length - 5) loadMore();
   }, [viewerAt, rows.length, loadMore]);
 
-  // 그리드에서 Space/Enter로 뷰어를 연다
+  // 그리드 키보드 — 뷰어를 열지 않고도 판정하고 옮겨 다닌다.
+  // 뷰어와 같은 배열이라 손이 기억한 대로 눌린다.
   useEffect(() => {
     if (viewerAt !== null || culling) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== " " && e.key !== "Enter") return;
-      if (selected === null) return;
-      const i = rows.findIndex((r) => r.id === selected);
+      // 찾기 입력칸에 쓰는 중이면 가로채지 않는다
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+
+      const i =
+        selected === null ? -1 : rows.findIndex((r) => r.id === selected);
+      const move = (d: number) => {
+        const n = i < 0 ? 0 : i + d;
+        if (n < 0 || n >= rows.length) return;
+        e.preventDefault();
+        setSelected(rows[n].id);
+      };
+      switch (e.key) {
+        case " ":
+        case "Enter":
+          if (i < 0) return;
+          e.preventDefault();
+          setViewerAt(i);
+          return;
+        case "ArrowRight":
+          return move(1);
+        case "ArrowLeft":
+          return move(-1);
+        case "ArrowDown":
+          return move(cols);
+        case "ArrowUp":
+          return move(-cols);
+      }
       if (i < 0) return;
-      e.preventDefault();
-      setViewerAt(i);
+      const r = rows[i];
+      if (/^[0-5]$/.test(e.key)) markOne(r.id, { rating: +e.key });
+      else if (e.key === "p")
+        markOne(r.id, { cullingFlag: r.culling_flag === 1 ? 0 : 1 });
+      else if (e.key === "x")
+        markOne(r.id, { cullingFlag: r.culling_flag === 2 ? 0 : 2 });
+      else if (e.key === "f") markOne(r.id, { favorite: !r.favorite });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [viewerAt, culling, selected, rows]);
+  }, [viewerAt, culling, selected, rows, cols, markOne]);
 
   /// 접힌 마디의 자식은 그리지 않는다. 3,161줄을 통째로 그리면 사이드바가
   /// 느려지고 스크롤 막대가 실오라기가 된다.
@@ -466,6 +504,13 @@ export default function App() {
       return next;
     });
   }, []);
+
+  /// 찾기 결과 개수 — 눈금 합이 곧 필터에 걸린 장수라 따로 세지 않는다
+  const matched = useMemo(
+    () => buckets.reduce((a, b) => a + b.count, 0),
+    [buckets],
+  );
+  const filterIsEmpty = picksAreEmpty(picks) && sel === null;
 
   /// 스크롤바가 알아야 하는 두 값 — 지금 맨 위 사진의 전역 순번과 한 화면 장수
   const offset = baseIndex + Math.floor(scrollTop / rowH) * cols;
@@ -520,6 +565,8 @@ export default function App() {
           className="w-28"
         />
       </div>
+
+      {libs.length > 0 && <FilterBar value={picks} onChange={setPicks} />}
 
       <div className="flex-1 flex min-h-0">
         {/* 사이드바 — 위는 등록한 라이브러리, 아래는 그 안의 폴더 */}
@@ -706,6 +753,41 @@ export default function App() {
                                 RAW
                               </span>
                             )}
+                            {/* 판정 배지 — 뷰어를 열지 않고도 상태가 보여야 한다 */}
+                            {r.culling_flag !== 0 && (
+                              <span
+                                className="absolute top-1 right-1 w-4 h-4 rounded text-[10px] font-bold flex items-center justify-center"
+                                style={
+                                  r.culling_flag === 1
+                                    ? {
+                                        background: "#F0B429",
+                                        color: "#231A00",
+                                      }
+                                    : {
+                                        background: "#E2685C",
+                                        color: "#2A0D09",
+                                      }
+                                }
+                                title={r.culling_flag === 1 ? "남김" : "제외"}
+                              >
+                                {r.culling_flag === 1 ? "★" : "✕"}
+                              </span>
+                            )}
+                            {(r.rating > 0 || r.favorite) && (
+                              <div className="absolute bottom-0 inset-x-0 flex items-center gap-1 px-1 py-0.5 bg-gradient-to-t from-black/70 to-transparent">
+                                {r.rating > 0 && (
+                                  <span className="text-[9px] text-[#F0B429] tracking-tighter">
+                                    {"★".repeat(r.rating)}
+                                  </span>
+                                )}
+                                <div className="flex-1" />
+                                {r.favorite && (
+                                  <span className="text-[9px] text-[#E2685C]">
+                                    ♥
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div className="text-[10.5px] text-[#6D7B7E] mt-1 truncate tabular-nums">
                             {fmtDate(r.taken_at)}
@@ -781,6 +863,11 @@ export default function App() {
               </span>
             )}
           </>
+        )}
+        {!filterIsEmpty && (
+          <span className="text-[#49B8B4]">
+            찾은 것 {matched.toLocaleString()}장
+          </span>
         )}
         <div className="flex-1" />
         <span>표시 {rows.length.toLocaleString()}</span>

@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Cull from "./Cull";
+import Viewer from "./Viewer";
 
 // ── 타입 (Rust 쪽과 맞춰야 한다) ─────────────────────────────────────
 type FileRow = {
@@ -82,6 +83,8 @@ export default function App() {
   const [thumbSize, setThumbSize] = useState(180);
   const [selected, setSelected] = useState<number | null>(null);
   const [culling, setCulling] = useState(false);
+  /// 뷰어에 띄운 사진의 rows 안 위치. null이면 뷰어가 닫힌 상태
+  const [viewerAt, setViewerAt] = useState<number | null>(null);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   /// 드래그 중 표시할 눈금 (없으면 드래그 중이 아니다)
   const [scrubAt, setScrubAt] = useState<number | null>(null);
@@ -272,6 +275,54 @@ export default function App() {
     return () => window.removeEventListener("pointerup", up);
   }, [endScrub]);
 
+  /// 뷰어가 훑고 다닐 목록 — 지금 화면에 올라온 순서 그대로
+  const ids = useMemo(() => rows.map((r) => r.id), [rows]);
+
+  /// 뷰어에서 판정을 바꾸면 그리드도 같이 바뀌어야 한다
+  const markOne = useCallback(
+    async (id: number, patch: { rating?: number; cullingFlag?: number; favorite?: boolean }) => {
+      await invoke("files_mark", {
+        ids: [id],
+        rating: patch.rating ?? null,
+        cullingFlag: patch.cullingFlag ?? null,
+        favorite: patch.favorite ?? null,
+      });
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === id
+            ? {
+                ...r,
+                rating: patch.rating ?? r.rating,
+                culling_flag: patch.cullingFlag ?? r.culling_flag,
+                favorite: patch.favorite ?? r.favorite,
+              }
+            : r,
+        ),
+      );
+    },
+    [],
+  );
+
+  // 뷰어가 끝에 다다르면 다음 페이지를 미리 읽는다
+  useEffect(() => {
+    if (viewerAt !== null && viewerAt >= rows.length - 5) loadMore();
+  }, [viewerAt, rows.length, loadMore]);
+
+  // 그리드에서 Space/Enter로 뷰어를 연다
+  useEffect(() => {
+    if (viewerAt !== null || culling) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== " " && e.key !== "Enter") return;
+      if (selected === null) return;
+      const i = rows.findIndex((r) => r.id === selected);
+      if (i < 0) return;
+      e.preventDefault();
+      setViewerAt(i);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewerAt, culling, selected, rows]);
+
   const thumbUrl = (r: FileRow) =>
     r.thumb ? `thumb://localhost/${r.thumb.split("/").map(encodeURIComponent).join("/")}` : null;
 
@@ -373,12 +424,13 @@ export default function App() {
                     gap: GAP,
                   }}
                 >
-                  {slice.map((r) => {
+                  {slice.map((r, ci) => {
                     const url = thumbUrl(r);
                     return (
                       <button
                         key={r.id}
                         onClick={() => setSelected(r.id)}
+                        onDoubleClick={() => setViewerAt(start + ci)}
                         className="text-left"
                       >
                         <div
@@ -491,6 +543,16 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {viewerAt !== null && (
+        <Viewer
+          ids={ids}
+          index={viewerAt}
+          onIndex={setViewerAt}
+          onClose={() => setViewerAt(null)}
+          onMark={markOne}
+        />
+      )}
 
       {culling && lib && (
         <Cull onClose={() => { setCulling(false); loadFirst(); }} />

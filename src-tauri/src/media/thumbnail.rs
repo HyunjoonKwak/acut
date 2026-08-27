@@ -329,6 +329,26 @@ mod tests {
         assert!(std::fs::metadata(&out).unwrap().len() > 0);
     }
 
+    /// 뷰어가 요청 시 만드는 크기. 그리드용보다 확실히 커야 하고,
+    /// RAW에서도 나와야 한다 — RAW는 웹뷰가 직접 못 읽으니 이게 유일한 경로다.
+    #[test]
+    fn makes_a_viewer_preview() {
+        let Some(src) = sample("jpg") else { return };
+        let dir = tempfile::tempdir().unwrap();
+
+        let small = dir.path().join("s.jpg");
+        let s = make(&src, &small, crate::media::cache::THUMB_PX, 0.72).expect("썸네일");
+
+        let big = dir.path().join("p.jpg");
+        let p = make(&src, &big, crate::media::cache::PREVIEW_PX, 0.85).expect("미리보기");
+
+        // 원본이 작으면 둘이 같을 수 있다 — 그때는 확대하지 않았는지만 본다
+        assert!(p.width >= s.width && p.height >= s.height, "{p:?} < {s:?}");
+        assert!(p.width <= crate::media::cache::PREVIEW_PX);
+        assert!(p.height <= crate::media::cache::PREVIEW_PX);
+        assert!(std::fs::metadata(&big).unwrap().len() > 0);
+    }
+
     #[test]
     fn small_source_is_not_upscaled() {
         let Some(src) = sample("jpg") else { return };

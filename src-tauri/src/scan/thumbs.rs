@@ -63,11 +63,7 @@ pub fn generate(
         let rows = st.query_map([volume_uuid], |r| {
             let rel_dir: String = r.get(1)?;
             let name: String = r.get(2)?;
-            let rel_path = if rel_dir.is_empty() {
-                name.clone()
-            } else {
-                format!("{rel_dir}/{name}")
-            };
+            let rel_path = cache::rel_path(&rel_dir, &name);
             Ok(Job {
                 file_id: r.get(0)?,
                 full_path: PathBuf::new(), // 아래에서 채운다

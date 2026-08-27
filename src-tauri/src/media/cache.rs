@@ -15,6 +15,19 @@ use std::path::{Path, PathBuf};
 pub const THUMB_PX: u32 = 640;
 pub const THUMB_QUALITY: f64 = 0.72;
 
+/// 뷰어용 미리보기. 5K 화면에서 전체화면으로 봐도 견디는 크기.
+///
+/// 원본을 그대로 주지 않는 이유가 둘이다:
+///   - 5760×3840 JPEG는 5MB가 넘어 넘기기 버겁다
+///   - **RAW는 웹뷰가 못 읽는다.** ImageIO로 미리보기를 만들어야만 보인다
+pub const PREVIEW_PX: u32 = 2560;
+pub const PREVIEW_QUALITY: f64 = 0.85;
+
+/// 뷰어 미리보기 캐시 폴더. 썸네일과 나눠 둔다 — 지울 때 따로 지우기 위해서다.
+pub fn preview_root(library_root: &Path) -> PathBuf {
+    library_root.join(".acut").join("previews")
+}
+
 /// 라이브러리 루트 안의 캐시 폴더.
 ///
 /// **볼륨 마운트가 아니라 라이브러리 루트 기준**이다. 부팅 볼륨의 마운트는 `/`라
@@ -22,6 +35,18 @@ pub const THUMB_QUALITY: f64 = 0.72;
 /// 있든 그 폴더 안에 캐시가 함께 있는 편이 옮기기도 쉽다.
 pub fn cache_root(library_root: &Path) -> PathBuf {
     library_root.join(".acut").join("thumbs")
+}
+
+/// 폴더 상대경로와 파일명을 볼륨 기준 상대경로로 합친다.
+///
+/// 썸네일 일괄 생성과 뷰어 미리보기가 **같은 문자열**을 만들어야 한다. 어긋나면
+/// 캐시 키가 달라져 같은 사진을 두 번 만들고, 원본 경로도 어긋난다.
+pub fn rel_path(rel_dir: &str, name: &str) -> String {
+    if rel_dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{rel_dir}/{name}")
+    }
 }
 
 /// 캐시 키 — 원본이 바뀌면 값이 바뀐다.
@@ -91,6 +116,34 @@ mod tests {
         // 하위 폴더를 라이브러리로 잡아도 그 안에 생긴다
         let sub = cache_root(Path::new("/Volumes/PHOTO 1/내사진"));
         assert_eq!(sub, Path::new("/Volumes/PHOTO 1/내사진/.acut/thumbs"));
+    }
+
+    #[test]
+    fn rel_path_joins_the_same_way_everywhere() {
+        assert_eq!(rel_path("2018/여행", "a.jpg"), "2018/여행/a.jpg");
+        // 루트 바로 아래 파일은 앞에 슬래시가 붙으면 안 된다
+        assert_eq!(rel_path("", "a.jpg"), "a.jpg");
+    }
+
+    #[test]
+    fn previews_do_not_share_the_thumbnail_folder() {
+        // 같은 키를 써도 폴더가 갈려야 한다. 섞이면 그리드가 2560px을 읽어
+        // 느려지고, 캐시를 지울 때 둘 다 날아간다.
+        let lib = Path::new("/Volumes/PHOTO 1");
+        assert_eq!(preview_root(lib), Path::new("/Volumes/PHOTO 1/.acut/previews"));
+        assert_ne!(preview_root(lib), cache_root(lib));
+
+        let key = key_for("2018/a.jpg", 100, 1000);
+        assert_ne!(
+            thumb_path(&preview_root(lib), &key),
+            thumb_path(&cache_root(lib), &key),
+        );
+    }
+
+    #[test]
+    fn preview_is_larger_than_the_grid_thumbnail() {
+        assert!(PREVIEW_PX > THUMB_PX, "뷰어가 썸네일을 확대해 보여주면 안 된다");
+        assert!(PREVIEW_QUALITY > THUMB_QUALITY);
     }
 
     #[test]

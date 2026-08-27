@@ -25,3 +25,6 @@ src-tauri/target
 *.njsproj
 *.sln
 *.sw?
+
+# 도구 상태 (커밋 대상 아님)
+.omc/

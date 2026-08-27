@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import Viewer from "./Viewer";
 
 type Group = {
   id: number;
@@ -47,6 +48,8 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [summary, setSummary] = useState<Summary[]>([]);
   const [busy, setBusy] = useState("");
+  /// 크게 보기 — 구성원 목록 안 위치. null이면 닫힌 상태
+  const [viewerAt, setViewerAt] = useState<number | null>(null);
 
   const url = (rel: string | null) =>
     rel ? `thumb://localhost/${rel.split("/").map(encodeURIComponent).join("/")}` : null;
@@ -73,6 +76,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       setMembers([]);
       return;
     }
+    setViewerAt(null);
     invoke<Member[]>("cull_members", { groupId: g.id }).then(setMembers);
   }, [groups, idx]);
 
@@ -129,6 +133,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   // 키보드 — 손이 마우스로 가지 않게
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (viewerAt !== null) return; // 크게 보기가 열려 있으면 뷰어가 키를 가져간다
       if (e.key === " ") {
         e.preventDefault();
         apply();
@@ -143,7 +148,27 @@ export default function Cull({ onClose }: { onClose: () => void }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [apply, skip, pick, members, onClose]);
+  }, [apply, skip, pick, members, onClose, viewerAt]);
+
+  /// 크게 본 상태에서 P(남김)를 누르면 그 사진이 이 그룹의 남길 것이 된다
+  const viewerMark = useCallback(
+    async (
+      fileId: number,
+      patch: { rating?: number; cullingFlag?: number; favorite?: boolean },
+    ) => {
+      if (patch.cullingFlag === 1) {
+        await pick(fileId);
+        return;
+      }
+      await invoke("files_mark", {
+        ids: [fileId],
+        rating: patch.rating ?? null,
+        cullingFlag: patch.cullingFlag ?? null,
+        favorite: patch.favorite ?? null,
+      });
+    },
+    [pick],
+  );
 
   const cur = groups[idx];
   const total = summary.reduce((a, s) => a + s.reclaimable, 0);
@@ -222,7 +247,12 @@ export default function Cull({ onClose }: { onClose: () => void }) {
             {members.map((m, i) => {
               const u = url(m.thumb);
               return (
-                <button key={m.file_id} onClick={() => pick(m.file_id)} className="text-left">
+                <button
+                  key={m.file_id}
+                  onClick={() => pick(m.file_id)}
+                  onDoubleClick={() => setViewerAt(i)}
+                  className="text-left"
+                >
                   <div
                     className="relative rounded-lg overflow-hidden bg-[#0F1314]"
                     style={{
@@ -272,6 +302,16 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
+      {viewerAt !== null && members[viewerAt] && (
+        <Viewer
+          ids={members.map((m) => m.file_id)}
+          index={viewerAt}
+          onIndex={setViewerAt}
+          onClose={() => setViewerAt(null)}
+          onMark={viewerMark}
+        />
+      )}
+
       {/* 액션 */}
       <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-[#1C2123] border-t border-[#242C2E]">
         <button
@@ -291,7 +331,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
           <span className="text-[10.5px] bg-white/8 px-1.5 py-0.5 rounded font-mono">S</span>
         </button>
         <span className="text-[12px] text-[#6D7B7E] ml-2">
-          숫자키 <span className="font-mono">1–9</span> 로 남길 것을 바꿉니다
+          숫자키 <span className="font-mono">1–9</span> 로 남길 것을 바꿉니다 · 두 번 누르면 크게 봅니다
         </span>
         <div className="flex-1" />
         <span className="text-[12px] text-[#6D7B7E]">

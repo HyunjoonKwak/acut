@@ -288,7 +288,7 @@ export default function Compare({
                   {/* 초점이 간 칸만 분포를 그린다 — 넷을 동시에 세면 넘길 때마다 멈칫한다 */}
                   {showInfo && on && (
                     <div className="mt-1.5">
-                      <Histogram src={`photo://localhost/${id}`} />
+                      <Histogram src={`photo://localhost/${id}`} compact />
                     </div>
                   )}
                 </div>

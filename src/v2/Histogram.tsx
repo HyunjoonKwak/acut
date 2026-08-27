@@ -3,6 +3,8 @@ import { bins, polyline, type Bins } from "./histogramMath";
 
 const W = 224;
 const H = 64;
+/** 나란히 보기의 좁은 띠 안에서 쓰는 높이 */
+const H_COMPACT = 34;
 /** 몇 픽셀만 세도 분포는 같다. 원본을 통째로 읽으면 넘길 때마다 멈칫한다. */
 const SAMPLE = 220;
 
@@ -15,7 +17,14 @@ const SAMPLE = 220;
  * 이미 화면에 뜬 그림을 작은 캔버스에 옮겨 그려 픽셀을 읽는다. 원본을 다시
  * 열지 않는다.
  */
-export default function Histogram({ src }: { src: string }) {
+export default function Histogram({
+  src,
+  compact,
+}: {
+  src: string;
+  /** 좁은 자리 — 제목을 빼고 낮게 그린다 */
+  compact?: boolean;
+}) {
   const [h, setH] = useState<Bins | null>(null);
   const [err, setErr] = useState(false);
   const cvs = useRef<HTMLCanvasElement | null>(null);
@@ -58,17 +67,22 @@ export default function Histogram({ src }: { src: string }) {
   }, [src]);
 
   if (err) return null;
+  const h1 = compact ? H_COMPACT : H;
 
   return (
     <>
-      <div className="text-[10.5px] text-fg-mute uppercase tracking-wider mb-2">
-        밝기 분포
-      </div>
-      <div className="rounded bg-canvas p-1">
+      {!compact && (
+        <div className="text-[10.5px] text-fg-mute uppercase tracking-wider mb-2">
+          밝기 분포
+        </div>
+      )}
+      <div
+        className={compact ? "rounded bg-black/40" : "rounded bg-canvas p-1"}
+      >
         <svg
-          viewBox={`0 0 ${W} ${H}`}
+          viewBox={`0 0 ${W} ${h1}`}
           className="w-full block"
-          style={{ height: H }}
+          style={{ height: h1 }}
           role="img"
           aria-label="밝기 분포"
         >
@@ -79,7 +93,7 @@ export default function Histogram({ src }: { src: string }) {
               x1={W * f}
               y1={0}
               x2={W * f}
-              y2={H}
+              y2={h1}
               stroke="var(--color-line)"
               strokeWidth={1}
             />
@@ -94,7 +108,7 @@ export default function Histogram({ src }: { src: string }) {
             ).map(([k, color]) => (
               <polyline
                 key={k}
-                points={polyline(h[k], h.peak, W, H)}
+                points={polyline(h[k], h.peak, W, h1)}
                 fill="none"
                 stroke={color}
                 strokeWidth={1}

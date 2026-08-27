@@ -6,6 +6,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import Cull from "./Cull";
 import Viewer from "./Viewer";
 import Compare from "./Compare";
+import Shortcuts from "./Shortcuts";
 import ScrollBar from "./ScrollBar";
 import Filmstrip from "./Filmstrip";
 import Organize from "./Organize";
@@ -200,6 +201,8 @@ export default function App() {
   const [organizing, setOrganizing] = useState(false);
   /// 나란히 보기 — 골라 둔 것 중 앞의 넷. null이면 닫힌 상태
   const [comparing, setComparing] = useState<number[] | null>(null);
+  /// 단축키 한 장 (`?`)
+  const [helping, setHelping] = useState(false);
   /// 「⋯」를 연 라이브러리. 지우기는 이 안에 숨겨 둔다.
   const [menuFor, setMenuFor] = useState<number | null>(null);
   /// 사이드바가 무엇을 보여줄지, 펴져 있는지, 얼마나 넓은지
@@ -776,7 +779,9 @@ export default function App() {
   // 그리드 키보드 — 뷰어를 열지 않고도 판정하고 옮겨 다닌다.
   // 뷰어와 같은 배열이라 손이 기억한 대로 눌린다.
   useEffect(() => {
-    if (viewerAt !== null || culling || organizing) return;
+    // 위에 무언가 떠 있으면 그쪽이 키를 맡는다. 나란히 보기는 자기 키를
+    // 따로 듣고, 단축키 한 장은 Esc만 받으면 된다.
+    if (viewerAt !== null || culling || organizing || comparing) return;
     const onKey = (e: KeyboardEvent) => {
       // 찾기 입력칸에 쓰는 중이면 가로채지 않는다
       const t = e.target as HTMLElement | null;
@@ -802,6 +807,25 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === "a") {
         e.preventDefault();
         setPicked(new Set(rows.map((r) => r.id)));
+        return;
+      }
+      if (e.key === "?") {
+        e.preventDefault();
+        setHelping((h) => !h);
+        return;
+      }
+      if (helping) {
+        // 한 장이 떠 있는 동안에는 Esc 말고는 아무것도 안 듣는다 —
+        // 안 보이는 사진에 판정이 찍히면 알아챌 방법이 없다.
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setHelping(false);
+        }
+        return;
+      }
+      if (e.key === "c" && compareIds.length >= 2) {
+        e.preventDefault();
+        setComparing(compareIds);
         return;
       }
       if (e.key === "Escape" && picked.size > 0) {
@@ -840,6 +864,9 @@ export default function App() {
     viewerAt,
     culling,
     organizing,
+    comparing,
+    helping,
+    compareIds,
     selected,
     rows,
     cols,
@@ -1197,6 +1224,16 @@ export default function App() {
         >
           {(close) => (
             <>
+              <MenuItem
+                hint="?"
+                onClick={() => {
+                  close();
+                  setHelping(true);
+                }}
+              >
+                단축키
+              </MenuItem>
+              <MenuSep />
               <MenuItem
                 onClick={() => {
                   close();
@@ -1697,6 +1734,8 @@ export default function App() {
       </div>
 
       <ContextMenu at={ctxAt} items={ctxItems} onClose={() => setCtxAt(null)} />
+
+      {helping && <Shortcuts onClose={() => setHelping(false)} />}
 
       {comparing && (
         <Compare

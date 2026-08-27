@@ -11,49 +11,33 @@ pub mod photo_protocol;
 pub mod thumb_protocol;
 
 use crate::db::conn::Db;
+use crate::db::libraries::Library as LibRow;
 use crate::db::query::{self, Cursor, Filter, Page};
 use crate::media::cache;
 use crate::scan;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// 앱이 살아 있는 동안 유지되는 상태.
+///
+/// **"열린 라이브러리" 같은 건 없다.** 등록된 라이브러리가 여럿이고, 경로가
+/// 필요한 곳에서는 그때그때 파일이 속한 라이브러리를 찾아 푼다. 하나를
+/// 기억해 두면 다른 디스크 사진에서 엉뚱한 경로를 보게 된다.
 pub struct AppState {
     pub db: Arc<Db>,
-    /// 지금 열려 있는 라이브러리. 없으면 아직 고르지 않은 것이다.
-    pub library: Mutex<Option<Library>>,
     /// 스캔·썸네일 생성을 멈추는 스위치.
     pub cancel: Arc<AtomicBool>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Library {
-    pub root: PathBuf,
-    pub volume_uuid: String,
-    pub volume_mount: PathBuf,
-    pub volume_name: String,
-    /// 썸네일 캐시 폴더. 프론트가 경로를 조합할 때 쓴다.
-    pub cache_root: PathBuf,
 }
 
 impl AppState {
     pub fn new(db: Db) -> Self {
         Self {
             db: Arc::new(db),
-            library: Mutex::new(None),
             cancel: Arc::new(AtomicBool::new(false)),
         }
-    }
-
-    pub(crate) fn current(&self) -> Result<Library, String> {
-        self.library
-            .lock()
-            .map_err(|_| "상태를 읽을 수 없습니다".to_string())?
-            .clone()
-            .ok_or_else(|| "라이브러리를 먼저 열어야 합니다".to_string())
     }
 }
 
@@ -63,61 +47,26 @@ pub(crate) fn err<E: std::fmt::Display>(e: E) -> String {
 
 // ── 라이브러리 ─────────────────────────────────────────────────────────
 
-/// 폴더를 라이브러리로 연다. 스캔은 하지 않는다 (`scan_start`가 한다).
+/// 등록된 것 전부. 디스크가 빠진 것도 포함한다.
 #[tauri::command]
-pub fn library_open(state: State<'_, AppState>, path: String) -> Result<Library, String> {
-    let root = PathBuf::from(&path);
-    if !root.is_dir() {
-        return Err(format!("폴더가 아닙니다: {path}"));
-    }
-    let v = crate::db::volumes::describe(&root).map_err(err)?;
-    let lib = Library {
-        cache_root: cache::cache_root(&root),
-        root: root.clone(),
-        volume_uuid: v.uuid.clone(),
-        volume_mount: v.mount_path,
-        volume_name: v.name,
-    };
-
-    // 다음에 자동으로 열 수 있게 기억해 둔다.
-    state
-        .db
-        .write(|c| {
-            c.execute(
-                "INSERT INTO settings(key,value) VALUES('library_root',?1)
-                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                [&path],
-            )
-        })
-        .map_err(err)?;
-
-    *state.library.lock().map_err(|_| "상태 오류".to_string())? = Some(lib.clone());
-    Ok(lib)
+pub fn libraries_list(state: State<'_, AppState>) -> Result<Vec<LibRow>, String> {
+    crate::db::libraries::list(&state.db).map_err(err)
 }
 
-/// 마지막으로 열었던 라이브러리를 다시 연다. 앱 시작 시 부른다.
-///
-/// 볼륨이 다른 곳에 마운트됐어도 UUID로 찾아내므로 경로가 바뀌어도 열린다.
+/// 폴더를 라이브러리로 등록한다. 스캔은 하지 않는다 (`scan_start`가 한다).
 #[tauri::command]
-pub fn library_reopen(state: State<'_, AppState>) -> Result<Option<Library>, String> {
-    let saved: Option<String> = state
-        .db
-        .read(|c| {
-            c.query_row("SELECT value FROM settings WHERE key='library_root'", [], |r| {
-                r.get(0)
-            })
-            .or(Ok(String::new()))
-        })
-        .map_err(err)?
-        .into();
-    let Some(path) = saved.filter(|s| !s.is_empty()) else {
-        return Ok(None);
-    };
-    if !PathBuf::from(&path).is_dir() {
-        // 디스크가 빠졌거나 마운트 경로가 바뀌었다.
-        return Ok(None);
+pub fn library_add(state: State<'_, AppState>, path: String, area: i32) -> Result<LibRow, String> {
+    let dir = PathBuf::from(&path);
+    if !dir.is_dir() {
+        return Err(format!("폴더가 아닙니다: {path}"));
     }
-    library_open(state, path).map(Some)
+    crate::db::libraries::add(&state.db, &dir, area)
+}
+
+/// 등록을 지운다. **원본 사진과 디스크의 캐시 파일은 건드리지 않는다.**
+#[tauri::command]
+pub fn library_remove(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    crate::db::libraries::remove(&state.db, id).map_err(err)
 }
 
 /// 등록된 볼륨 목록 (연결 여부 포함).
@@ -170,32 +119,30 @@ pub fn volumes_list(state: State<'_, AppState>) -> Result<Vec<VolumeRow>, String
 ///
 /// 블로킹 작업이라 별도 스레드에서 돈다. 커맨드 자체는 바로 돌아온다.
 #[tauri::command]
-pub fn scan_start(app: AppHandle, area: i32) -> Result<(), String> {
+pub fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let lib = state.current()?;
+    let lib = crate::db::libraries::get(&state.db, library_id)
+        .map_err(err)?
+        .ok_or("등록되지 않은 라이브러리입니다")?;
+    let dir = lib.dir.clone().ok_or("디스크가 연결되어 있지 않습니다")?;
+    let mount = crate::db::volumes::find_mount(&lib.volume_uuid)
+        .ok_or("디스크가 연결되어 있지 않습니다")?;
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
     cancel.store(false, Ordering::Relaxed);
 
     std::thread::spawn(move || {
         let handle = app.clone();
-        let r = scan::scan_folder(&db, &lib.root, area, |p| {
+        let r = scan::scan_folder(&db, lib.id, &dir, lib.area, |p| {
             let _ = handle.emit("scan-progress", p);
         });
         match r {
             Ok(p) => {
                 let _ = app.emit("scan-done", p);
                 // 스캔이 끝나면 곧바로 썸네일을 만든다. 목록은 이미 볼 수 있다.
-                let tp = scan::thumbs::generate(
-                    &db,
-                    &lib.volume_uuid,
-                    &lib.volume_mount,
-                    &lib.root,
-                    cancel,
-                    |p| {
-                        let _ = app.emit("thumb-progress", p);
-                    },
-                );
+                let tp = scan::thumbs::generate(&db, lib.id, &mount, &dir, cancel, |p| {
+                    let _ = app.emit("thumb-progress", p);
+                });
                 let _ = app.emit("thumb-done", tp.ok());
             }
             Err(e) => {
@@ -272,17 +219,20 @@ pub struct FolderRow {
 
 /// 폴더 트리. 파일이 하나도 없는 폴더는 빼서 사이드바를 짧게 유지한다.
 #[tauri::command]
-pub fn folders_list(state: State<'_, AppState>) -> Result<Vec<FolderRow>, String> {
-    let lib = state.current()?;
+pub fn folders_list(
+    state: State<'_, AppState>,
+    library_id: Option<i64>,
+) -> Result<Vec<FolderRow>, String> {
     state
         .db
         .read(|c| {
+            // library_id가 없으면 전부. NULL 비교는 IS로 해야 한다.
             let mut st = c.prepare(
                 "SELECT id, rel_path, name, area, file_count FROM folders
-                 WHERE volume_uuid = ?1 AND file_count > 0
+                 WHERE (?1 IS NULL OR library_id = ?1) AND file_count > 0
                  ORDER BY rel_path",
             )?;
-            let it = st.query_map([&lib.volume_uuid], |r| {
+            let it = st.query_map([library_id], |r| {
                 let rel_path: String = r.get(1)?;
                 Ok(FolderRow {
                     id: r.get(0)?,
@@ -310,10 +260,12 @@ pub struct LibraryStats {
     pub cache_files: usize,
 }
 
-/// 상태바에 띄울 값들.
+/// 상태바에 띄울 값들. `library_id`가 없으면 등록된 전부를 합친다.
 #[tauri::command]
-pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String> {
-    let lib = state.current()?;
+pub fn library_stats(
+    state: State<'_, AppState>,
+    library_id: Option<i64>,
+) -> Result<LibraryStats, String> {
     let (files, bytes, done): (i64, i64, i64) = state
         .db
         .read(|c| {
@@ -323,13 +275,22 @@ pub fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String>
                  FROM files fi
                  JOIN folders fo ON fo.id=fi.folder_id
                  LEFT JOIN thumbs t ON t.file_id=fi.id
-                 WHERE fo.volume_uuid = ?1",
-                [&lib.volume_uuid],
+                 WHERE (?1 IS NULL OR fo.library_id = ?1)",
+                [library_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
         })
         .map_err(err)?;
-    let (cache_bytes, cache_files) = cache::cache_stats(&lib.cache_root);
+
+    // 캐시는 라이브러리마다 따로 있다. 합쳐서 보여준다.
+    let libs = crate::db::libraries::list(&state.db).map_err(err)?;
+    let (cache_bytes, cache_files) = libs
+        .iter()
+        .filter(|l| library_id.is_none_or(|id| l.id == id))
+        .filter_map(|l| l.dir.as_deref())
+        .map(|d| cache::cache_stats(&cache::cache_root(d)))
+        .fold((0u64, 0usize), |(b, n), (db_, dn)| (b + db_, n + dn));
+
     Ok(LibraryStats {
         files,
         bytes,

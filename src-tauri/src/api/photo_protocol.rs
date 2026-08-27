@@ -17,10 +17,6 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
         responder.respond(fail(StatusCode::NOT_FOUND));
         return;
     };
-    let Ok(lib) = state.current() else {
-        responder.respond(fail(StatusCode::NOT_FOUND));
-        return;
-    };
 
     // photo://localhost/<file_id>
     let id: i64 = match req.uri().path().trim_start_matches('/').parse() {
@@ -31,33 +27,39 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
         }
     };
 
-    // 원본 경로와 무효화 키를 함께 읽는다
+    // 파일이 **자기 라이브러리**를 통해 경로를 푼다. 열려 있는 라이브러리를
+    // 기준으로 하면 다른 디스크 사진에서 엉뚱한 경로를 찾게 된다.
+    let Ok(Some((lib, vol_rel))) = crate::db::libraries::of_file(&state.db, id) else {
+        responder.respond(fail(StatusCode::NOT_FOUND));
+        return;
+    };
+    let Some(lib_dir) = lib.dir.as_deref() else {
+        // 디스크가 빠져 있다
+        responder.respond(fail(StatusCode::SERVICE_UNAVAILABLE));
+        return;
+    };
+
+    // 무효화 키는 볼륨 기준 상대경로로 만든다 — 썸네일 생성 쪽과 같아야 한다
     let row = state.db.read(|c| {
         c.query_row(
-            "SELECT fo.rel_path, fi.name, fi.size, COALESCE(fi.modified_at,0)
-             FROM files fi JOIN folders fo ON fo.id = fi.folder_id
-             WHERE fi.id = ?1",
+            "SELECT fi.size, COALESCE(fi.modified_at,0) FROM files fi WHERE fi.id = ?1",
             [id],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?,
-                ))
-            },
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
         )
     });
-    let Ok((dir, name, size, mtime)) = row else {
+    let Ok((size, mtime)) = row else {
         responder.respond(fail(StatusCode::NOT_FOUND));
         return;
     };
 
-    let rel = crate::media::cache::rel_path(&dir, &name);
-    let src = lib.volume_mount.join(&rel);
-    let key = crate::media::cache::key_for(&rel, size as u64, mtime);
+    let Some(mount) = crate::db::volumes::find_mount(&lib.volume_uuid) else {
+        responder.respond(fail(StatusCode::SERVICE_UNAVAILABLE));
+        return;
+    };
+    let src = mount.join(&vol_rel);
+    let key = crate::media::cache::key_for(&vol_rel, size as u64, mtime);
     let out = crate::media::cache::thumb_path(
-        &crate::media::cache::preview_root(&lib.root),
+        &crate::media::cache::preview_root(lib_dir),
         &key,
     );
 

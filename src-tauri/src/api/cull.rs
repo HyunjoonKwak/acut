@@ -38,6 +38,8 @@ pub struct MemberRow {
     pub height: Option<i64>,
     pub is_best: bool,
     pub score: Option<f64>,
+    /// 썸네일 주소를 만들려면 필요하다 — 캐시가 라이브러리마다 따로 있다
+    pub library_id: Option<i64>,
     pub thumb: Option<String>,
     pub culling_flag: i32,
 }
@@ -46,14 +48,13 @@ pub struct MemberRow {
 #[tauri::command]
 pub fn cull_scan(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let lib = state.current()?;
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
     cancel.store(false, Ordering::Relaxed);
 
     std::thread::spawn(move || {
         // 1. 잡동사니 — 파일을 열지 않는다. 즉시 끝난다
-        match junk::scan(&db, &lib.volume_uuid) {
+        match junk::scan(&db) {
             Ok(p) => {
                 let _ = app.emit("cull-junk", &p);
             }
@@ -63,7 +64,7 @@ pub fn cull_scan(app: AppHandle) -> Result<(), String> {
             }
         }
         // 2. 같은 순간 — 역시 파일을 열지 않는다
-        match burst::scan(&db, &lib.volume_uuid, burst::DEFAULT_GAP_SECS) {
+        match burst::scan(&db, burst::DEFAULT_GAP_SECS) {
             Ok(p) => {
                 let _ = app.emit("cull-burst", &p);
             }
@@ -73,7 +74,7 @@ pub fn cull_scan(app: AppHandle) -> Result<(), String> {
             }
         }
         // 3. 완전 중복 — 해시를 읽으므로 가장 오래 걸린다
-        let r = dedup::scan(&db, &lib.volume_uuid, &lib.volume_mount, cancel, |p| {
+        let r = dedup::scan(&db, cancel, |p| {
             let _ = app.emit("cull-dedup-progress", p);
         });
         match r {
@@ -104,8 +105,10 @@ pub fn cull_groups(
             let mut st = c.prepare(
                 "SELECT g.id, g.kind, g.reason, g.size_bytes, g.state,
                         (SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id),
-                        (SELECT t.rel_path FROM group_members m
-                         LEFT JOIN thumbs t ON t.file_id = m.file_id AND t.state = 1
+                        (SELECT fo.library_id || '/' || t.rel_path FROM group_members m
+                         JOIN files fi ON fi.id = m.file_id
+                         JOIN folders fo ON fo.id = fi.folder_id
+                         JOIN thumbs t ON t.file_id = m.file_id AND t.state = 1
                          WHERE m.group_id = g.id
                          ORDER BY m.is_best DESC LIMIT 1)
                  FROM groups g
@@ -137,9 +140,10 @@ pub fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<Vec<Mem
         .read(|c| {
             let mut st = c.prepare(
                 "SELECT m.file_id, f.name, f.size, f.taken_at, f.width, f.height,
-                        m.is_best, m.score, t.rel_path, f.culling_flag
+                        m.is_best, m.score, t.rel_path, f.culling_flag, fo.library_id
                  FROM group_members m
                  JOIN files f ON f.id = m.file_id
+                 JOIN folders fo ON fo.id = f.folder_id
                  LEFT JOIN thumbs t ON t.file_id = f.id AND t.state = 1
                  WHERE m.group_id = ?1
                  ORDER BY m.is_best DESC, m.score DESC, f.size DESC",
@@ -156,6 +160,7 @@ pub fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<Vec<Mem
                     score: r.get(7)?,
                     thumb: r.get(8)?,
                     culling_flag: r.get(9)?,
+                    library_id: r.get(10)?,
                 })
             })?;
             it.collect::<rusqlite::Result<Vec<_>>>()

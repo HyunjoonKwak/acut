@@ -28,13 +28,13 @@ mod real {
         let tmp = tempfile::tempdir().unwrap();
         let db = crate::db::conn::Db::open(tmp.path().join("t.db")).unwrap();
         let t = std::time::Instant::now();
-        crate::scan::scan_folder(&db, root, 1, |_| {}).unwrap();
+        crate::scan::scan_test(&db, root, 1, |_| {}).unwrap();
         println!("\n스캔 {:.0}초", t.elapsed().as_secs_f64());
         let vol = crate::db::volumes::describe(root).unwrap();
 
         // ── 잡동사니 (파일을 열지 않는다) ─────────────────────────
         let t = std::time::Instant::now();
-        let j = super::junk::scan(&db, &vol.uuid).unwrap();
+        let j = super::junk::scan(&db).unwrap();
         println!("\n═══ 잡동사니 ═══  {:.2}초", t.elapsed().as_secs_f64());
         println!("  {}장 · {:.1} GB", j.found, j.bytes as f64 / 1024.0f64.powi(3));
         for (r, n) in &j.by_reason {
@@ -43,15 +43,14 @@ mod real {
 
         // ── 같은 순간 ─────────────────────────────────────────────
         let t = std::time::Instant::now();
-        let b = super::burst::scan(&db, &vol.uuid, super::burst::DEFAULT_GAP_SECS).unwrap();
+        let b = super::burst::scan(&db, super::burst::DEFAULT_GAP_SECS).unwrap();
         println!("\n═══ 같은 순간 ═══  {:.2}초", t.elapsed().as_secs_f64());
         println!("  {}그룹 · {}장 · 확보 {:.1} GB",
                  b.groups, b.photos, b.reclaimable as f64 / 1024.0f64.powi(3));
 
         // ── 완전 중복 (해시를 읽는다) ──────────────────────────────
         let t = std::time::Instant::now();
-        let d = super::dedup::scan(&db, &vol.uuid, &vol.mount_path,
-                                   Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let d = super::dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         println!("\n═══ 완전 중복 ═══  {:.1}초", t.elapsed().as_secs_f64());
         println!("  후보 {} · {}그룹 · 확보 {:.1} GB",
                  d.candidates, d.groups, d.reclaimable as f64 / 1024.0f64.powi(3));

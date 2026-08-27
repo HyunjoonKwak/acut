@@ -36,15 +36,15 @@ struct Row {
 ///
 /// 대표는 선명도가 가장 높은 것. 선명도가 아직 없으면 용량이 가장 큰 것을 쓴다
 /// (같은 장면이라면 대체로 디테일이 많은 쪽이 크다).
-pub fn scan(db: &Db, volume_uuid: &str, gap_secs: i64) -> Result<BurstProgress> {
+pub fn scan(db: &Db, gap_secs: i64) -> Result<BurstProgress> {
     let rows: Vec<Row> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fi.folder_id, fi.taken_at, fi.size, fi.sharpness
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
-             WHERE fo.volume_uuid = ?1 AND fi.kind <> 1
+             WHERE fi.kind <> 1
              ORDER BY fi.folder_id, fi.taken_at, fi.id",
         )?;
-        let it = st.query_map([volume_uuid], |r| {
+        let it = st.query_map([], |r| {
             Ok(Row {
                 id: r.get(0)?,
                 folder_id: r.get(1)?,
@@ -176,7 +176,7 @@ mod tests {
             // 한참 뒤 — 다른 순간
             (4, 1, 5000, 100, None),
         ]);
-        let p = scan(&db, "V", DEFAULT_GAP_SECS).unwrap();
+        let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.groups, 1);
         assert_eq!(p.photos, 3);
     }
@@ -185,7 +185,7 @@ mod tests {
     fn two_photos_are_not_a_group() {
         let (_d, db) = db();
         seed(&db, &[(1, 1, 1000, 100, None), (2, 1, 1002, 100, None)]);
-        let p = scan(&db, "V", DEFAULT_GAP_SECS).unwrap();
+        let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.groups, 0, "두 장은 고를 것도 없다");
     }
 
@@ -199,7 +199,7 @@ mod tests {
             (3, 2, 1002, 100, None),
             (4, 2, 1003, 100, None),
         ]);
-        let p = scan(&db, "V", DEFAULT_GAP_SECS).unwrap();
+        let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.groups, 0, "폴더가 다르면 묶지 않는다");
     }
 
@@ -209,7 +209,7 @@ mod tests {
         // 3초 간격으로 10장 — 전체 27초지만 연속이므로 한 그룹
         let items: Vec<_> = (1..=10).map(|i| (i, 1i64, 1000 + i * 3, 100i64, None)).collect();
         seed(&db, &items);
-        let p = scan(&db, "V", DEFAULT_GAP_SECS).unwrap();
+        let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.groups, 1);
         assert_eq!(p.photos, 10);
     }
@@ -222,7 +222,7 @@ mod tests {
             (2, 1, 1002, 100, Some(90.0)), // 가장 선명
             (3, 1, 1004, 100, Some(50.0)),
         ]);
-        scan(&db, "V", DEFAULT_GAP_SECS).unwrap();
+        scan(&db, DEFAULT_GAP_SECS).unwrap();
         let best: i64 = db
             .read(|c| {
                 c.query_row("SELECT file_id FROM group_members WHERE is_best=1", [], |r| r.get(0))
@@ -239,7 +239,7 @@ mod tests {
             (2, 1, 1002, 900, None), // 가장 큼
             (3, 1, 1004, 300, None),
         ]);
-        scan(&db, "V", DEFAULT_GAP_SECS).unwrap();
+        scan(&db, DEFAULT_GAP_SECS).unwrap();
         let best: i64 = db
             .read(|c| {
                 c.query_row("SELECT file_id FROM group_members WHERE is_best=1", [], |r| r.get(0))
@@ -256,7 +256,7 @@ mod tests {
             (2, 1, 1002, 500, None),
             (3, 1, 1004, 300, None),
         ]);
-        let p = scan(&db, "V", DEFAULT_GAP_SECS).unwrap();
+        let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.reclaimable, 400, "900 - 500(남길 것)");
     }
 
@@ -269,8 +269,8 @@ mod tests {
             (3, 1, 1040, 100, None),
         ]);
         // 간격 10초면 따로따로
-        assert_eq!(scan(&db, "V", 10).unwrap().groups, 0);
+        assert_eq!(scan(&db, 10).unwrap().groups, 0);
         // 30초면 한 그룹
-        assert_eq!(scan(&db, "V", 30).unwrap().groups, 1);
+        assert_eq!(scan(&db, 30).unwrap().groups, 1);
     }
 }

@@ -28,11 +28,33 @@ CREATE TABLE IF NOT EXISTS volumes (
 );
 
 -- ---------------------------------------------------------------------------
+-- 라이브러리 — 등록한 사진 폴더. 여러 개, 서로 다른 디스크에 있어도 된다
+--
+-- 이 층이 없으면 "지금 열린 폴더" 하나만 알게 되고, 다른 디스크 사진은 목록에는
+-- 나오는데 썸네일과 원본을 찾지 못한다. Lap의 albums와 같은 역할이다. 다만
+-- Lap은 절대경로를 저장해 마운트 이름이 바뀌면 깨지므로, 우리는 볼륨 UUID +
+-- 볼륨 내 상대경로로 나눠 둔다.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS libraries (
+    id          INTEGER PRIMARY KEY,
+    volume_uuid TEXT NOT NULL REFERENCES volumes(uuid) ON DELETE CASCADE,
+    rel_path    TEXT NOT NULL,                 -- 볼륨 최상단이면 빈 문자열
+    name        TEXT NOT NULL,                 -- 표시용
+    area        INTEGER NOT NULL DEFAULT 1,    -- 0 작업대 · 1 내사진 · 2 공용 · 3 기타
+    added_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    scanned_at  INTEGER,
+    UNIQUE (volume_uuid, rel_path)
+);
+CREATE INDEX IF NOT EXISTS idx_libraries_volume ON libraries(volume_uuid);
+
+-- ---------------------------------------------------------------------------
 -- 폴더 — 경로 문자열 대신 정규화. inode로 외부 이동을 따라간다
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS folders (
     id          INTEGER PRIMARY KEY,
     volume_uuid TEXT NOT NULL REFERENCES volumes(uuid) ON DELETE CASCADE,
+    -- 어느 라이브러리에 속하는가. 썸네일 캐시와 원본 경로를 여기서 푼다.
+    library_id  INTEGER REFERENCES libraries(id) ON DELETE CASCADE,
     rel_path    TEXT NOT NULL,                 -- 볼륨 내 상대경로 (NFC 정규화)
     parent_id   INTEGER REFERENCES folders(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,

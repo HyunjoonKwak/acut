@@ -10,7 +10,7 @@ use crate::cull::hash;
 use crate::db::conn::{Db, Result};
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -26,7 +26,9 @@ pub struct DedupProgress {
 
 struct Cand {
     id: i64,
+    /// 볼륨 기준 상대경로. 실제 경로는 그 볼륨의 마운트를 앞에 붙여 만든다.
     path: PathBuf,
+    volume_uuid: String,
     size: i64,
 }
 
@@ -34,30 +36,46 @@ struct Cand {
 ///
 /// 남길 한 장은 정하지 않는다 — 사용자가 고른다. 다만 자동 선정을 돕도록
 /// 가장 이른 촬영일을 가진 것에 `is_best`를 표시한다.
+/// 등록한 라이브러리 **전부**를 가로질러 찾는다.
+///
+/// 볼륨을 하나로 제한하지 않는 이유: 옛 백업 디스크와 운영 디스크 사이의
+/// 중복이야말로 가장 크게 확보된다. 대신 파일마다 자기 볼륨의 마운트를 찾아
+/// 경로를 푼다 — 디스크가 빠져 있으면 그 파일은 그냥 건너뛴다.
 pub fn scan(
     db: &Db,
-    volume_uuid: &str,
-    volume_mount: &Path,
     cancel: Arc<AtomicBool>,
     on_progress: impl Fn(&DedupProgress) + Sync + Send,
 ) -> Result<DedupProgress> {
     // 1단계: 크기가 겹치는 것만 후보로. 유일한 크기는 볼 것도 없다.
     let cands: Vec<Cand> = db.read(|c| {
         let mut st = c.prepare(
-            "SELECT fi.id, fo.rel_path, fi.name, fi.size
+            "SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
-             WHERE fo.volume_uuid = ?1
-               AND fi.size > 0
+             WHERE fi.size > 0
                AND fi.size IN (SELECT size FROM files GROUP BY size HAVING COUNT(*) > 1)",
         )?;
-        let it = st.query_map([volume_uuid], |r| {
+        let it = st.query_map([], |r| {
             let dir: String = r.get(1)?;
             let name: String = r.get(2)?;
-            let rel = if dir.is_empty() { name } else { format!("{dir}/{name}") };
-            Ok(Cand { id: r.get(0)?, path: PathBuf::from(rel), size: r.get(3)? })
+            Ok(Cand {
+                id: r.get(0)?,
+                path: PathBuf::from(crate::media::cache::rel_path(&dir, &name)),
+                volume_uuid: r.get(4)?,
+                size: r.get(3)?,
+            })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
+
+    // 볼륨마다 마운트를 한 번만 찾는다. 파일마다 찾으면 수만 번 syscall이다.
+    let mounts: HashMap<String, PathBuf> = cands
+        .iter()
+        .map(|c| c.volume_uuid.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .filter_map(|u| crate::db::volumes::find_mount(&u).map(|m| (u, m)))
+        .collect();
+    let full_path = |c: &Cand| mounts.get(&c.volume_uuid).map(|m| m.join(&c.path));
 
     let progress = Arc::new(Mutex::new(DedupProgress {
         candidates: cands.len(),
@@ -76,8 +94,7 @@ pub fn scan(
             if cancel.load(Ordering::Relaxed) {
                 return None;
             }
-            let full = volume_mount.join(&c.path);
-            let q = hash::quick(&full).ok()?;
+            let q = hash::quick(full_path(c)?).ok()?;
             let n = counter.fetch_add(1, Ordering::Relaxed);
             if n % 500 == 0 {
                 let mut p = progress.lock().unwrap();
@@ -109,7 +126,7 @@ pub fn scan(
                 return None;
             }
             let c = by_id.get(id)?;
-            let h = hash::full(volume_mount.join(&c.path)).ok()?;
+            let h = hash::full(full_path(c)?).ok()?;
             Some((*id, h))
         })
         .collect();
@@ -182,10 +199,10 @@ pub fn scan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scan::scan_folder;
+    use crate::scan::scan_test;
 
     /// 같은 내용의 파일을 여러 개 만들어 스캔한다.
-    fn setup() -> (tempfile::TempDir, Db, crate::db::volumes::VolumeInfo) {
+    fn setup() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a");
         let b = dir.path().join("b");
@@ -202,15 +219,14 @@ mod tests {
         std::fs::write(b.join("alone.jpg"), b"unique").unwrap();
 
         let db = Db::open(dir.path().join("t.db")).unwrap();
-        scan_folder(&db, dir.path(), 1, |_| {}).unwrap();
-        let vol = crate::db::volumes::describe(dir.path()).unwrap();
-        (dir, db, vol)
+        scan_test(&db, dir.path(), 1, |_| {}).unwrap();
+        (dir, db)
     }
 
     #[test]
     fn groups_only_byte_identical_files() {
-        let (_d, db, vol) = setup();
-        let p = scan(&db, &vol.uuid, &vol.mount_path, Arc::new(AtomicBool::new(false)), |_| {})
+        let (_d, db) = setup();
+        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {})
             .unwrap();
         assert_eq!(p.groups, 1, "같은 내용 3개가 한 그룹");
 
@@ -222,8 +238,8 @@ mod tests {
 
     #[test]
     fn same_size_different_content_is_not_a_duplicate() {
-        let (_d, db, vol) = setup();
-        scan(&db, &vol.uuid, &vol.mount_path, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let (_d, db) = setup();
+        scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         // "other.jpg"는 크기가 같아 후보였지만 그룹에 없어야 한다
         let in_group: i64 = db
             .read(|c| {
@@ -240,8 +256,8 @@ mod tests {
 
     #[test]
     fn reclaimable_counts_all_but_one() {
-        let (_d, db, vol) = setup();
-        let p = scan(&db, &vol.uuid, &vol.mount_path, Arc::new(AtomicBool::new(false)), |_| {})
+        let (_d, db) = setup();
+        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {})
             .unwrap();
         let one: i64 = db
             .read(|c| {
@@ -253,8 +269,8 @@ mod tests {
 
     #[test]
     fn exactly_one_best_per_group() {
-        let (_d, db, vol) = setup();
-        scan(&db, &vol.uuid, &vol.mount_path, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let (_d, db) = setup();
+        scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         let bests: i64 = db
             .read(|c| {
                 c.query_row("SELECT SUM(is_best) FROM group_members", [], |r| r.get(0))
@@ -265,8 +281,8 @@ mod tests {
 
     #[test]
     fn full_hash_is_saved_for_reuse() {
-        let (_d, db, vol) = setup();
-        scan(&db, &vol.uuid, &vol.mount_path, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let (_d, db) = setup();
+        scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         let hashed: i64 = db
             .read(|c| {
                 c.query_row("SELECT COUNT(*) FROM files WHERE full_hash IS NOT NULL", [], |r| {
@@ -279,10 +295,10 @@ mod tests {
 
     #[test]
     fn rerunning_does_not_duplicate_groups() {
-        let (_d, db, vol) = setup();
+        let (_d, db) = setup();
         let cancel = Arc::new(AtomicBool::new(false));
-        scan(&db, &vol.uuid, &vol.mount_path, cancel.clone(), |_| {}).unwrap();
-        scan(&db, &vol.uuid, &vol.mount_path, cancel, |_| {}).unwrap();
+        scan(&db, cancel.clone(), |_| {}).unwrap();
+        scan(&db, cancel, |_| {}).unwrap();
         let groups: i64 = db
             .read(|c| c.query_row("SELECT COUNT(*) FROM groups WHERE kind=0", [], |r| r.get(0)))
             .unwrap();
@@ -291,9 +307,10 @@ mod tests {
 
     #[test]
     fn cancellation_stops_early() {
-        let (_d, db, vol) = setup();
-        let p = scan(&db, &vol.uuid, &vol.mount_path, Arc::new(AtomicBool::new(true)), |_| {})
+        let (_d, db) = setup();
+        let p = scan(&db, Arc::new(AtomicBool::new(true)), |_| {})
             .unwrap();
         assert_eq!(p.groups, 0);
     }
 }
+

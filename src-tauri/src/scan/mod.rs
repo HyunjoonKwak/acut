@@ -63,11 +63,14 @@ pub fn nfc(s: &str) -> String {
     s.nfc().collect()
 }
 
-/// 폴더 하나를 스캔해 DB에 반영한다.
+/// 라이브러리 하나를 스캔해 DB에 반영한다.
 ///
+/// `library_id`는 등록된 라이브러리, `root`는 그 실제 경로다. 찾아낸 폴더는 전부
+/// 이 라이브러리에 속하게 된다 — 썸네일 캐시와 원본 경로를 나중에 이걸로 푼다.
 /// `area`는 이 폴더가 어느 영역인지 (0 작업대 · 1 내사진 · 2 공용 · 3 기타).
 pub fn scan_folder(
     db: &Db,
+    library_id: i64,
     root: impl AsRef<Path>,
     area: i32,
     on_progress: impl Fn(&Progress) + Sync + Send,
@@ -105,7 +108,7 @@ pub fn scan_folder(
     on_progress(&progress.lock().unwrap().clone());
 
     // 이미 아는 파일은 건너뛴다 — (상대경로, 이름) → (크기, 수정시각)
-    let known = load_known(db, &vol.uuid)?;
+    let known = load_known(db, library_id)?;
 
     let counter = AtomicUsize::new(0);
     let now = now_secs();
@@ -150,11 +153,11 @@ pub fn scan_folder(
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| d.to_string());
             tx.execute(
-                "INSERT INTO folders(volume_uuid,rel_path,name,area,scanned_at)
-                 VALUES(?1,?2,?3,?4,strftime('%s','now'))
+                "INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,scanned_at)
+                 VALUES(?1,?2,?3,?4,?5,strftime('%s','now'))
                  ON CONFLICT(volume_uuid,rel_path) DO UPDATE SET
-                   scanned_at=excluded.scanned_at",
-                rusqlite::params![vol.uuid, d, name, area],
+                   library_id=excluded.library_id, scanned_at=excluded.scanned_at",
+                rusqlite::params![vol.uuid, library_id, d, name, area],
             )?;
         }
 
@@ -217,8 +220,14 @@ pub fn scan_folder(
         c.execute(
             "UPDATE folders SET file_count =
                (SELECT COUNT(*) FROM files WHERE files.folder_id = folders.id)
-             WHERE volume_uuid = ?1",
-            [&vol.uuid],
+             WHERE library_id = ?1",
+            [library_id],
+        )
+    })?;
+    db.write(|c| {
+        c.execute(
+            "UPDATE libraries SET scanned_at = strftime('%s','now') WHERE id = ?1",
+            [library_id],
         )
     })?;
 
@@ -227,18 +236,35 @@ pub fn scan_folder(
     Ok(out)
 }
 
+/// 시험용 — 폴더를 라이브러리로 등록하고 곧바로 스캔한다.
+///
+/// 실제 흐름에서는 등록(`library_add`)과 스캔(`scan_start`)이 나뉘어 있지만,
+/// 시험에서는 항상 붙어 다닌다.
+#[cfg(test)]
+pub fn scan_test(
+    db: &Db,
+    root: impl AsRef<Path>,
+    area: i32,
+    on_progress: impl Fn(&Progress) + Sync + Send,
+) -> Result<Progress> {
+    let root = root.as_ref();
+    let lib = crate::db::libraries::add(db, root, area)
+        .unwrap_or_else(|e| panic!("라이브러리 등록: {e}"));
+    scan_folder(db, lib.id, root, area, on_progress)
+}
+
 /// 이미 DB에 있는 파일들의 (크기, 수정시각). 증분 스캔의 재료다.
 fn load_known(
     db: &Db,
-    vol_uuid: &str,
+    library_id: i64,
 ) -> Result<std::collections::HashMap<(String, String), (i64, i64)>> {
     let map = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fo.rel_path, fi.name, fi.size, COALESCE(fi.modified_at,0)
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
-             WHERE fo.volume_uuid = ?1",
+             WHERE fo.library_id = ?1",
         )?;
-        let rows = st.query_map([vol_uuid], |r| {
+        let rows = st.query_map([library_id], |r| {
             Ok((
                 (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
                 (r.get::<_, i64>(2)?, r.get::<_, i64>(3)?),
@@ -337,7 +363,7 @@ mod tests {
         std::fs::write(sub.join("readme.txt"), b"ignored").unwrap();
 
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
-        let p = scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        let p = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         assert_eq!(p.inserted, 1, "미디어 파일만 들어가야 한다");
 
         // 저장된 경로가 절대경로가 아니어야 한다
@@ -359,7 +385,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("20200505_101112.jpg"), b"x").unwrap();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
-        scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
 
         let (ts, src): (i64, i32) = db
             .read(|c| {
@@ -378,11 +404,11 @@ mod tests {
         std::fs::write(dir.path().join("20260101_120000.jpg"), b"hello").unwrap();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
 
-        let first = scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        let first = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         assert_eq!(first.inserted, 1);
         assert_eq!(first.skipped, 0);
 
-        let second = scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        let second = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         assert_eq!(second.skipped, 1, "바뀌지 않았으면 건너뛴다");
         assert_eq!(second.inserted, 0);
     }
@@ -393,11 +419,11 @@ mod tests {
         let f = dir.path().join("20260101_120000.jpg");
         std::fs::write(&f, b"hello").unwrap();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
-        scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
 
         // 크기를 바꾸면 다시 읽어야 한다
         std::fs::write(&f, b"hello world, longer now").unwrap();
-        let again = scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        let again = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         assert_eq!(again.skipped, 0);
         assert!(again.inserted + again.updated >= 1);
     }
@@ -413,7 +439,7 @@ mod tests {
         std::fs::write(dir.path().join("20260102_120000.jpg"), b"x").unwrap();
 
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
-        let p = scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        let p = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         assert_eq!(p.inserted, 1, "시스템 폴더는 건너뛴다");
     }
 
@@ -421,7 +447,7 @@ mod tests {
     fn missing_directory_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
-        assert!(scan_folder(&db, "/no/such/dir", 0, |_| {}).is_err());
+        assert!(scan_folder(&db, 1, "/no/such/dir", 0, |_| {}).is_err());
     }
 }
 
@@ -443,7 +469,7 @@ mod real {
 
         let t0 = std::time::Instant::now();
         let last = std::sync::Mutex::new(std::time::Instant::now());
-        let p = scan_folder(&db, root, 1, |pr| {
+        let p = scan_test(&db, root, 1, |pr| {
             let mut l = last.lock().unwrap();
             if l.elapsed().as_secs() >= 2 {
                 let done = pr.inserted + pr.updated + pr.skipped;
@@ -512,16 +538,19 @@ mod real {
         let db = Db::open(tmp.path().join("acut.db")).unwrap();
 
         let t0 = std::time::Instant::now();
-        let p = scan_folder(&db, root, 1, |_| {}).expect("스캔");
+        let p = scan_test(&db, root, 1, |_| {}).expect("스캔");
         let scan_s = t0.elapsed().as_secs_f64();
         println!("\n═══ 1단계 스캔 ═══");
         println!("  {}장 · {:.1}초 · {:.0}장/초", p.found, scan_s, p.found as f64 / scan_s);
 
         let vol = crate::db::volumes::describe(root).unwrap();
+        let lib: i64 = db
+            .read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0)))
+            .unwrap();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let t1 = std::time::Instant::now();
         let last = std::sync::Mutex::new(std::time::Instant::now());
-        let tp = thumbs::generate(&db, &vol.uuid, &vol.mount_path, tmp.path(), cancel, |pr| {
+        let tp = thumbs::generate(&db, lib, &vol.mount_path, tmp.path(), cancel, |pr| {
             let mut l = last.lock().unwrap();
             if l.elapsed().as_secs() >= 5 {
                 eprintln!("   썸네일 {}/{} · {:.0}s", pr.done, pr.total, t1.elapsed().as_secs_f64());

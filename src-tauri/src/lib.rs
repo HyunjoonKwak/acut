@@ -81,8 +81,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             // ── v2 (재설계) ──────────────────────────────────
-            api::library_open,
-            api::library_reopen,
+            api::libraries_list,
+            api::library_add,
+            api::library_remove,
             api::library_stats,
             api::volumes_list,
             api::scan_start,

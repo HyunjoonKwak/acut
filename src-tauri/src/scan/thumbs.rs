@@ -38,7 +38,7 @@ struct Job {
 /// 라이브러리로 잡는 경우가 그렇다.
 pub fn generate(
     db: &Db,
-    volume_uuid: &str,
+    library_id: i64,
     volume_mount: &Path,
     library_root: &Path,
     cancel: Arc<AtomicBool>,
@@ -53,14 +53,14 @@ pub fn generate(
              FROM files fi
              JOIN folders fo ON fo.id = fi.folder_id
              LEFT JOIN thumbs t ON t.file_id = fi.id
-             WHERE fo.volume_uuid = ?1
+             WHERE fo.library_id = ?1
                AND fi.kind <> 1                        -- 영상은 아직 (AVFoundation 필요)
                AND (t.file_id IS NULL
                     OR t.state <> 1
                     OR t.src_size <> fi.size
                     OR t.src_mtime <> COALESCE(fi.modified_at, 0))",
         )?;
-        let rows = st.query_map([volume_uuid], |r| {
+        let rows = st.query_map([library_id], |r| {
             let rel_dir: String = r.get(1)?;
             let name: String = r.get(2)?;
             let rel_path = cache::rel_path(&rel_dir, &name);
@@ -174,7 +174,7 @@ pub fn generate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scan::scan_folder;
+    use crate::scan::scan_test;
 
     /// 실제 JPEG 하나를 만들어 둔다 (ImageIO가 읽을 수 있어야 하므로 복사해 온다).
     fn seed_real_jpeg(dir: &Path) -> Option<PathBuf> {
@@ -213,15 +213,21 @@ mod tests {
         None
     }
 
+    /// 방금 등록된 라이브러리의 id. 시험은 항상 하나만 만든다.
+    fn lib_id(db: &Db) -> i64 {
+        db.read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0)))
+            .unwrap()
+    }
+
     #[test]
     fn generates_and_records_thumbnails() {
         let dir = tempfile::tempdir().unwrap();
         let Some(_) = seed_real_jpeg(dir.path()) else { return };
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
-        scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
 
         let vol = crate::db::volumes::describe(dir.path()).unwrap();
-        let p = generate(&db, &vol.uuid, &vol.mount_path, dir.path(), Arc::new(AtomicBool::new(false)), |_| {})
+        let p = generate(&db, lib_id(&db), &vol.mount_path, dir.path(), Arc::new(AtomicBool::new(false)), |_| {})
             .unwrap();
         assert_eq!(p.total, 1);
         assert_eq!(p.done, 1);
@@ -247,12 +253,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let Some(_) = seed_real_jpeg(dir.path()) else { return };
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
-        scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         let vol = crate::db::volumes::describe(dir.path()).unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
 
-        generate(&db, &vol.uuid, &vol.mount_path, dir.path(), cancel.clone(), |_| {}).unwrap();
-        let again = generate(&db, &vol.uuid, &vol.mount_path, dir.path(), cancel, |_| {}).unwrap();
+        generate(&db, lib_id(&db), &vol.mount_path, dir.path(), cancel.clone(), |_| {}).unwrap();
+        let again = generate(&db, lib_id(&db), &vol.mount_path, dir.path(), cancel, |_| {}).unwrap();
         assert_eq!(again.total, 0, "이미 만든 것은 대상이 아니다");
     }
 
@@ -264,13 +270,13 @@ mod tests {
         let vol = crate::db::volumes::describe(dir.path()).unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
 
-        scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
-        generate(&db, &vol.uuid, &vol.mount_path, dir.path(), cancel.clone(), |_| {}).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        generate(&db, lib_id(&db), &vol.mount_path, dir.path(), cancel.clone(), |_| {}).unwrap();
 
         // 원본을 바꾼다 → 크기가 달라지므로 다시 만들어야 한다
         std::fs::write(&src, b"now it is a broken file").unwrap();
-        scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
-        let after = generate(&db, &vol.uuid, &vol.mount_path, dir.path(), cancel, |_| {}).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        let after = generate(&db, lib_id(&db), &vol.mount_path, dir.path(), cancel, |_| {}).unwrap();
         assert_eq!(after.total, 1, "원본이 바뀌면 다시 대상이 된다");
         assert_eq!(after.failed, 1, "깨진 파일은 실패로 기록된다");
 
@@ -285,12 +291,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let Some(_) = seed_real_jpeg(dir.path()) else { return };
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
-        scan_folder(&db, dir.path(), 0, |_| {}).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         let vol = crate::db::volumes::describe(dir.path()).unwrap();
 
         // 시작 전에 이미 취소된 상태
         let cancel = Arc::new(AtomicBool::new(true));
-        let p = generate(&db, &vol.uuid, &vol.mount_path, dir.path(), cancel, |_| {}).unwrap();
+        let p = generate(&db, lib_id(&db), &vol.mount_path, dir.path(), cancel, |_| {}).unwrap();
         assert_eq!(p.done, 0, "취소되면 아무것도 하지 않는다");
     }
 }

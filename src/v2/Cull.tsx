@@ -13,6 +13,7 @@ type Group = {
 };
 type Member = {
   file_id: number;
+  library_id: number | null;
   name: string;
   size: number;
   taken_at: number;
@@ -57,9 +58,10 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   const [viewerAt, setViewerAt] = useState<number | null>(null);
   const [viewerFull, setViewerFull] = useState(false);
 
-  const url = (rel: string | null) =>
-    rel
-      ? `thumb://localhost/${rel.split("/").map(encodeURIComponent).join("/")}`
+  /// 캐시가 라이브러리마다 따로 있어 주소 앞에 라이브러리 id가 붙는다
+  const url = (rel: string | null, libraryId: number | null) =>
+    rel && libraryId !== null
+      ? `thumb://localhost/${libraryId}/${rel.split("/").map(encodeURIComponent).join("/")}`
       : null;
 
   const loadSummary = useCallback(async () => {
@@ -274,7 +276,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               }}
             >
               {members.map((m, i) => {
-                const u = url(m.thumb);
+                const u = url(m.thumb, m.library_id);
                 return (
                   <button
                     key={m.file_id}

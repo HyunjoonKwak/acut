@@ -51,6 +51,8 @@ impl Db {
         let write = Connection::open(&path)?;
         configure(&write, false)?;
         write.execute_batch(SCHEMA)?;
+        // 스키마로는 못 하는 변경 (컬럼 추가 등)
+        super::upgrade::run(&write)?;
 
         let mut read = Vec::with_capacity(READ_POOL_SIZE);
         for _ in 0..READ_POOL_SIZE {
@@ -155,7 +157,7 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(n, 14, "테이블 14개가 만들어져야 한다");
+        assert_eq!(n, 15, "테이블 15개가 만들어져야 한다");
     }
 
     #[test]

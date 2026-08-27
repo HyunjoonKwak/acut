@@ -20,17 +20,25 @@ type FileRow = {
   rating: number;
   culling_flag: number;
   favorite: boolean;
+  /** 어느 라이브러리 소속인가. 썸네일 주소를 만들 때 쓴다 */
+  library_id: number | null;
   /** 캐시 루트 기준 상대경로. null이면 아직 생성 전 */
   thumb: string | null;
 };
 type Cursor = { taken_at: number; id: number };
 type Page = { rows: FileRow[]; next: Cursor | null };
+/** 등록한 사진 폴더. 여러 개, 서로 다른 디스크에 있어도 된다 */
 type Library = {
-  root: string;
+  id: number;
   volume_uuid: string;
-  volume_mount: string;
   volume_name: string;
-  cache_root: string;
+  rel_path: string;
+  name: string;
+  area: number;
+  /** 지금 그 디스크가 꽂혀 있는가 */
+  online: boolean;
+  dir: string | null;
+  file_count: number;
 };
 type Stats = {
   files: number;
@@ -72,7 +80,10 @@ const fmtDate = (ts: number) =>
   });
 
 export default function App() {
-  const [lib, setLib] = useState<Library | null>(null);
+  /// 등록된 라이브러리 전부
+  const [libs, setLibs] = useState<Library[]>([]);
+  /// 지금 보고 있는 라이브러리. null이면 전부 섞어서 본다.
+  const [libId, setLibId] = useState<number | null>(null);
   const [rows, setRows] = useState<FileRow[]>([]);
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [done, setDone] = useState(false);
@@ -107,7 +118,10 @@ export default function App() {
     drain.current();
   }, []);
 
-  const filter = useMemo(() => ({ folder_id: folderId }), [folderId]);
+  const filter = useMemo(
+    () => ({ library_id: libId, folder_id: folderId }),
+    [libId, folderId],
+  );
 
   const loadFirst = useCallback(async () => {
     if (inflight.current) return;
@@ -146,33 +160,36 @@ export default function App() {
     }
   }, [filter, cursor, done, release]);
 
-  const refreshMeta = useCallback(async () => {
-    try {
-      setStats(await invoke<Stats>("library_stats"));
-      setFolders(await invoke<FolderRow[]>("folders_list"));
-      setBuckets(await invoke<Bucket[]>("files_timeline", { filter }));
-    } catch {
-      /* 라이브러리가 아직 없을 수 있다 */
-    }
-  }, [filter]);
-
-  // 앱 시작 — 마지막 라이브러리를 되연다
-  useEffect(() => {
-    (async () => {
-      const l = await invoke<Library | null>("library_reopen");
-      if (l) setLib(l);
-    })();
+  const refreshLibs = useCallback(async () => {
+    setLibs(await invoke<Library[]>("libraries_list"));
   }, []);
 
-  // 라이브러리가 바뀌면 목록을 새로 읽는다
+  const refreshMeta = useCallback(async () => {
+    try {
+      setStats(await invoke<Stats>("library_stats", { libraryId: libId }));
+      setFolders(
+        await invoke<FolderRow[]>("folders_list", { libraryId: libId }),
+      );
+      setBuckets(await invoke<Bucket[]>("files_timeline", { filter }));
+    } catch {
+      /* 아직 등록된 라이브러리가 없을 수 있다 */
+    }
+  }, [filter, libId]);
+
+  // 앱 시작 — 등록된 라이브러리를 읽어 온다
   useEffect(() => {
-    if (!lib) return;
+    refreshLibs();
+  }, [refreshLibs]);
+
+  // 보는 라이브러리나 폴더가 바뀌면 목록을 새로 읽는다
+  useEffect(() => {
+    if (libs.length === 0) return;
     setRows([]);
     setCursor(null);
     setDone(false);
     loadFirst();
     refreshMeta();
-  }, [lib, folderId, loadFirst, refreshMeta]);
+  }, [libs.length, libId, folderId, loadFirst, refreshMeta]);
 
   // 스캔·썸네일 진행 상황
   useEffect(() => {
@@ -197,9 +214,13 @@ export default function App() {
       setScanMsg("");
       loadFirst();
       refreshMeta();
+      refreshLibs();
     }).then((f) => un.push(f));
+    listen<string>("scan-error", (e) =>
+      setScanMsg(`스캔 실패: ${e.payload}`),
+    ).then((f) => un.push(f));
     return () => un.forEach((f) => f());
-  }, [loadFirst, refreshMeta]);
+  }, [loadFirst, refreshMeta, refreshLibs]);
 
   // ── 가상 스크롤 ──────────────────────────────────────────────────
   const [cols, setCols] = useState(6);
@@ -231,14 +252,37 @@ export default function App() {
     if (last && last.index >= rowCount - 3) loadMore();
   }, [virt.getVirtualItems(), rowCount, loadMore]);
 
-  const pickFolder = async () => {
+  const addLibrary = async () => {
     const picked = await openDialog({ directory: true, multiple: false });
     if (typeof picked !== "string") return;
-    const l = await invoke<Library>("library_open", { path: picked });
-    setLib(l);
+    try {
+      const l = await invoke<Library>("library_add", { path: picked, area: 1 });
+      await refreshLibs();
+      setLibId(l.id);
+      setFolderId(null);
+      await invoke("scan_start", { libraryId: l.id });
+      setScanMsg("스캔 시작…");
+    } catch (e) {
+      setScanMsg(String(e));
+    }
+  };
+
+  const rescan = async (id: number) => {
+    try {
+      await invoke("scan_start", { libraryId: id });
+      setScanMsg("스캔 시작…");
+    } catch (e) {
+      setScanMsg(String(e));
+    }
+  };
+
+  const dropLibrary = async (l: Library) => {
+    await invoke("library_remove", { id: l.id });
+    if (libId === l.id) setLibId(null);
     setFolderId(null);
-    await invoke("scan_start", { area: 1 });
-    setScanMsg("스캔 시작…");
+    await refreshLibs();
+    loadFirst();
+    refreshMeta();
   };
 
   /// 스크롤바가 준 전역 순번으로 목록을 다시 읽는다.
@@ -340,9 +384,10 @@ export default function App() {
   const pageSize = Math.max(cols, Math.ceil(viewH / rowH) * cols);
 
   // 전용 thumb:// 프로토콜 — 캐시 폴더만 서빙한다 (api/thumb_protocol.rs)
+  // 캐시가 라이브러리마다 따로 있어 주소 앞에 라이브러리 id가 붙는다
   const thumbUrl = (r: FileRow) =>
-    r.thumb
-      ? `thumb://localhost/${r.thumb.split("/").map(encodeURIComponent).join("/")}`
+    r.thumb && r.library_id !== null
+      ? `thumb://localhost/${r.library_id}/${r.thumb.split("/").map(encodeURIComponent).join("/")}`
       : null;
 
   return (
@@ -350,20 +395,17 @@ export default function App() {
       {/* 툴바 */}
       <div className="h-11 shrink-0 flex items-center gap-3 px-3 bg-[#1C2123] border-b border-[#242C2E]">
         <button
-          onClick={pickFolder}
+          onClick={addLibrary}
           className="h-7 px-3 rounded-md bg-[#49B8B4] text-[#08191a] font-semibold"
         >
-          라이브러리 열기
+          라이브러리 추가
         </button>
-        {lib && (
+        {libs.length > 0 && (
           <>
-            <span className="text-[#A3B2B4]">{lib.root}</span>
             <button
-              onClick={async () => {
-                await invoke("scan_start", { area: 1 });
-                setScanMsg("스캔 시작…");
-              }}
-              className="h-7 px-3 rounded-md text-[#A3B2B4] ring-1 ring-[#333C3F]"
+              onClick={() => rescan(libId ?? libs[0].id)}
+              disabled={!libs.some((l) => l.online)}
+              className="h-7 px-3 rounded-md text-[#A3B2B4] ring-1 ring-[#333C3F] disabled:opacity-40"
             >
               다시 스캔
             </button>
@@ -390,35 +432,95 @@ export default function App() {
       </div>
 
       <div className="flex-1 flex min-h-0">
-        {/* 사이드바 */}
+        {/* 사이드바 — 위는 등록한 라이브러리, 아래는 그 안의 폴더 */}
         <aside className="w-56 shrink-0 bg-[#1C2123] border-r border-[#242C2E] overflow-y-auto py-2">
+          <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-[#5F6C6E]">
+            라이브러리
+          </div>
           <button
-            onClick={() => setFolderId(null)}
+            onClick={() => {
+              setLibId(null);
+              setFolderId(null);
+            }}
             className={`w-full text-left px-3 py-1.5 ${
-              folderId === null ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
+              libId === null ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
             }`}
           >
             전체{" "}
             <span className="text-[#6D7B7E] tabular-nums float-right">
-              {stats?.files.toLocaleString() ?? "—"}
+              {libs.reduce((a, l) => a + l.file_count, 0).toLocaleString()}
             </span>
           </button>
-          {folders.map((f) => (
-            <button
-              key={f.id}
-              onClick={() => setFolderId(f.id)}
-              title={f.rel_path}
-              style={{ paddingLeft: 12 + f.depth * 10 }}
-              className={`w-full text-left pr-3 py-1 truncate ${
-                folderId === f.id ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
-              }`}
-            >
-              {f.name}{" "}
-              <span className="text-[#5F6C6E] tabular-nums text-[11px]">
-                {f.file_count}
-              </span>
-            </button>
+          {libs.map((l) => (
+            <div key={l.id} className="group relative">
+              <button
+                onClick={() => {
+                  setLibId(l.id);
+                  setFolderId(null);
+                }}
+                title={l.dir ?? `${l.volume_name}/${l.rel_path} (연결 안 됨)`}
+                className={`w-full text-left px-3 py-1.5 truncate ${
+                  libId === l.id ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
+                } ${l.online ? "" : "opacity-50"}`}
+              >
+                <span
+                  className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle"
+                  style={{ background: l.online ? "#49B8B4" : "#5A6668" }}
+                />
+                {l.name}{" "}
+                <span className="text-[#6D7B7E] tabular-nums float-right">
+                  {l.file_count.toLocaleString()}
+                </span>
+              </button>
+              {/* 등록만 지운다 — 원본 사진은 그대로다 */}
+              <button
+                onClick={() => dropLibrary(l)}
+                title="목록에서 빼기 (원본은 그대로)"
+                className="absolute right-1 top-1.5 hidden group-hover:block px-1 text-[#6D7B7E] hover:text-[#E2685C] bg-[#1C2123]"
+              >
+                ✕
+              </button>
+            </div>
           ))}
+
+          {folders.length > 0 && (
+            <div className="mt-3 pt-2 border-t border-[#242C2E]">
+              <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-[#5F6C6E]">
+                폴더
+              </div>
+              <button
+                onClick={() => setFolderId(null)}
+                className={`w-full text-left px-3 py-1 ${
+                  folderId === null
+                    ? "bg-[#232A2C] text-white"
+                    : "text-[#A3B2B4]"
+                }`}
+              >
+                전체{" "}
+                <span className="text-[#6D7B7E] tabular-nums float-right">
+                  {stats?.files.toLocaleString() ?? "—"}
+                </span>
+              </button>
+              {folders.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setFolderId(f.id)}
+                  title={f.rel_path}
+                  style={{ paddingLeft: 12 + f.depth * 10 }}
+                  className={`w-full text-left pr-3 py-1 truncate ${
+                    folderId === f.id
+                      ? "bg-[#232A2C] text-white"
+                      : "text-[#A3B2B4]"
+                  }`}
+                >
+                  {f.name}{" "}
+                  <span className="text-[#5F6C6E] tabular-nums text-[11px]">
+                    {f.file_count}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </aside>
 
         {/* 콘텐츠 영역 — 뷰어는 이 안만 덮는다. 왼쪽 폴더 목록은 계속 보인다. */}
@@ -429,9 +531,9 @@ export default function App() {
             onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
             className="flex-1 overflow-y-auto p-2.5"
           >
-            {!lib && (
+            {libs.length === 0 && (
               <div className="h-full flex items-center justify-center text-[#6D7B7E]">
-                라이브러리 폴더를 여세요
+                「라이브러리 추가」로 사진 폴더를 등록하세요
               </div>
             )}
             <div style={{ height: virt.getTotalSize(), position: "relative" }}>
@@ -533,7 +635,7 @@ export default function App() {
         </div>
       </div>
 
-      {culling && lib && (
+      {culling && libs.length > 0 && (
         <Cull
           onClose={() => {
             setCulling(false);

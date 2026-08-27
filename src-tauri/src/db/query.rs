@@ -24,6 +24,9 @@ pub struct FileRow {
     pub rating: i32,
     pub culling_flag: i32,
     pub favorite: bool,
+    /// 어느 라이브러리 소속인가. 썸네일 캐시가 라이브러리마다 따로 있어서
+    /// 프론트가 `thumb://` 주소를 만들 때 필요하다.
+    pub library_id: Option<i64>,
     /// 캐시 루트 기준 상대경로. 없으면 아직 생성 전이다.
     pub thumb: Option<String>,
 }
@@ -40,6 +43,8 @@ pub struct Cursor {
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct Filter {
+    /// 등록한 라이브러리 하나만. None이면 전체.
+    pub library_id: Option<i64>,
     /// 이 폴더와 하위 폴더. None이면 전체.
     pub folder_id: Option<i64>,
     /// 0 작업대 · 1 내사진 · 2 공용
@@ -72,6 +77,10 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     let mut w: Vec<String> = Vec::new();
     let mut p: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+    if let Some(id) = f.library_id {
+        w.push("fo.library_id = ?".into());
+        p.push(Box::new(id));
+    }
     if let Some(id) = f.folder_id {
         // 하위 폴더까지 포함한다. rel_path 접두사로 찾는다.
         w.push(
@@ -129,7 +138,8 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
     // limit + 1을 읽어 다음 페이지가 있는지 알아낸다
     let sql = format!(
         "SELECT fi.id, fi.name, fi.taken_at, fi.taken_at_source, fi.kind, fi.size,
-                fi.width, fi.height, fi.rating, fi.culling_flag, fi.favorite, t.rel_path
+                fi.width, fi.height, fi.rating, fi.culling_flag, fi.favorite,
+                fo.library_id, t.rel_path
          FROM files fi
          JOIN folders fo ON fo.id = fi.folder_id
          LEFT JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
@@ -155,7 +165,8 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
                 rating: r.get(8)?,
                 culling_flag: r.get(9)?,
                 favorite: r.get::<_, i32>(10)? != 0,
-                thumb: r.get(11)?,
+                library_id: r.get(11)?,
+                thumb: r.get(12)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -224,7 +235,7 @@ pub fn cursor_at(db: &Db, f: &Filter, index: i64) -> Result<Option<Cursor>> {
     params.push(Box::new(index - 1));
     // OFFSET은 건너뛰는 행마다 조인을 한 번씩 한다. `fo`를 실제로 보는 필터가
     // 없으면 조인을 뺀다. 실측(14만 행, OFFSET 143,000): 40ms -> 3ms.
-    let join = if f.area.is_some() {
+    let join = if f.area.is_some() || f.library_id.is_some() {
         "JOIN folders fo ON fo.id = fi.folder_id"
     } else {
         ""

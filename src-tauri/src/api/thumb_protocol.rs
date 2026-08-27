@@ -2,9 +2,13 @@
 //!
 //! asset 프로토콜의 scope glob은 한글·공백이 섞인 절대경로에서 기대대로 동작하지
 //! 않았다(`**`, `/**` 둘 다 거부). 범용 프로토콜에 넓은 권한을 주는 대신,
-//! **캐시 폴더 하나만 여는 전용 프로토콜**을 등록한다. 경로 탈출도 여기서 막는다.
+//! **캐시 폴더만 여는 전용 프로토콜**을 등록한다. 경로 탈출도 여기서 막는다.
 //!
-//! 프론트는 `thumb://localhost/<캐시 상대경로>` 로 부른다.
+//! 주소 형태: `thumb://localhost/<라이브러리 id>/<캐시 상대경로>`
+//!
+//! 라이브러리 id가 앞에 붙는 이유: 캐시는 **라이브러리 폴더마다** 따로 있다.
+//! 이게 없던 때는 "지금 열린 라이브러리"의 캐시만 뒤져서, 다른 디스크 사진은
+//! 썸네일이 이미 만들어져 있는데도 빈 칸으로 나왔다.
 
 use tauri::http::{Request, Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeResponder};
@@ -21,27 +25,40 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
         responder.respond(not_found());
         return;
     };
-    let Ok(lib) = state.current() else {
+    // "/2/53/5314aa.jpg" → 라이브러리 2의 캐시에서 "53/5314aa.jpg"
+    let raw = req.uri().path().trim_start_matches('/');
+    let Some((lib_id, rest)) = raw.split_once('/') else {
         responder.respond(not_found());
         return;
     };
-
-    // "/53/5314aa.jpg" → 캐시 루트 기준 상대경로
-    let raw = req.uri().path().trim_start_matches('/');
-    let decoded = percent_decode(raw);
+    let Ok(lib_id) = lib_id.parse::<i64>() else {
+        responder.respond(not_found());
+        return;
+    };
+    let decoded = percent_decode(rest);
 
     // 경로 탈출 차단 — ".."이 하나라도 있으면 거부한다
     if decoded.split('/').any(|seg| seg == ".." || seg.is_empty()) {
         responder.respond(not_found());
         return;
     }
-    let path = lib.cache_root.join(&decoded);
+
+    let Ok(Some(lib)) = crate::db::libraries::get(&state.db, lib_id) else {
+        responder.respond(not_found());
+        return;
+    };
+    // 디스크가 빠져 있으면 캐시도 함께 사라진다
+    let Some(cache_root) = lib.dir.as_deref().map(crate::media::cache::cache_root) else {
+        responder.respond(not_found());
+        return;
+    };
+    let path = cache_root.join(&decoded);
 
     // 정규화 후에도 캐시 안에 있어야 한다 (심볼릭 링크 대비)
     let inside = path
         .canonicalize()
         .ok()
-        .zip(lib.cache_root.canonicalize().ok())
+        .zip(cache_root.canonicalize().ok())
         .map(|(p, root)| p.starts_with(root))
         .unwrap_or(false);
     if !inside {

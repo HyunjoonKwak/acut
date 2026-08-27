@@ -156,11 +156,24 @@ pub fn describe(path: impl AsRef<Path>) -> Result<VolumeInfo> {
 pub fn find_mount(uuid: &str) -> Option<PathBuf> {
     // 부팅 볼륨을 먼저 본다. macOS는 이 볼륨을 "/" 와 "/Volumes/<이름>" 양쪽으로
     // 노출하는데, 정규 경로는 "/" 다.
-    if volume_uuid("/").ok().as_deref() == Some(uuid) {
-        return Some(PathBuf::from("/"));
+    //
+    // "/"와 "/System/Volumes/Data"는 **UUID가 서로 다르다** (APFS 시스템/데이터
+    // 분리). 사용자 폴더는 전부 Data 볼륨에 있으므로 둘 다 확인해야 한다.
+    // 하나만 봤을 때는 부팅 디스크 안의 라이브러리가 아래 스냅숏에 잡혔다.
+    for p in ["/", "/System/Volumes/Data"] {
+        if volume_uuid(p).ok().as_deref() == Some(uuid) {
+            return Some(PathBuf::from("/"));
+        }
     }
     for entry in std::fs::read_dir("/Volumes").ok()?.flatten() {
         let p = entry.path();
+        // 타임머신 로컬 스냅숏은 원본 볼륨과 UUID가 같다. 여기로 경로를 풀면
+        // **읽기 전용 스냅숏의 옛 내용**을 보게 된다.
+        if p.file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("com.apple.TimeMachine"))
+        {
+            continue;
+        }
         if volume_uuid(&p).ok().as_deref() == Some(uuid) {
             return Some(p);
         }
@@ -176,6 +189,25 @@ pub fn to_relative(mount: &Path, full: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 임시 폴더의 볼륨을 UUID로 되찾을 수 있어야 한다.
+    ///
+    /// 사용자 폴더는 Data 볼륨에 있는데 "/"는 System 볼륨이라 UUID가 다르다.
+    /// 이걸 놓치면 타임머신 스냅숏이 대신 잡혀 옛 내용을 읽는다.
+    #[test]
+    fn a_temp_dir_resolves_back_to_the_boot_volume() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = describe(dir.path()).expect("볼륨 인식");
+        assert_eq!(
+            find_mount(&v.uuid).as_deref(),
+            Some(Path::new("/")),
+            "부팅 볼륨은 \"/\"로 돌아와야 한다 (UUID {})",
+            v.uuid
+        );
+        // 되찾은 마운트 + 상대경로 = 원래 경로
+        let rel = to_relative(&v.mount_path, dir.path()).expect("상대경로");
+        assert!(find_mount(&v.uuid).unwrap().join(&rel).is_dir());
+    }
 
     #[test]
     fn boot_volume_has_a_uuid() {

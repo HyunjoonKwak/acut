@@ -69,14 +69,13 @@ pub struct JunkProgress {
 }
 
 /// 잡동사니를 찾아 `groups`(kind=1)에 사유별로 묶는다.
-pub fn scan(db: &Db, volume_uuid: &str) -> Result<JunkProgress> {
+pub fn scan(db: &Db) -> Result<JunkProgress> {
     let rows: Vec<(i64, String, String, i64)> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fi.name, fo.rel_path, fi.size
-             FROM files fi JOIN folders fo ON fo.id = fi.folder_id
-             WHERE fo.volume_uuid = ?1",
+             FROM files fi JOIN folders fo ON fo.id = fi.folder_id",
         )?;
-        let it = st.query_map([volume_uuid], |r| {
+        let it = st.query_map([], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -181,10 +180,10 @@ mod tests {
         std::fs::write(dir.path().join("20260101_120000.jpg"), vec![3u8; BIG as usize]).unwrap();
 
         let db = crate::db::conn::Db::open(dir.path().join("t.db")).unwrap();
-        crate::scan::scan_folder(&db, dir.path(), 1, |_| {}).unwrap();
+        crate::scan::scan_test(&db, dir.path(), 1, |_| {}).unwrap();
         let vol = crate::db::volumes::describe(dir.path()).unwrap();
 
-        let p = scan(&db, &vol.uuid).unwrap();
+        let p = scan(&db).unwrap();
         assert_eq!(p.found, 3, "스크린샷 2 + 작은 파일 1");
         assert_eq!(p.scanned, 4);
 

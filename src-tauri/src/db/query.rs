@@ -8,6 +8,7 @@
 //! 가른다. 이게 없으면 경계에서 사진이 빠지거나 겹친다.
 
 use crate::db::conn::{Db, Result};
+use rusqlite::OptionalExtension;
 
 /// 그리드 한 칸에 필요한 것만. 인스펙터용 상세는 따로 가져온다.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -203,6 +204,47 @@ pub fn timeline(db: &Db, f: &Filter) -> Result<Vec<Bucket>> {
     })
 }
 
+/// 전역 순번 `index`에서 페이지를 시작하려면 어떤 커서를 써야 하는가.
+///
+/// 스크롤바 손잡이를 끌면 "전체의 37% 지점"처럼 **순번**이 나온다. 그런데
+/// `page()`는 커서 기반이라 순번을 모른다. 여기서 한 번만 OFFSET으로 그 자리의
+/// 행을 찾아 커서로 바꿔 준다. 이후 페이지는 다시 keyset으로 이어 읽는다.
+///
+/// OFFSET을 쓰지만 `(taken_at DESC, id DESC)` 인덱스만 훑고 테이블은 건드리지
+/// 않는다. 6만 행 규모에서 한 번 호출은 밀리초 단위다. 목록 전체를 OFFSET으로
+/// 넘기던 옛 방식과는 비용이 다르다.
+///
+/// `index`가 0 이하면 맨 앞이므로 커서가 없다(None).
+pub fn cursor_at(db: &Db, f: &Filter, index: i64) -> Result<Option<Cursor>> {
+    if index <= 0 {
+        return Ok(None);
+    }
+    let (where_sql, mut params) = build_where(f, None);
+    // index번째 행 **바로 앞** 행이 커서다. page()는 커서 다음부터 돌려준다.
+    params.push(Box::new(index - 1));
+    // OFFSET은 건너뛰는 행마다 조인을 한 번씩 한다. `fo`를 실제로 보는 필터가
+    // 없으면 조인을 뺀다. 실측(14만 행, OFFSET 143,000): 40ms -> 3ms.
+    let join = if f.area.is_some() {
+        "JOIN folders fo ON fo.id = fi.folder_id"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "SELECT fi.taken_at, fi.id FROM files fi
+         {join}
+         {where_sql}
+         ORDER BY fi.taken_at DESC, fi.id DESC
+         LIMIT 1 OFFSET ?"
+    );
+    db.read(|c| {
+        let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        c.query_row(&sql, refs.as_slice(), |r| {
+            Ok(Cursor { taken_at: r.get(0)?, id: r.get(1)? })
+        })
+        .optional()
+    })
+}
+
 /// 필터에 걸리는 전체 개수와 용량. 페이지마다 세지 않고 필터가 바뀔 때만 호출한다.
 pub fn summary(db: &Db, f: &Filter) -> Result<(i64, i64)> {
     let (where_sql, params) = build_where(f, None);
@@ -262,6 +304,61 @@ mod tests {
         })
         .unwrap();
         (dir, db)
+    }
+
+    /// 스크롤바가 준 순번으로 커서를 얻어 그 자리부터 읽는다.
+    /// 전부 읽은 목록의 같은 자리와 일치해야 한다 — 어긋나면 손잡이가 딴 데로 간다.
+    #[test]
+    fn cursor_at_lands_on_the_same_row_as_a_full_read() {
+        let (_d, db) = seeded();
+        let f = Filter::default();
+        let all = page(&db, &f, None, 500).unwrap().rows;
+        assert_eq!(all.len(), 50);
+
+        for index in [0usize, 1, 7, 23, 49] {
+            let c = cursor_at(&db, &f, index as i64).unwrap();
+            let got = page(&db, &f, c, 3).unwrap().rows;
+            assert_eq!(
+                got[0].id, all[index].id,
+                "{index}번째에서 시작해야 한다"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_at_respects_the_filter() {
+        let (_d, db) = seeded();
+        // 영상만 — 10개마다 하나라 5장이다
+        let f = Filter { kind: Some(1), ..Default::default() };
+        let all = page(&db, &f, None, 500).unwrap().rows;
+        assert_eq!(all.len(), 5);
+        let c = cursor_at(&db, &f, 3).unwrap();
+        let got = page(&db, &f, c, 5).unwrap().rows;
+        assert_eq!(got[0].id, all[3].id);
+        assert_eq!(got.len(), 2, "3번째부터 끝까지");
+    }
+
+    /// area 필터는 folders를 봐야 해서 조인을 살린다. 그 분기도 맞아야 한다.
+    #[test]
+    fn cursor_at_keeps_the_join_for_area() {
+        let (_d, db) = seeded();
+        let f = Filter { area: Some(2), ..Default::default() };
+        let all = page(&db, &f, None, 500).unwrap().rows;
+        assert_eq!(all.len(), 10, "폴더 3(area=2)에 41~50번 10장");
+        let c = cursor_at(&db, &f, 4).unwrap();
+        let got = page(&db, &f, c, 10).unwrap().rows;
+        assert_eq!(got[0].id, all[4].id);
+        assert_eq!(got.len(), 6);
+    }
+
+    #[test]
+    fn cursor_at_edges() {
+        let (_d, db) = seeded();
+        let f = Filter::default();
+        assert!(cursor_at(&db, &f, 0).unwrap().is_none(), "맨 앞은 커서가 없다");
+        assert!(cursor_at(&db, &f, -5).unwrap().is_none(), "음수도 맨 앞으로");
+        // 끝을 넘어가면 행이 없다 — 빈 페이지가 되지 손잡이가 깨지면 안 된다
+        assert!(cursor_at(&db, &f, 9999).unwrap().is_none());
     }
 
     #[test]

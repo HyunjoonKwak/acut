@@ -242,6 +242,16 @@ pub fn files_timeline(
     query::timeline(&state.db, &filter).map_err(err)
 }
 
+/// 스크롤바 손잡이가 멈춘 자리를 커서로 바꾼다. 그 뒤는 다시 keyset이다.
+#[tauri::command]
+pub fn files_cursor_at(
+    state: State<'_, AppState>,
+    filter: Filter,
+    index: i64,
+) -> Result<Option<Cursor>, String> {
+    query::cursor_at(&state.db, &filter, index).map_err(err)
+}
+
 #[tauri::command]
 pub fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result<Summary, String> {
     let (count, bytes) = query::summary(&state.db, &filter).map_err(err)?;

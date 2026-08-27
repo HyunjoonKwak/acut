@@ -5,6 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Cull from "./Cull";
 import Viewer from "./Viewer";
+import ScrollBar from "./ScrollBar";
 
 // ── 타입 (Rust 쪽과 맞춰야 한다) ─────────────────────────────────────
 type FileRow = {
@@ -86,16 +87,25 @@ export default function App() {
   /// 뷰어에 띄운 사진의 rows 안 위치. null이면 뷰어가 닫힌 상태
   const [viewerAt, setViewerAt] = useState<number | null>(null);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
-  /// 드래그 중 표시할 눈금 (없으면 드래그 중이 아니다)
-  const [scrubAt, setScrubAt] = useState<number | null>(null);
-  const scrubRef = useRef<HTMLDivElement>(null);
-  const scrubbing = useRef(false);
-  /// 같은 달로 두 번 요청하지 않게
-  const lastBucket = useRef(-1);
+  /// rows[0]이 전체에서 몇 번째인가. 스크롤바 손잡이 위치의 기준이다.
+  const [baseIndex, setBaseIndex] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewH, setViewH] = useState(0);
+  /// 뷰어를 창 전체로 — 기본은 사이드바를 남겨 둔다
+  const [viewerFull, setViewerFull] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // 요청이 겹치지 않게 — 스크롤이 빠르면 같은 페이지를 두 번 부를 수 있다
   const inflight = useRef(false);
+  /// 잠겨 있는 동안 들어온 스크롤바 요청. 마지막 것만 남는다.
+  const pending = useRef<number | null>(null);
+  /// 잠금이 풀릴 때 밀린 요청을 이어받는다 (아래에서 채운다)
+  const drain = useRef<() => void>(() => {});
+  /// 어떤 경로로 끝나든 여기서만 잠금을 푼다. 안 그러면 밀린 요청이 사라진다.
+  const release = useCallback(() => {
+    inflight.current = false;
+    drain.current();
+  }, []);
 
   const filter = useMemo(() => ({ folder_id: folderId }), [folderId]);
 
@@ -104,28 +114,37 @@ export default function App() {
     inflight.current = true;
     setLoading(true);
     try {
-      const p = await invoke<Page>("files_page", { filter, cursor: null, limit: PAGE });
+      const p = await invoke<Page>("files_page", {
+        filter,
+        cursor: null,
+        limit: PAGE,
+      });
       setRows(p.rows);
       setCursor(p.next);
       setDone(!p.next);
+      setBaseIndex(0);
     } finally {
       setLoading(false);
-      inflight.current = false;
+      release();
     }
-  }, [filter]);
+  }, [filter, release]);
 
   const loadMore = useCallback(async () => {
     if (inflight.current || done || !cursor) return;
     inflight.current = true;
     try {
-      const p = await invoke<Page>("files_page", { filter, cursor, limit: PAGE });
+      const p = await invoke<Page>("files_page", {
+        filter,
+        cursor,
+        limit: PAGE,
+      });
       setRows((prev) => [...prev, ...p.rows]);
       setCursor(p.next);
       setDone(!p.next);
     } finally {
-      inflight.current = false;
+      release();
     }
-  }, [filter, cursor, done]);
+  }, [filter, cursor, done, release]);
 
   const refreshMeta = useCallback(async () => {
     try {
@@ -158,10 +177,13 @@ export default function App() {
   // 스캔·썸네일 진행 상황
   useEffect(() => {
     const un: Array<() => void> = [];
-    listen<{ found: number; inserted: number; skipped: number }>("scan-progress", (e) => {
-      const p = e.payload;
-      setScanMsg(`스캔 ${p.inserted + p.skipped}/${p.found}`);
-    }).then((f) => un.push(f));
+    listen<{ found: number; inserted: number; skipped: number }>(
+      "scan-progress",
+      (e) => {
+        const p = e.payload;
+        setScanMsg(`스캔 ${p.inserted + p.skipped}/${p.found}`);
+      },
+    ).then((f) => un.push(f));
     listen("scan-done", () => {
       setScanMsg("스캔 완료 — 썸네일 생성 중");
       loadFirst();
@@ -187,6 +209,7 @@ export default function App() {
     const ro = new ResizeObserver(() => {
       const w = el.clientWidth - GAP;
       setCols(Math.max(1, Math.floor(w / (thumbSize + GAP))));
+      setViewH(el.clientHeight);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -218,22 +241,36 @@ export default function App() {
     setScanMsg("스캔 시작…");
   };
 
-  // 전용 thumb:// 프로토콜 — 캐시 폴더만 서빙한다 (api/thumb_protocol.rs)
-  /// 특정 시점부터 다시 읽는다. keyset 커서라 앞을 건너뛸 필요가 없다.
-  const jumpTo = useCallback(
-    async (top: number) => {
-      if (inflight.current) return;
+  /// 스크롤바가 준 전역 순번으로 목록을 다시 읽는다.
+  ///
+  /// 손잡이를 끌면 요청이 초당 수십 번 쏟아진다. 하나가 도는 동안 들어온 것은
+  /// `pending`에 덮어써 두고, 끝나면 **마지막 것만** 이어서 처리한다. 큐에
+  /// 쌓아 두면 손을 뗀 뒤에도 한참 따라온다.
+  const seekTo = useCallback(
+    async (index: number) => {
+      pending.current = index;
+      if (inflight.current) return; // 도는 쪽이 끝나면서 release()로 이어받는다
       inflight.current = true;
       try {
-        const p = await invoke<Page>("files_page", {
-          filter,
-          cursor: { taken_at: top + 1, id: Number.MAX_SAFE_INTEGER },
-          limit: PAGE,
-        });
-        setRows(p.rows);
-        setCursor(p.next);
-        setDone(!p.next);
-        scrollRef.current?.scrollTo({ top: 0 });
+        while (pending.current !== null) {
+          const want = pending.current;
+          pending.current = null;
+          const c = await invoke<Cursor | null>("files_cursor_at", {
+            filter,
+            index: want,
+          });
+          const p = await invoke<Page>("files_page", {
+            filter,
+            cursor: c,
+            limit: PAGE,
+          });
+          setRows(p.rows);
+          setCursor(p.next);
+          setDone(!p.next);
+          setBaseIndex(want);
+          scrollRef.current?.scrollTo({ top: 0 });
+          setScrollTop(0);
+        }
       } finally {
         inflight.current = false;
       }
@@ -241,46 +278,21 @@ export default function App() {
     [filter],
   );
 
-  /// 마우스 Y 위치를 눈금 인덱스로 바꿔 그 달로 이동한다.
-  /// 눈금은 균등 높이라 위치 계산이 단순하다.
-  const scrubToY = useCallback(
-    (clientY: number) => {
-      const el = scrubRef.current;
-      if (!el || buckets.length === 0) return;
-      const rect = el.getBoundingClientRect();
-      const ratio = (clientY - rect.top) / rect.height;
-      const i = Math.max(0, Math.min(buckets.length - 1, Math.floor(ratio * buckets.length)));
-      setScrubAt(i);
-      // 같은 달을 두 번 부르지 않는다 — 빠르게 끌면 요청이 쌓인다
-      if (i !== lastBucket.current) {
-        lastBucket.current = i;
-        jumpTo(buckets[i].top);
-      }
-    },
-    [buckets, jumpTo],
-  );
-
-  const endScrub = useCallback(() => {
-    scrubbing.current = false;
-    lastBucket.current = -1;
-    setScrubAt(null);
-  }, []);
-
-  // 스크러버 밖에서 손을 떼도 드래그가 끝나야 한다
   useEffect(() => {
-    const up = () => {
-      if (scrubbing.current) endScrub();
+    drain.current = () => {
+      if (pending.current !== null) void seekTo(pending.current);
     };
-    window.addEventListener("pointerup", up);
-    return () => window.removeEventListener("pointerup", up);
-  }, [endScrub]);
+  }, [seekTo]);
 
   /// 뷰어가 훑고 다닐 목록 — 지금 화면에 올라온 순서 그대로
   const ids = useMemo(() => rows.map((r) => r.id), [rows]);
 
   /// 뷰어에서 판정을 바꾸면 그리드도 같이 바뀌어야 한다
   const markOne = useCallback(
-    async (id: number, patch: { rating?: number; cullingFlag?: number; favorite?: boolean }) => {
+    async (
+      id: number,
+      patch: { rating?: number; cullingFlag?: number; favorite?: boolean },
+    ) => {
       await invoke("files_mark", {
         ids: [id],
         rating: patch.rating ?? null,
@@ -323,8 +335,15 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [viewerAt, culling, selected, rows]);
 
+  /// 스크롤바가 알아야 하는 두 값 — 지금 맨 위 사진의 전역 순번과 한 화면 장수
+  const offset = baseIndex + Math.floor(scrollTop / rowH) * cols;
+  const pageSize = Math.max(cols, Math.ceil(viewH / rowH) * cols);
+
+  // 전용 thumb:// 프로토콜 — 캐시 폴더만 서빙한다 (api/thumb_protocol.rs)
   const thumbUrl = (r: FileRow) =>
-    r.thumb ? `thumb://localhost/${r.thumb.split("/").map(encodeURIComponent).join("/")}` : null;
+    r.thumb
+      ? `thumb://localhost/${r.thumb.split("/").map(encodeURIComponent).join("/")}`
+      : null;
 
   return (
     <div className="h-screen flex flex-col bg-[#15191A] text-[#EAEFEF] text-[13px]">
@@ -357,7 +376,9 @@ export default function App() {
           </>
         )}
         <div className="flex-1" />
-        {scanMsg && <span className="text-[#F0B429] tabular-nums">{scanMsg}</span>}
+        {scanMsg && (
+          <span className="text-[#F0B429] tabular-nums">{scanMsg}</span>
+        )}
         <input
           type="range"
           min={100}
@@ -393,169 +414,132 @@ export default function App() {
               }`}
             >
               {f.name}{" "}
-              <span className="text-[#5F6C6E] tabular-nums text-[11px]">{f.file_count}</span>
+              <span className="text-[#5F6C6E] tabular-nums text-[11px]">
+                {f.file_count}
+              </span>
             </button>
           ))}
         </aside>
 
-        {/* 그리드 */}
-        <main ref={scrollRef} className="flex-1 overflow-y-auto p-2.5">
-          {!lib && (
-            <div className="h-full flex items-center justify-center text-[#6D7B7E]">
-              라이브러리 폴더를 여세요
-            </div>
-          )}
-          <div style={{ height: virt.getTotalSize(), position: "relative" }}>
-            {virt.getVirtualItems().map((v) => {
-              const start = v.index * cols;
-              const slice = rows.slice(start, start + cols);
-              return (
-                <div
-                  key={v.key}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    height: rowH,
-                    transform: `translateY(${v.start}px)`,
-                    display: "grid",
-                    gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`,
-                    gap: GAP,
-                  }}
-                >
-                  {slice.map((r, ci) => {
-                    const url = thumbUrl(r);
-                    return (
-                      <button
-                        key={r.id}
-                        onClick={() => setSelected(r.id)}
-                        onDoubleClick={() => setViewerAt(start + ci)}
-                        className="text-left"
-                      >
-                        <div
-                          className="rounded overflow-hidden bg-[#0F1314] relative"
-                          style={{
-                            aspectRatio: "1/1",
-                            boxShadow:
-                              selected === r.id ? "0 0 0 2px #6C6CE8" : undefined,
-                          }}
-                        >
-                          {url ? (
-                            <img
-                              src={url}
-                              loading="lazy"
-                              decoding="async"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[#3A4547] text-[10px]">
-                              {r.kind === 1 ? "영상" : "…"}
-                            </div>
-                          )}
-                          {r.kind === 2 && (
-                            <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-[#F0B429]">
-                              RAW
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10.5px] text-[#6D7B7E] mt-1 truncate tabular-nums">
-                          {fmtDate(r.taken_at)}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-          {loading && <div className="py-4 text-center text-[#6D7B7E]">불러오는 중…</div>}
-        </main>
-
-        {/* 타임라인 스크러버 — 클릭도 되고, 잡고 위아래로 끌어도 따라온다 */}
-        {buckets.length > 0 && (
-          <div
-            ref={scrubRef}
-            onPointerDown={(e) => {
-              scrubbing.current = true;
-              (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-              scrubToY(e.clientY);
-            }}
-            onPointerMove={(e) => {
-              if (scrubbing.current) scrubToY(e.clientY);
-            }}
-            onPointerUp={endScrub}
-            onPointerCancel={endScrub}
-            onPointerLeave={() => {
-              if (!scrubbing.current) setScrubAt(null);
-            }}
-            className="w-16 shrink-0 border-l border-[#242C2E] bg-[#181D1F] select-none relative cursor-ns-resize touch-none"
-            style={{ display: "flex", flexDirection: "column", padding: "6px 0" }}
+        {/* 콘텐츠 영역 — 뷰어는 이 안만 덮는다. 왼쪽 폴더 목록은 계속 보인다. */}
+        <div className="flex-1 flex min-w-0 relative">
+          {/* 그리드 */}
+          <main
+            ref={scrollRef}
+            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+            className="flex-1 overflow-y-auto p-2.5"
           >
-            {buckets.map((b, i) => {
-              const newYear = i === 0 || buckets[i - 1].year !== b.year;
-              const active = scrubAt === i;
-              return (
-                <div
-                  key={`${b.year}-${b.month}`}
-                  className="flex items-center justify-end gap-1.5 pr-2.5 pointer-events-none"
-                  style={{ flex: 1, minHeight: 0 }}
-                >
-                  <span
-                    className="inline-block rounded-sm"
-                    style={{
-                      height: 3,
-                      width: Math.max(2, Math.min(18, Math.round(Math.sqrt(b.count) * 1.2))),
-                      background: active ? "#49B8B4" : "#3A4547",
-                    }}
-                  />
-                  <span
-                    className="font-mono tabular-nums"
-                    style={{
-                      fontSize: newYear ? 10 : 9,
-                      fontWeight: newYear ? 700 : 400,
-                      color: active ? "#49B8B4" : newYear ? "#8D9A9C" : "#5A6668",
-                      minWidth: 26,
-                      textAlign: "right",
-                    }}
-                  >
-                    {newYear ? b.year : String(b.month).padStart(2, "0")}
-                  </span>
-                </div>
-              );
-            })}
-
-            {/* 드래그 중 말풍선 */}
-            {scrubAt !== null && buckets[scrubAt] && (
-              <div
-                className="absolute right-[68px] px-2 py-1 rounded-md bg-[#2C3436] text-[#EAEFEF] text-[11.5px] whitespace-nowrap shadow-lg pointer-events-none"
-                style={{
-                  top: `${((scrubAt + 0.5) / buckets.length) * 100}%`,
-                  transform: "translateY(-50%)",
-                }}
-              >
-                {buckets[scrubAt].year}년 {buckets[scrubAt].month}월{" "}
-                <span className="text-[#7C8A8D] tabular-nums">
-                  {buckets[scrubAt].count.toLocaleString()}장
-                </span>
+            {!lib && (
+              <div className="h-full flex items-center justify-center text-[#6D7B7E]">
+                라이브러리 폴더를 여세요
               </div>
             )}
-          </div>
-        )}
+            <div style={{ height: virt.getTotalSize(), position: "relative" }}>
+              {virt.getVirtualItems().map((v) => {
+                const start = v.index * cols;
+                const slice = rows.slice(start, start + cols);
+                return (
+                  <div
+                    key={v.key}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: rowH,
+                      transform: `translateY(${v.start}px)`,
+                      display: "grid",
+                      gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`,
+                      gap: GAP,
+                    }}
+                  >
+                    {slice.map((r, ci) => {
+                      const url = thumbUrl(r);
+                      return (
+                        <button
+                          key={r.id}
+                          onClick={() => setSelected(r.id)}
+                          onDoubleClick={() => setViewerAt(start + ci)}
+                          className="text-left"
+                        >
+                          <div
+                            className="rounded overflow-hidden bg-[#0F1314] relative"
+                            style={{
+                              aspectRatio: "1/1",
+                              boxShadow:
+                                selected === r.id
+                                  ? "0 0 0 2px #6C6CE8"
+                                  : undefined,
+                            }}
+                          >
+                            {url ? (
+                              <img
+                                src={url}
+                                loading="lazy"
+                                decoding="async"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[#3A4547] text-[10px]">
+                                {r.kind === 1 ? "영상" : "…"}
+                              </div>
+                            )}
+                            {r.kind === 2 && (
+                              <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-[#F0B429]">
+                                RAW
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10.5px] text-[#6D7B7E] mt-1 truncate tabular-nums">
+                            {fmtDate(r.taken_at)}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+            {loading && (
+              <div className="py-4 text-center text-[#6D7B7E]">
+                불러오는 중…
+              </div>
+            )}
+          </main>
+
+          {/* 타임라인 스크롤바 */}
+          <ScrollBar
+            buckets={buckets}
+            offset={offset}
+            pageSize={pageSize}
+            onSeek={seekTo}
+          />
+
+          {/* 크게 보기 — 기본은 콘텐츠 영역만 덮는다 */}
+          {viewerAt !== null && (
+            <Viewer
+              ids={ids}
+              index={viewerAt}
+              onIndex={setViewerAt}
+              onClose={() => {
+                setViewerAt(null);
+                setViewerFull(false);
+              }}
+              onMark={markOne}
+              fullScreen={viewerFull}
+              onToggleFullScreen={() => setViewerFull((f) => !f)}
+            />
+          )}
+        </div>
       </div>
 
-      {viewerAt !== null && (
-        <Viewer
-          ids={ids}
-          index={viewerAt}
-          onIndex={setViewerAt}
-          onClose={() => setViewerAt(null)}
-          onMark={markOne}
-        />
-      )}
-
       {culling && lib && (
-        <Cull onClose={() => { setCulling(false); loadFirst(); }} />
+        <Cull
+          onClose={() => {
+            setCulling(false);
+            loadFirst();
+          }}
+        />
       )}
 
       {/* 상태바 */}
@@ -568,10 +552,15 @@ export default function App() {
             <span>
               썸네일 {stats.thumbs_done.toLocaleString()}
               {stats.thumbs_pending > 0 && (
-                <span className="text-[#F0B429]"> · 대기 {stats.thumbs_pending.toLocaleString()}</span>
+                <span className="text-[#F0B429]">
+                  {" "}
+                  · 대기 {stats.thumbs_pending.toLocaleString()}
+                </span>
               )}
             </span>
-            <span className="text-[#5F6C6E]">캐시 {fmtBytes(stats.cache_bytes)}</span>
+            <span className="text-[#5F6C6E]">
+              캐시 {fmtBytes(stats.cache_bytes)}
+            </span>
           </>
         )}
         <div className="flex-1" />

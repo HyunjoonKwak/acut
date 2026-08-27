@@ -49,12 +49,20 @@ export default function Viewer({
   onIndex,
   onClose,
   onMark,
+  fullScreen,
+  onToggleFullScreen,
 }: {
   ids: number[];
   index: number;
   onIndex: (i: number) => void;
   onClose: () => void;
-  onMark: (id: number, patch: { rating?: number; cullingFlag?: number; favorite?: boolean }) => void;
+  onMark: (
+    id: number,
+    patch: { rating?: number; cullingFlag?: number; favorite?: boolean },
+  ) => void;
+  /// 켜면 창 전체를 덮는다. 끄면 콘텐츠 영역만 덮어 폴더 목록이 남는다.
+  fullScreen: boolean;
+  onToggleFullScreen: () => void;
 }) {
   const id = ids[index];
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -68,7 +76,9 @@ export default function Viewer({
     setLoading(true);
     setFailed(false);
     setZoom(false);
-    invoke<Detail>("file_detail", { id }).then(setDetail).catch(() => setDetail(null));
+    invoke<Detail>("file_detail", { id })
+      .then(setDetail)
+      .catch(() => setDetail(null));
   }, [id]);
 
   const step = useCallback(
@@ -119,6 +129,9 @@ export default function Viewer({
         case "i":
           setShowInfo((s) => !s);
           break;
+        case "\\":
+          onToggleFullScreen();
+          break;
         case "x":
           mark({ cullingFlag: 2 });
           break;
@@ -134,17 +147,23 @@ export default function Viewer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [step, onClose, zoom, mark, detail?.favorite]);
+  }, [step, onClose, zoom, mark, detail?.favorite, onToggleFullScreen]);
 
   if (id == null) return null;
   const src = `photo://localhost/${id}`;
   const isVideo = detail?.kind === 1;
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#0B0E0F] flex flex-col">
+    <div
+      className={`${
+        fullScreen ? "fixed inset-0 z-50" : "absolute inset-0 z-30"
+      } bg-[#0B0E0F] flex flex-col`}
+    >
       {/* 상단 */}
       <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-[#141A1B]/95 border-b border-[#212A2C] text-[12.5px]">
-        <span className="text-[#EAEFEF] truncate max-w-[40%]">{detail?.name ?? "…"}</span>
+        <span className="text-[#EAEFEF] truncate max-w-[40%]">
+          {detail?.name ?? "…"}
+        </span>
         <span className="text-[#6D7B7E] tabular-nums">
           {index + 1} / {ids.length}
         </span>
@@ -159,12 +178,24 @@ export default function Viewer({
           </span>
         )}
         {detail && detail.rating > 0 && (
-          <span className="text-[#F0B429] tracking-tight">{"★".repeat(detail.rating)}</span>
+          <span className="text-[#F0B429] tracking-tight">
+            {"★".repeat(detail.rating)}
+          </span>
         )}
         {detail?.favorite && <span className="text-[#E2685C]">♥</span>}
         <div className="flex-1" />
-        <button onClick={() => setShowInfo((s) => !s)} className="text-[#8D9A9C] px-2">
+        <button
+          onClick={() => setShowInfo((s) => !s)}
+          className="text-[#8D9A9C] px-2"
+        >
           정보 <span className="text-[10px] font-mono">I</span>
+        </button>
+        <button
+          onClick={onToggleFullScreen}
+          className={`px-2 ${fullScreen ? "text-[#49B8B4]" : "text-[#8D9A9C]"}`}
+        >
+          {fullScreen ? "창 안에서" : "전체화면"}{" "}
+          <span className="text-[10px] font-mono">\</span>
         </button>
         <button onClick={onClose} className="text-[#8D9A9C] px-2">
           닫기 <span className="text-[10px] font-mono">Esc</span>
@@ -187,12 +218,16 @@ export default function Viewer({
             <div className="flex flex-col items-center gap-2 text-[#5F6C6E] text-[13px]">
               <span className="text-3xl">▶</span>
               영상은 아직 크게 볼 수 없습니다
-              <span className="text-[11.5px] text-[#4E5A5C]">{detail?.name}</span>
+              <span className="text-[11.5px] text-[#4E5A5C]">
+                {detail?.name}
+              </span>
             </div>
           ) : failed ? (
             <div className="flex flex-col items-center gap-2 text-[#5F6C6E] text-[13px]">
               읽을 수 없는 파일입니다
-              <span className="text-[11.5px] text-[#4E5A5C]">{detail?.name}</span>
+              <span className="text-[11.5px] text-[#4E5A5C]">
+                {detail?.name}
+              </span>
             </div>
           ) : (
             <img
@@ -296,7 +331,9 @@ export default function Viewer({
             </div>
             <div className="flex gap-1.5">
               <button
-                onClick={() => mark({ cullingFlag: detail.cullingFlag === 1 ? 0 : 1 })}
+                onClick={() =>
+                  mark({ cullingFlag: detail.cullingFlag === 1 ? 0 : 1 })
+                }
                 className={`flex-1 h-7 rounded text-[11.5px] font-semibold ${
                   detail.cullingFlag === 1
                     ? "bg-[#F0B429] text-[#231A00]"
@@ -306,7 +343,9 @@ export default function Viewer({
                 남김 <span className="font-mono text-[10px]">P</span>
               </button>
               <button
-                onClick={() => mark({ cullingFlag: detail.cullingFlag === 2 ? 0 : 2 })}
+                onClick={() =>
+                  mark({ cullingFlag: detail.cullingFlag === 2 ? 0 : 2 })
+                }
                 className={`flex-1 h-7 rounded text-[11.5px] font-semibold ${
                   detail.cullingFlag === 2
                     ? "bg-[#E2685C] text-[#2A0D09]"
@@ -321,7 +360,8 @@ export default function Viewer({
             <div className="text-[10.5px] text-[#5F6C6E] leading-relaxed">
               <b className="text-[#7C8A8D]">단축키</b>
               <br />← → 이동 · Space 확대 · 0–5 별점
-              <br />P 남김 · X 제외 · F 즐겨찾기 · I 정보
+              <br />P 남김 · X 제외 · F 즐겨찾기
+              <br />I 정보 · \ 전체화면
             </div>
           </aside>
         )}

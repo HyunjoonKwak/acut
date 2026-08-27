@@ -147,6 +147,10 @@ export default function App() {
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   const [group, setGroup] = useState<GroupBy>("none");
   const [gridStyle, setGridStyle] = useState<GridStyle>("card");
+  /// 필름스트립 — 그리드 아래에 고른 사진을 크게 띄운다.
+  /// 자리만 잡아 뒀다. Lap의 Content.vue가 그리드와 MediaViewer를 위아래로
+  /// 나누는 구조인데, 지금은 크게 보기(뷰어)로 충분해서 뒤로 미뤘다.
+  const [filmstrip, setFilmstrip] = useState(false);
   const [scaling, setScaling] = useState<Scaling>("cover");
   /// 휴지통을 보고 있는가
   const [viewTrash, setViewTrash] = useState(false);
@@ -1016,6 +1020,8 @@ export default function App() {
             scaling={scaling}
             onStyle={setGridStyle}
             onScaling={setScaling}
+            filmstrip={filmstrip}
+            onFilmstrip={setFilmstrip}
           />
         </FilterBar>
       )}
@@ -1421,6 +1427,15 @@ export default function App() {
               </div>
             )}
           </main>
+
+          {/* 필름스트립 자리 — 아직 비어 있다 */}
+          {filmstrip && selected !== null && (
+            <div className="absolute bottom-0 inset-x-0 h-1/3 bg-[#101415] border-t border-[#242C2E] flex items-center justify-center">
+              <span className="text-[12.5px] text-[#5F6C6E]">
+                필름스트립은 아직 준비 중입니다 — 두 번 눌러 크게 보세요
+              </span>
+            </div>
+          )}
 
           {/* 타임라인 스크롤바 */}
           <ScrollBar

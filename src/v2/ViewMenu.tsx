@@ -7,11 +7,15 @@ export default function ViewMenu({
   scaling,
   onStyle,
   onScaling,
+  filmstrip,
+  onFilmstrip,
 }: {
   style: GridStyle;
   scaling: Scaling;
   onStyle: (s: GridStyle) => void;
   onScaling: (s: Scaling) => void;
+  filmstrip: boolean;
+  onFilmstrip: (v: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -77,6 +81,18 @@ export default function ViewMenu({
               ))}
             </>
           )}
+          <div className="h-px bg-[#333C3F] my-1" />
+          <button
+            onClick={() => {
+              onFilmstrip(!filmstrip);
+              setOpen(false);
+            }}
+            className={`block w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-[#2E3739] ${
+              filmstrip ? "text-[#49B8B4]" : "text-[#8D9A9C]"
+            }`}
+          >
+            필름스트립
+          </button>
         </div>
       )}
     </div>

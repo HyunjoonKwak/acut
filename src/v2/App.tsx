@@ -145,6 +145,8 @@ export default function App() {
   /// 여러 장 고르기. 정리는 이 묶음을 옮긴다.
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [organizing, setOrganizing] = useState(false);
+  /// 「⋯」를 연 라이브러리. 지우기는 이 안에 숨겨 둔다.
+  const [menuFor, setMenuFor] = useState<number | null>(null);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [culling, setCulling] = useState(false);
   /// 뷰어에 띄운 사진의 rows 안 위치. null이면 뷰어가 닫힌 상태
@@ -428,7 +430,17 @@ export default function App() {
     [libs],
   );
 
+  /// 등록을 지우면 그 라이브러리의 폴더·파일 기록이 CASCADE로 전부 사라진다.
+  /// 원본 사진은 그대로지만 스캔은 처음부터 다시 해야 한다. 실제로 ⟳ 바로 옆에
+  /// 붙어 있다가 잘못 눌려 6만 장짜리 라이브러리가 통째로 날아간 적이 있다.
   const dropLibrary = async (l: Library) => {
+    const ok = window.confirm(
+      `「${l.name}」 등록을 지웁니다.\n\n` +
+        `사진 ${l.file_count.toLocaleString()}장의 기록과 판정·평점이 사라지고, ` +
+        `다시 등록하면 처음부터 스캔해야 합니다.\n` +
+        `원본 사진과 썸네일 파일은 지워지지 않습니다.`,
+    );
+    if (!ok) return;
     await invoke("library_remove", { id: l.id });
     if (libId === l.id) setLibId(null);
     setSel(null);
@@ -909,24 +921,38 @@ export default function App() {
                   {l.file_count.toLocaleString()}
                 </span>
               </button>
-              {/* 이 라이브러리만 다시 훑는다 / 등록만 지운다 */}
+              {/* ⟳ 옆에 지우기를 두지 않는다 — 실제로 잘못 눌려 라이브러리가
+                  통째로 날아갔다. 지우기는 「⋯」 안으로 숨기고 확인도 받는다. */}
               <div className="absolute right-1 top-1.5 hidden group-hover:flex bg-[#1C2123]">
                 <button
                   onClick={() => rescan([l.id])}
                   disabled={!l.online}
                   title="이 라이브러리 다시 스캔"
-                  className="px-1 text-[#6D7B7E] hover:text-[#49B8B4] disabled:opacity-30"
+                  className="px-1.5 text-[#6D7B7E] hover:text-[#49B8B4] disabled:opacity-30"
                 >
                   ⟳
                 </button>
                 <button
-                  onClick={() => dropLibrary(l)}
-                  title="목록에서 빼기 (원본은 그대로)"
-                  className="px-1 text-[#6D7B7E] hover:text-[#E2685C]"
+                  onClick={() => setMenuFor(menuFor === l.id ? null : l.id)}
+                  title="더 보기"
+                  className="px-1.5 text-[#6D7B7E] hover:text-white"
                 >
-                  ✕
+                  ⋯
                 </button>
               </div>
+              {menuFor === l.id && (
+                <div className="absolute right-1 top-8 z-20 bg-[#232A2C] rounded-md ring-1 ring-[#3B4649] shadow-lg py-1">
+                  <button
+                    onClick={() => {
+                      setMenuFor(null);
+                      dropLibrary(l);
+                    }}
+                    className="block w-full text-left px-3 py-1.5 text-[12px] text-[#E2685C] hover:bg-[#2E3739] whitespace-nowrap"
+                  >
+                    목록에서 빼기
+                  </button>
+                </div>
+              )}
             </div>
           ))}
 

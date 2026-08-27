@@ -11,6 +11,14 @@ import Tile from "./Tile";
 import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
 import GroupMenu, { type GroupBy } from "./GroupMenu";
 import { layout, headerLabel, HEADER_H } from "./gridLayout";
+import ViewMenu from "./ViewMenu";
+import {
+  justify,
+  ratio,
+  type GridStyle,
+  type JustifiedRow,
+  type Scaling,
+} from "./gridStyle";
 import { useCountUp } from "./useCountUp";
 import FilterBar, {
   EMPTY as EMPTY_PICKS,
@@ -135,6 +143,8 @@ export default function App() {
   const [picks, setPicks] = useState<Picks>(EMPTY_PICKS);
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   const [group, setGroup] = useState<GroupBy>("none");
+  const [gridStyle, setGridStyle] = useState<GridStyle>("card");
+  const [scaling, setScaling] = useState<Scaling>("cover");
   /// 휴지통을 보고 있는가
   const [viewTrash, setViewTrash] = useState(false);
   /// 휴지통에 든 것 / 제외 판정만 하고 아직 안 치운 것
@@ -165,6 +175,7 @@ export default function App() {
   const [baseIndex, setBaseIndex] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewH, setViewH] = useState(0);
+  const [viewW, setViewW] = useState(0);
   /// 뷰어를 창 전체로 — 기본은 사이드바를 남겨 둔다
   const [viewerFull, setViewerFull] = useState(false);
 
@@ -391,19 +402,46 @@ export default function App() {
       const w = el.clientWidth - GAP;
       setCols(Math.max(1, Math.floor(w / (thumbSize + GAP))));
       setViewH(el.clientHeight);
+      setViewW(w);
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, [thumbSize]);
 
-  const rowH = thumbSize + 26;
+  /// 카드는 아래에 날짜가 붙어 한 줄이 더 높다.
+  const rowH = thumbSize + (gridStyle === "card" ? 26 : 0) + 4;
   /// 머리글과 사진 줄을 한 목록으로 편다. 묶기를 끄면 사진 줄만 나온다.
   const grid = useMemo(() => layout(rows, (r) => r.group, cols), [rows, cols]);
+  /// 양쪽 맞춤일 때 각 사진 줄의 칸 크기. 줄마다 높이가 다르다.
+  const justified = useMemo(() => {
+    if (gridStyle !== "justified" || viewW <= 0) return null;
+    const out = new Map<number, JustifiedRow<FileRow>[]>();
+    grid.forEach((row, i) => {
+      if (row.kind !== "photos") return;
+      out.set(
+        i,
+        justify(
+          row.items,
+          (f) => ratio(f.width, f.height),
+          viewW,
+          thumbSize,
+          GAP,
+        ),
+      );
+    });
+    return out;
+  }, [grid, gridStyle, viewW, thumbSize]);
   const virt = useVirtualizer({
     count: grid.length,
     getScrollElement: () => scrollRef.current,
     // 머리글과 사진 줄은 높이가 다르다
-    estimateSize: (i) => (grid[i]?.kind === "header" ? HEADER_H : rowH),
+    estimateSize: (i) => {
+      if (grid[i]?.kind === "header") return HEADER_H;
+      const j = justified?.get(i);
+      // 양쪽 맞춤은 한 「줄」이 여러 소줄로 나뉜다
+      if (j) return j.reduce((a, r) => a + r.height + GAP, 0);
+      return rowH;
+    },
     overscan: 4,
   });
 
@@ -866,6 +904,12 @@ export default function App() {
         <FilterBar value={picks} onChange={setPicks}>
           <SortMenu value={sort} onChange={setSort} />
           <GroupMenu value={group} onChange={setGroup} />
+          <ViewMenu
+            style={gridStyle}
+            scaling={scaling}
+            onStyle={setGridStyle}
+            onScaling={setScaling}
+          />
         </FilterBar>
       )}
 
@@ -1115,6 +1159,43 @@ export default function App() {
                     </div>
                   );
                 }
+                const jrows = justified?.get(v.index);
+                if (jrows) {
+                  // 양쪽 맞춤 — 한 「줄」 안에 여러 소줄이 들어간다
+                  let n = row.start;
+                  return (
+                    <div key={v.key} style={box}>
+                      {jrows.map((jr, ri) => (
+                        <div
+                          key={ri}
+                          className="flex"
+                          style={{ gap: GAP, marginBottom: GAP }}
+                        >
+                          {jr.items.map(({ file, width }) => {
+                            const at = n++;
+                            return (
+                              <Tile
+                                key={file.id}
+                                file={file}
+                                url={thumbUrl(file)}
+                                picked={picked.has(file.id)}
+                                focused={selected === file.id}
+                                onClick={(e: React.MouseEvent) =>
+                                  pick(file.id, e)
+                                }
+                                onDoubleClick={() => setViewerAt(at)}
+                                label={fmtDate(file.taken_at)}
+                                style="justified"
+                                scaling={scaling}
+                                aspect={{ width, height: jr.height }}
+                              />
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={v.key}
@@ -1136,6 +1217,8 @@ export default function App() {
                         onClick={(e: React.MouseEvent) => pick(r.id, e)}
                         onDoubleClick={() => setViewerAt(row.start + ci)}
                         label={fmtDate(r.taken_at)}
+                        style={gridStyle}
+                        scaling={scaling}
                       />
                     ))}
                   </div>

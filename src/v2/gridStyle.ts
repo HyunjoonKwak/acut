@@ -1,0 +1,84 @@
+/**
+ * 그리드 보기 방식 — Lap의 style/scaling과 같은 갈래.
+ *
+ * 카드·타일은 칸이 격자로 고정되고, 양쪽 맞춤은 **줄마다 높이가 달라진다** —
+ * 사진의 가로세로비를 지키면서 줄의 오른쪽 끝을 맞추기 때문이다.
+ */
+
+export type GridStyle = "card" | "tile" | "justified";
+export type Scaling = "contain" | "cover" | "fill";
+
+export const STYLES: { v: GridStyle; label: string }[] = [
+  { v: "card", label: "카드 보기" },
+  { v: "tile", label: "타일 보기" },
+  { v: "justified", label: "양쪽 맞춤" },
+];
+
+export const SCALINGS: { v: Scaling; label: string }[] = [
+  { v: "cover", label: "채우기" },
+  { v: "contain", label: "사진 전체" },
+  { v: "fill", label: "늘리기" },
+];
+
+export const objectFit = (s: Scaling) =>
+  s === "cover"
+    ? "object-cover"
+    : s === "contain"
+      ? "object-contain"
+      : "object-fill";
+
+/** 사진 한 장의 가로세로비. 모르면 정사각형으로 친다. */
+export function ratio(w: number | null, h: number | null): number {
+  if (!w || !h || w <= 0 || h <= 0) return 1;
+  const r = w / h;
+  // 파노라마 한 장이 줄 전체를 먹지 않게 막는다
+  return Math.min(Math.max(r, 0.25), 4);
+}
+
+export type JustifiedRow<T> = {
+  items: { file: T; width: number }[];
+  height: number;
+};
+
+/**
+ * 양쪽 맞춤 배치 — 한 줄의 사진들을 폭에 딱 맞게 늘린다.
+ *
+ * 가로세로비의 합으로 줄 높이가 정해진다: 높이 = (가용폭) / (비의 합).
+ * 목표 높이를 넘어가면 줄을 끊는다. 마지막 줄은 늘리지 않는다 — 사진 두 장이
+ * 화면을 가로질러 거대해지는 꼴을 막는다.
+ */
+export function justify<T>(
+  files: T[],
+  ratioOf: (f: T) => number,
+  totalWidth: number,
+  targetHeight: number,
+  gap: number,
+): JustifiedRow<T>[] {
+  const out: JustifiedRow<T>[] = [];
+  if (totalWidth <= 0 || targetHeight <= 0) return out;
+
+  let line: T[] = [];
+  let sum = 0;
+
+  const flush = (stretch: boolean) => {
+    if (line.length === 0) return;
+    const avail = totalWidth - gap * (line.length - 1);
+    const h = stretch ? avail / sum : targetHeight;
+    out.push({
+      items: line.map((f) => ({ file: f, width: ratioOf(f) * h })),
+      height: h,
+    });
+    line = [];
+    sum = 0;
+  };
+
+  for (const f of files) {
+    line.push(f);
+    sum += ratioOf(f);
+    const avail = totalWidth - gap * (line.length - 1);
+    // 이 줄을 폭에 맞추면 높이가 목표보다 낮아진다 → 여기서 끊는다
+    if (avail / sum <= targetHeight) flush(true);
+  }
+  flush(false);
+  return out;
+}

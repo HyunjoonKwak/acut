@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { objectFit, type GridStyle, type Scaling } from "./gridStyle";
 import {
   HOVER_DELAY_MS,
   claimHoverPreview,
@@ -38,6 +39,9 @@ export default function Tile({
   onClick,
   onDoubleClick,
   label,
+  style = "card",
+  scaling = "cover",
+  aspect,
 }: {
   file: TileFile;
   /** 썸네일 주소. 아직 없으면 null */
@@ -47,6 +51,10 @@ export default function Tile({
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
   label: string;
+  style?: GridStyle;
+  scaling?: Scaling;
+  /** 양쪽 맞춤에서 계산된 칸 크기. 없으면 정사각형 격자. */
+  aspect?: { width: number; height: number };
 }) {
   const [playing, setPlaying] = useState(false);
   const [ready, setReady] = useState(false);
@@ -89,11 +97,14 @@ export default function Tile({
       onMouseEnter={enter}
       onMouseLeave={stop}
       className="text-left"
+      style={aspect ? { width: aspect.width } : undefined}
     >
       <div
         className="rounded overflow-hidden bg-[#0F1314] relative"
         style={{
-          aspectRatio: "1/1",
+          ...(aspect
+            ? { height: aspect.height }
+            : { aspectRatio: style === "card" ? "1/1" : "4/3" }),
           boxShadow: picked
             ? "0 0 0 2px #49B8B4"
             : focused
@@ -106,7 +117,7 @@ export default function Tile({
             src={url}
             loading="lazy"
             decoding="async"
-            className="w-full h-full object-cover"
+            className={`w-full h-full ${objectFit(scaling)}`}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-[#3A4547] text-[10px]">
@@ -118,7 +129,7 @@ export default function Tile({
           <video
             ref={video}
             src={`video://localhost/${file.id}`}
-            className="absolute inset-0 w-full h-full object-cover pointer-events-none transition-opacity duration-150"
+            className={`absolute inset-0 w-full h-full ${objectFit(scaling)} pointer-events-none transition-opacity duration-150`}
             style={{ opacity: ready ? 1 : 0 }}
             muted
             autoPlay
@@ -169,9 +180,11 @@ export default function Tile({
           </div>
         )}
       </div>
-      <div className="text-[10.5px] text-[#6D7B7E] mt-1 truncate tabular-nums">
-        {label}
-      </div>
+      {style === "card" && (
+        <div className="text-[10.5px] text-[#6D7B7E] mt-1 truncate tabular-nums">
+          {label}
+        </div>
+      )}
     </button>
   );
 }

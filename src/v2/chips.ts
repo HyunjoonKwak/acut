@@ -69,6 +69,7 @@ export function chips(
       p.min_rating === 0 ? "평점 없음" : `★${p.min_rating} 이상`,
     );
   if (p.favorite_only) add("favorite_only", "♥ 즐겨찾기");
+  if (p.no_thumb) add("no_thumb", "썸네일 없음");
 
   return out;
 }

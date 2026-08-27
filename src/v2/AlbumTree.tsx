@@ -4,6 +4,7 @@ import { useData } from "./dataStore";
 import { visible } from "./folderTree";
 import { usePref } from "./prefs";
 import { useUi } from "./uiStore";
+import { useJob } from "./jobStore";
 import { useView } from "./viewStore";
 import type { Library } from "./types";
 
@@ -32,6 +33,7 @@ export default function AlbumTree({
   const setViewTrash = useView((s) => s.setViewTrash);
   const [libId, setLibId] = usePref("libId");
   const menuFor = useUi((s) => s.menuFor);
+  const busy = useJob((s) => s.job !== null);
   const setUi = useUi((s) => s.set);
   const openImport = () => setUi({ importing: true });
 
@@ -114,8 +116,10 @@ export default function AlbumTree({
                 <div className="absolute right-1 hidden group-hover:flex bg-raised rounded">
                   <button
                     onClick={() => rescan([lib.id])}
-                    disabled={!lib.online}
-                    title="이 라이브러리 다시 스캔"
+                    disabled={!lib.online || busy}
+                    title={
+                      busy ? "스캔이 도는 중입니다" : "이 라이브러리 다시 스캔"
+                    }
                     className="px-1.5 text-fg-mute hover:text-accent disabled:opacity-30"
                   >
                     ⟳

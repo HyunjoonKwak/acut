@@ -22,6 +22,7 @@ test("저장한 조건이 하나도 안 빠지고 돌아온다", () => {
     lens: "FE 24-70",
     tag_id: 7,
     place: "37.5,126.9",
+    no_thumb: true,
   };
   // 조건이 늘어나면 이 시험도 같이 늘어나야 한다
   assert.deepEqual(

@@ -42,11 +42,15 @@ export function useScanEvents(cb: {
       "scan-progress",
       (p) => {
         data().setScanMsg("");
-        job().progress({
-          label: "스캔",
-          done: p.inserted + p.skipped,
-          total: p.found,
-        });
+        // 아직 한 장도 처리 전이면 폴더를 훑는 중이다 — 찾은 수만 올라간다
+        if (p.inserted + p.skipped === 0)
+          job().progress({ label: "폴더 훑는 중", done: p.found, total: 0 });
+        else
+          job().progress({
+            label: "스캔",
+            done: p.inserted + p.skipped,
+            total: p.found,
+          });
       },
     );
     on("scan-done", () => {
@@ -131,6 +135,8 @@ export function useScanEvents(cb: {
       await invoke("scan_start", { libraryId: targets[0] });
       setScanMsg("스캔 시작…");
     } catch (e) {
+      // «이미 스캔 중입니다» 같은 것 — 메뉴 안에 숨기면 눌러도 반응이 없어 보인다
+      toast(String(e), "drop");
       setScanMsg(String(e));
     }
   }, []);
@@ -162,7 +168,9 @@ export function useScanEvents(cb: {
       queue.current = [];
       await invoke("scan_start", { libraryId: l.id });
       setScanMsg("스캔 시작…");
+      toast(`「${l.name}」 등록 — 스캔을 시작합니다`, "ok");
     } catch (e) {
+      toast(String(e), "drop");
       setScanMsg(String(e));
     }
   }, []);

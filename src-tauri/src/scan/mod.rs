@@ -100,7 +100,16 @@ pub fn scan_folder(
         )
     })?;
 
-    let found = walk(root, &vol.mount_path);
+    // 폴더를 훑는 동안에도 알린다. 8만 장을 다 세고 나서야 첫 알림을 보내면
+    // 그때까지 화면이 «아무 반응 없음»이다 — exFAT USB면 수십 초다.
+    on_progress(&Progress::default());
+    let mut last_found = std::time::Instant::now();
+    let found = walk(root, &vol.mount_path, |n| {
+        if last_found.elapsed() >= std::time::Duration::from_millis(200) {
+            last_found = std::time::Instant::now();
+            on_progress(&Progress { found: n, ..Default::default() });
+        }
+    });
     let progress = Arc::new(std::sync::Mutex::new(Progress {
         found: found.len(),
         ..Default::default()
@@ -355,7 +364,8 @@ fn load_known(
 }
 
 /// 폴더를 재귀로 훑는다. 심볼릭 링크는 따라가지 않는다(순환 방지).
-fn walk(root: &Path, mount: &Path) -> Vec<Found> {
+/// 폴더를 훑는다. `on_found`는 찾은 수가 늘 때마다 (호출자가 솎아 쓴다).
+fn walk(root: &Path, mount: &Path, mut on_found: impl FnMut(usize)) -> Vec<Found> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -395,6 +405,7 @@ fn walk(root: &Path, mount: &Path) -> Vec<Found> {
                 },
                 full_path: path,
             });
+            on_found(out.len());
         }
     }
     out

@@ -10,35 +10,29 @@ import {
   IconTile,
 } from "./icons";
 import type { GridStyle, Scaling } from "./gridStyle";
+import { next } from "./cycle";
 
 /**
- * 보기 방식 — 툴바의 아이콘 묶음.
+ * 보기 방식 — 툴바의 버튼 넷.
  *
- * 드롭다운 하나에 넣어 뒀더니 지금 어느 보기인지 열어 봐야 알 수 있었다.
- * 자주 오가는 설정은 열지 않고 보이고, 한 번에 눌려야 한다. 묶음 안에서
- * 켜진 것이 하나 도드라진다 — 라디오 버튼과 같은 뜻이다.
- *
- * 이름표는 커서가 왔을 때만 뜬다. 레일과 같은 방식이다.
+ * 격자 모양과 담는 방식은 **누를 때마다 다음 것으로** 바뀐다. 셋을 나란히
+ * 늘어놓으니 툴바가 아이콘 여덟 개가 되어 읽히지 않았다. 버튼에 지금 상태의
+ * 그림과 이름을 함께 써서 무엇인지 열어 보지 않아도 안다.
+ * 이름·크기와 필름스트립은 켜고 끄는 것이라 그대로.
  */
 
-const STYLE_ITEMS: {
-  v: GridStyle;
-  label: string;
-  Icon: (p: { className?: string }) => React.ReactElement;
-}[] = [
-  { v: "card", label: "카드 보기", Icon: IconCard },
-  { v: "tile", label: "타일 보기", Icon: IconTile },
+type IconOf = (p: { className?: string }) => React.ReactElement;
+
+const STYLES: { v: GridStyle; label: string; Icon: IconOf }[] = [
+  { v: "card", label: "카드", Icon: IconCard },
+  { v: "tile", label: "타일", Icon: IconTile },
   { v: "justified", label: "양쪽 맞춤", Icon: IconJustified },
 ];
 
-const SCALING_ITEMS: {
-  v: Scaling;
-  label: string;
-  Icon: (p: { className?: string }) => React.ReactElement;
-}[] = [
-  { v: "cover", label: "채우기 — 넘치는 부분은 자릅니다", Icon: IconFill },
-  { v: "contain", label: "사진 전체 — 비를 지킵니다", Icon: IconContain },
-  { v: "fill", label: "늘리기 — 비를 무시합니다", Icon: IconStretch },
+const SCALINGS: { v: Scaling; label: string; Icon: IconOf }[] = [
+  { v: "cover", label: "채우기", Icon: IconFill },
+  { v: "contain", label: "전체", Icon: IconContain },
+  { v: "fill", label: "늘리기", Icon: IconStretch },
 ];
 
 function Tip({ children }: { children: React.ReactNode }) {
@@ -53,7 +47,46 @@ function Tip({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Icon({
+/** 돌아가며 바뀌는 버튼 — 지금 것의 그림과 이름을 쓴다 */
+function Cycle<T extends { v: string; label: string; Icon: IconOf }>({
+  items,
+  value,
+  onChange,
+  what,
+}: {
+  items: T[];
+  value: string;
+  onChange: (v: T["v"]) => void;
+  /** 이름표 앞에 붙는 말 — «보기 방식» */
+  what: string;
+}) {
+  const [hover, setHover] = useState(false);
+  const cur = items.find((x) => x.v === value) ?? items[0];
+  const nxt = next(items, value);
+  return (
+    <button
+      onClick={() => onChange(nxt.v)}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+      aria-label={`${what}: ${cur.label}`}
+      className="relative h-control pl-1.5 pr-2 rounded-md inline-flex items-center gap-1.5
+        bg-raised text-fg-dim hover:text-fg transition-colors"
+    >
+      <cur.Icon className="w-[17px] h-[17px]" />
+      <span className="text-[12px]">{cur.label}</span>
+      {hover && (
+        <Tip>
+          {what}: {cur.label} → 누르면 {nxt.label}
+        </Tip>
+      )}
+    </button>
+  );
+}
+
+/** 켜고 끄는 버튼 */
+function Toggle({
   label,
   on,
   onClick,
@@ -74,23 +107,16 @@ function Icon({
       onBlur={() => setHover(false)}
       aria-label={label}
       aria-pressed={on}
-      className={`relative h-control w-control rounded inline-flex items-center justify-center
-        transition-colors ${
-          on ? "bg-canvas text-accent shadow-sm" : "text-fg-mute hover:text-fg"
-        }`}
+      className={`relative h-control w-control rounded-md inline-flex items-center justify-center
+        transition-colors ${on ? "bg-canvas text-accent shadow-sm ring-1 ring-line" : "bg-raised text-fg-mute hover:text-fg"}`}
     >
       {children}
-      {hover && <Tip>{label}</Tip>}
+      {hover && (
+        <Tip>
+          {label} {on ? "끄기" : "켜기"}
+        </Tip>
+      )}
     </button>
-  );
-}
-
-/** 라디오처럼 묶인 한 벌 */
-function Group({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-raised">
-      {children}
-    </div>
   );
 }
 
@@ -114,52 +140,31 @@ export default function ViewBar({
   onFilmstrip: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <Group>
-        {STYLE_ITEMS.map(({ v, label, Icon: I }) => (
-          <Icon
-            key={v}
-            label={label}
-            on={style === v}
-            onClick={() => onStyle(v)}
-          >
-            <I className="w-[17px] h-[17px]" />
-          </Icon>
-        ))}
-      </Group>
-
+    <div className="flex items-center gap-1">
+      <Cycle items={STYLES} value={style} onChange={onStyle} what="보기" />
       {/* 양쪽 맞춤은 사진 비를 지키므로 담는 방식이 의미 없다 */}
       {style !== "justified" && (
-        <Group>
-          {SCALING_ITEMS.map(({ v, label, Icon: I }) => (
-            <Icon
-              key={v}
-              label={label}
-              on={scaling === v}
-              onClick={() => onScaling(v)}
-            >
-              <I className="w-[17px] h-[17px]" />
-            </Icon>
-          ))}
-        </Group>
+        <Cycle
+          items={SCALINGS}
+          value={scaling}
+          onChange={onScaling}
+          what="담기"
+        />
       )}
-
-      <Group>
-        <Icon
-          label="이름·크기 표시"
-          on={caption}
-          onClick={() => onCaption(!caption)}
-        >
-          <IconCaption className="w-[17px] h-[17px]" />
-        </Icon>
-        <Icon
-          label="필름스트립"
-          on={filmstrip}
-          onClick={() => onFilmstrip(!filmstrip)}
-        >
-          <IconFilmstrip className="w-[17px] h-[17px]" />
-        </Icon>
-      </Group>
+      <Toggle
+        label="이름·크기 표시"
+        on={caption}
+        onClick={() => onCaption(!caption)}
+      >
+        <IconCaption className="w-[17px] h-[17px]" />
+      </Toggle>
+      <Toggle
+        label="필름스트립"
+        on={filmstrip}
+        onClick={() => onFilmstrip(!filmstrip)}
+      >
+        <IconFilmstrip className="w-[17px] h-[17px]" />
+      </Toggle>
     </div>
   );
 }

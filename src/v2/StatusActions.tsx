@@ -80,10 +80,14 @@ export default function StatusActions({
           ↩ 되돌리기 <Kbd>⌘Z</Kbd>
         </button>
       )}
-      {stats && stats.thumbs_pending > 0 && (
-        <span className="text-keep">
-          썸네일 대기 {stats.thumbs_pending.toLocaleString()}
-        </span>
+      {stats && stats.thumbs_pending > 0 && !hasJob && (
+        <button
+          onClick={() => useView.getState().patchPicks({ no_thumb: true })}
+          title="썸네일을 못 만들었거나 아직 안 만든 사진입니다. 누르면 그것만 봅니다. 다시 스캔하면 다시 만들어 봅니다."
+          className="text-fg-mute hover:text-fg"
+        >
+          썸네일 없음 {stats.thumbs_pending.toLocaleString()}장
+        </button>
       )}
     </>
   );

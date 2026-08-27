@@ -148,6 +148,10 @@ pub struct Filter {
     pub tag_id: Option<i64>,
     /// 위치 — 좌표 격자 한 칸 (`37.5,127.0`). 빈 문자열이면 "위치 없음".
     pub place: Option<String>,
+    /// 썸네일이 없는 것만 — 못 만들었거나 아직 안 만든 것. 상태바 «썸네일 없음
+    /// N장»을 누르면 걸린다. 무엇이 안 되는지 눈으로 봐야 한다.
+    #[serde(default)]
+    pub no_thumb: bool,
 }
 
 /// 그리드에 머리글을 넣어 묶는 기준. Lap의 GROUP과 같다.
@@ -294,6 +298,9 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     }
     if f.favorite_only {
         w.push("fi.favorite = 1".into());
+    }
+    if f.no_thumb {
+        w.push("NOT EXISTS (SELECT 1 FROM thumbs t WHERE t.file_id = fi.id AND t.state = 1)".into());
     }
     if let Some(q) = f.name_like.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         w.push("fi.name LIKE ? ESCAPE '\\'".into());
@@ -1299,6 +1306,27 @@ mod tests {
             .0;
             assert_eq!(n, f.count, "{} 되돌리기", f.label);
         }
+    }
+
+    /// 상태바의 «썸네일 없음 N장»과 그걸 눌렀을 때 뜨는 장수가 같아야 한다
+    #[test]
+    fn no_thumb_filter_matches_the_pending_count() {
+        let (_d, db) = seeded();
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state)
+                 SELECT id,'x',1,1,1 FROM files WHERE id <= 40",
+                [],
+            )?;
+            // 하나는 실패한 것
+            c.execute(
+                "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state) VALUES(41,NULL,1,1,2)",
+                [],
+            )
+        })
+        .unwrap();
+        let n = summary(&db, &Filter { no_thumb: true, ..Default::default() }).unwrap().0;
+        assert_eq!(n, 10, "40장은 됐고 41은 실패, 42~50은 아직 — 열 장");
     }
 
     #[test]

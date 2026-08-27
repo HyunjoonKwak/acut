@@ -16,7 +16,7 @@ import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
 import GroupMenu, { type GroupBy } from "./GroupMenu";
 import { layout, headerLabel, HEADER_H } from "./gridLayout";
 import { CAPTION_H } from "./gridStyle";
-import ViewMenu from "./ViewMenu";
+import ViewBar from "./ViewBar";
 import ContextMenu, {
   type MenuAt,
   type MenuItem as CtxItem,
@@ -1177,7 +1177,7 @@ export default function App() {
           왼쪽은 "지금 어디를 보고 있나", 오른쪽은 "어떻게 볼까".
           진행 상황과 판정 처리는 아래 상태바로 내렸다 — 위에 줄이 셋이나
           쌓여 사진이 밀려나 있었다. */}
-      <div className="h-12 shrink-0 flex items-center gap-2 px-3 bg-chrome border-b border-line">
+      <div className="h-12 shrink-0 flex items-center gap-2 px-3 overflow-hidden bg-chrome border-b border-line">
         <Breadcrumb
           libs={libs}
           libId={libId}
@@ -1191,11 +1191,13 @@ export default function App() {
         <div className="flex-1" />
 
         {libs.length > 0 && (
-          <>
+          // 창이 좁아져도 조작부는 줄어들지 않는다 — 먼저 줄어들 것은
+          // 왼쪽의 빵부스러기와 조건 칩이다
+          <div className="flex items-center gap-2 shrink-0">
             <FilterButton value={picks} onChange={setPicks} />
             <SortMenu value={sort} onChange={setSort} />
             <GroupMenu value={group} onChange={setGroup} />
-            <ViewMenu
+            <ViewBar
               style={gridStyle}
               scaling={scaling}
               onStyle={setGridStyle}
@@ -1218,7 +1220,7 @@ export default function App() {
             <Btn tone="keep" onClick={() => setCulling(true)}>
               고르기
             </Btn>
-          </>
+          </div>
         )}
         <Menu
           align="right"

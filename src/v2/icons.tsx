@@ -100,6 +100,93 @@ export const IconTrash = (p: P) => (
   </S>
 );
 
+// ── 보기 방식 ────────────────────────────────────────────────────────
+// 그림이 곧 격자 모양이다. 「카드」라는 낱말보다 네모 밑의 글줄 두 개가
+// 무엇이 달라지는지 빨리 말해 준다.
+
+/** 카드 보기 — 사진 아래에 이름이 붙는 네모 칸 */
+export const IconCard = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="3.5" width="7.6" height="7.6" rx="1.4" />
+    <rect x="12.9" y="3.5" width="7.6" height="7.6" rx="1.4" />
+    <rect x="3.5" y="12.9" width="7.6" height="7.6" rx="1.4" />
+    <rect x="12.9" y="12.9" width="7.6" height="7.6" rx="1.4" />
+  </S>
+);
+
+/** 타일 보기 — 빈틈없는 격자 */
+export const IconTile = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="3.5" width="5.6" height="5.6" rx="1" />
+    <rect x="9.2" y="3.5" width="5.6" height="5.6" rx="1" />
+    <rect x="14.9" y="3.5" width="5.6" height="5.6" rx="1" />
+    <rect x="3.5" y="9.2" width="5.6" height="5.6" rx="1" />
+    <rect x="9.2" y="9.2" width="5.6" height="5.6" rx="1" />
+    <rect x="14.9" y="9.2" width="5.6" height="5.6" rx="1" />
+    <rect x="3.5" y="14.9" width="5.6" height="5.6" rx="1" />
+    <rect x="9.2" y="14.9" width="5.6" height="5.6" rx="1" />
+    <rect x="14.9" y="14.9" width="5.6" height="5.6" rx="1" />
+  </S>
+);
+
+/** 양쪽 맞춤 — 줄마다 폭이 다르고 오른쪽 끝이 맞는다 */
+export const IconJustified = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="5" width="10.5" height="6" rx="1.2" />
+    <rect x="15.5" y="5" width="5" height="6" rx="1.2" />
+    <rect x="3.5" y="13" width="5" height="6" rx="1.2" />
+    <rect x="10" y="13" width="10.5" height="6" rx="1.2" />
+  </S>
+);
+
+/** 이름·크기 표시 — 그림 밑의 글줄 */
+export const IconCaption = (p: P) => (
+  <S {...p}>
+    <path d="M3.5 6h17M3.5 11h17M3.5 16h11M3.5 21h7" />
+  </S>
+);
+
+/** 필름스트림 — 아래에 깔리는 띠 */
+export const IconFilmstrip = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="3.5" width="17" height="10" rx="1.4" />
+    <rect x="3.5" y="16.5" width="4.6" height="4" rx="0.8" />
+    <rect x="9.7" y="16.5" width="4.6" height="4" rx="0.8" />
+    <rect x="15.9" y="16.5" width="4.6" height="4" rx="0.8" />
+  </S>
+);
+
+// ── 사진을 칸에 담는 방식 ────────────────────────────────────────────
+
+/**
+ * 채우기 — 사진이 칸보다 커서 위아래가 잘린다.
+ *
+ * 화살표로는 「늘리기」와 헷갈렸다. 테두리를 뚫고 나가는 네모가 «잘린다»는
+ * 말을 그대로 한다.
+ */
+export const IconFill = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="6" width="17" height="12" rx="1.4" />
+    <rect x="8" y="2.5" width="8" height="19" rx="1.2" opacity="0.55" />
+  </S>
+);
+
+/** 사진 전체 — 비를 지켜 안에 다 들어오고 둘레가 남는다 */
+export const IconContain = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="6" width="17" height="12" rx="1.4" />
+    <rect x="6.5" y="8.5" width="11" height="7" rx="1" opacity="0.55" />
+  </S>
+);
+
+/** 늘리기 — 비를 무시하고 칸에 맞춘다 */
+export const IconStretch = (p: P) => (
+  <S {...p}>
+    <rect x="3.5" y="6" width="17" height="12" rx="1.4" />
+    <path d="M7 12h10M7 12l2.5-2.5M7 12l2.5 2.5M17 12l-2.5-2.5M17 12l-2.5 2.5" />
+  </S>
+);
+
 /** 설정 — 톱니 */
 export const IconSettings = (p: P) => (
   <S {...p}>

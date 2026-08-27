@@ -6,7 +6,8 @@ export type MenuItem =
       label: string;
       hint?: string;
       danger?: boolean;
-      run: () => void;
+      /** 물음 상자를 띄우는 항목이 있어 기다릴 수 있어야 한다 */
+      run: () => void | Promise<void>;
     }
   | { kind: "sep" };
 

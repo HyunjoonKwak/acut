@@ -25,6 +25,7 @@ export function Btn({
   title,
   disabled,
   active,
+  autoFocus,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -35,12 +36,15 @@ export function Btn({
   disabled?: boolean;
   /** 켜져 있는 상태 (보기 방식처럼 토글되는 것) */
   active?: boolean;
+  /** 뜨자마자 손이 가야 하는 버튼 (물음 상자의 확인) */
+  autoFocus?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title}
+      autoFocus={autoFocus}
       className={`h-control px-2.5 rounded-md text-[12.5px] whitespace-nowrap
         inline-flex items-center gap-1.5 transition-colors
         disabled:opacity-35 disabled:pointer-events-none

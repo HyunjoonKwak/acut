@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Btn } from "./ui";
+import { useConfirm } from "./confirmContext";
 
 export type Tag = {
   id: number;
@@ -27,6 +28,7 @@ export default function TagPanel({
   pickedIds: number[];
   onChanged: () => void;
 }) {
+  const ask = useConfirm();
   const [tags, setTags] = useState<Tag[]>([]);
   const [adding, setAdding] = useState("");
 
@@ -98,12 +100,16 @@ export default function TagPanel({
               </span>
               <button
                 onClick={async () => {
-                  if (
-                    !window.confirm(
-                      `태그 「${t.name}」을 지웁니다.\n사진은 지워지지 않습니다.`,
-                    )
-                  )
-                    return;
+                  const ok = await ask({
+                    title: `태그 「${t.name}」을 지웁니다`,
+                    lines: [
+                      `· ${t.count.toLocaleString()}장에서 이 태그가 떨어집니다`,
+                      "· 사진은 지워지지 않습니다",
+                    ],
+                    confirmLabel: "태그 지우기",
+                    danger: true,
+                  });
+                  if (!ok) return;
                   await invoke("tag_delete", { tagId: t.id });
                   if (selected === t.id) onPick(null);
                   reload();

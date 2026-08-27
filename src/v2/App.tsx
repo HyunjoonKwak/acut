@@ -25,6 +25,8 @@ import SmartPanel from "./SmartPanel";
 import SearchPanel from "./SearchPanel";
 import SettingsPanel from "./SettingsPanel";
 import Breadcrumb from "./Breadcrumb";
+import FilterChips from "./FilterChips";
+import { useConfirm } from "./confirmContext";
 import StatusBar from "./StatusBar";
 import {
   Btn,
@@ -184,6 +186,8 @@ export default function App() {
     done: number;
     total: number;
   } | null>(null);
+  /// 되돌릴 수 없는 일을 하기 전에 묻는다
+  const ask = useConfirm();
   const [thumbSize, setThumbSize] = useState(180);
   /// 사진 아래에 이름·날짜·크기를 적을지. 줄 높이가 달라지므로 rowH가 안다.
   const [caption, setCaption] = useState(true);
@@ -581,12 +585,16 @@ export default function App() {
   /// 원본 사진은 그대로지만 스캔은 처음부터 다시 해야 한다. 실제로 ⟳ 바로 옆에
   /// 붙어 있다가 잘못 눌려 6만 장짜리 라이브러리가 통째로 날아간 적이 있다.
   const dropLibrary = async (l: Library) => {
-    const ok = window.confirm(
-      `「${l.name}」 등록을 지웁니다.\n\n` +
-        `사진 ${l.file_count.toLocaleString()}장의 기록과 판정·평점이 사라지고, ` +
-        `다시 등록하면 처음부터 스캔해야 합니다.\n` +
-        `원본 사진과 썸네일 파일은 지워지지 않습니다.`,
-    );
+    const ok = await ask({
+      title: `「${l.name}」 등록을 지웁니다`,
+      lines: [
+        `· 사진 ${l.file_count.toLocaleString()}장의 기록과 판정·평점이 사라집니다`,
+        "· 다시 등록하면 처음부터 스캔해야 합니다",
+        "· 원본 사진과 썸네일 파일은 지워지지 않습니다",
+      ],
+      confirmLabel: "등록 지우기",
+      danger: true,
+    });
     if (!ok) return;
     await invoke("library_remove", { id: l.id });
     if (libId === l.id) setLibId(null);
@@ -851,30 +859,34 @@ export default function App() {
 
   /// 제외로 판정한 것을 휴지통으로. 파일은 라이브러리 안 `.acut/휴지통`으로
   /// 옮겨질 뿐이라 되돌릴 수 있다.
-  const cleanExcluded = useCallback(() => {
+  const cleanExcluded = useCallback(async () => {
     if (!toClean || toClean.files === 0) return;
-    if (
-      !window.confirm(
-        `제외로 판정한 ${toClean.files.toLocaleString()}장(${fmtBytes(toClean.bytes)})을 ` +
-          `휴지통으로 옮깁니다.\n\n파일은 라이브러리 안 .acut/휴지통 으로 이동하며 ` +
-          `언제든 되돌릴 수 있습니다.`,
-      )
-    )
-      return;
+    const ok = await ask({
+      title: `제외한 ${toClean.files.toLocaleString()}장을 치웁니다`,
+      lines: [
+        `· ${fmtBytes(toClean.bytes)}가 라이브러리 안 .acut/휴지통 으로 옮겨집니다`,
+        "· 언제든 되돌릴 수 있습니다",
+      ],
+      confirmLabel: "치우기",
+    });
+    if (!ok) return;
     runTrashOp("trash_apply", { libraryId: libId }, "치우는 중…");
-  }, [toClean, libId, runTrashOp]);
+  }, [toClean, libId, runTrashOp, ask]);
 
-  const emptyTrash = useCallback(() => {
+  const emptyTrash = useCallback(async () => {
     if (!trash || trash.files === 0) return;
-    if (
-      !window.confirm(
-        `휴지통의 ${trash.files.toLocaleString()}장(${fmtBytes(trash.bytes)})을 ` +
-          `영구히 지웁니다.\n\n되돌릴 수 없습니다.`,
-      )
-    )
-      return;
+    const ok = await ask({
+      title: `휴지통의 ${trash.files.toLocaleString()}장을 영구히 지웁니다`,
+      lines: [
+        `· ${fmtBytes(trash.bytes)}가 디스크에서 사라집니다`,
+        "· 되돌릴 수 없습니다",
+      ],
+      confirmLabel: "영구히 지우기",
+      danger: true,
+    });
+    if (!ok) return;
     runTrashOp("trash_empty", { libraryId: libId, ids: [] }, "지우는 중…");
-  }, [trash, libId, runTrashOp]);
+  }, [trash, libId, runTrashOp, ask]);
 
   /// 고른 것 전부에 같은 판정을 준다.
   const markPicked = useCallback(
@@ -953,13 +965,13 @@ export default function App() {
         kind: "item",
         label: `휴지통으로 보내기${many}`,
         danger: true,
-        run: () => {
-          if (
-            !window.confirm(
-              `${n.toLocaleString()}장을 휴지통으로 옮깁니다.\n되돌릴 수 있습니다.`,
-            )
-          )
-            return;
+        run: async () => {
+          const ok = await ask({
+            title: `${n.toLocaleString()}장을 휴지통으로 옮깁니다`,
+            lines: ["· 되돌릴 수 있습니다"],
+            confirmLabel: "옮기기",
+          });
+          if (!ok) return;
           runTrashOp("trash_files", { ids: ctxIds }, "치우는 중…");
         },
       },
@@ -975,6 +987,17 @@ export default function App() {
       },
     ];
   }, [ctxIds, rows, markOne, runTrashOp]);
+
+  /// 태그 id → 이름. 툴바의 조건 칩이 「3번 태그」가 아니라 「가족」이라고
+  /// 쓰려면 필요하다. 태그는 몇십 개라 통째로 들고 있어도 된다.
+  const [tags, setTags] = useState<Map<number, string>>(new Map());
+  const refreshTags = useCallback(() => {
+    invoke<{ id: number; name: string }[]>("tags_list")
+      .then((t) => setTags(new Map(t.map((x) => [x.id, x.name]))))
+      .catch(() => setTags(new Map()));
+  }, []);
+  useEffect(refreshTags, [refreshTags]);
+  const tagName = useCallback((id: number) => tags.get(id), [tags]);
 
   /// 목록이 바뀌면 첫 장에 초점을 둔다.
   ///
@@ -1092,6 +1115,8 @@ export default function App() {
           viewTrash={viewTrash}
           matched={matched}
         />
+
+        <FilterChips value={picks} onChange={setPicks} tagName={tagName} />
 
         <div className="flex-1" />
 
@@ -1390,7 +1415,10 @@ export default function App() {
                 selected={picks.tag_id}
                 onPick={(v) => setPicks({ ...picks, tag_id: v })}
                 pickedIds={[...picked]}
-                onChanged={loadFirst}
+                onChanged={() => {
+                  loadFirst();
+                  refreshTags();
+                }}
               />
             )}
             {source === "smart" && (
@@ -1677,13 +1705,13 @@ export default function App() {
             정리
           </button>
           <button
-            onClick={() => {
-              if (
-                !window.confirm(
-                  `${picked.size.toLocaleString()}장을 휴지통으로 옮깁니다.\n되돌릴 수 있습니다.`,
-                )
-              )
-                return;
+            onClick={async () => {
+              const ok = await ask({
+                title: `${picked.size.toLocaleString()}장을 휴지통으로 옮깁니다`,
+                lines: ["· 되돌릴 수 있습니다"],
+                confirmLabel: "옮기기",
+              });
+              if (!ok) return;
               runTrashOp("trash_files", { ids: [...picked] }, "치우는 중…");
               setPicked(new Set());
             }}

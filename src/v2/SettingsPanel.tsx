@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { Btn } from "./ui";
 import { fmtBytes } from "./format";
+import { useConfirm } from "./confirmContext";
 
 function Head({ children }: { children: React.ReactNode }) {
   return (
@@ -26,6 +27,7 @@ export default function SettingsPanel({
   thumbBytes: number | null;
   onRefresh: () => void;
 }) {
+  const ask = useConfirm();
   const [ver, setVer] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -47,12 +49,16 @@ export default function SettingsPanel({
           tone="drop"
           disabled={busy}
           onClick={async () => {
-            if (
-              !window.confirm(
-                "썸네일을 모두 지웁니다.\n사진은 그대로이고, 다음에 볼 때 다시 만들어집니다.",
-              )
-            )
-              return;
+            const ok = await ask({
+              title: "썸네일을 모두 지웁니다",
+              lines: [
+                "· 사진은 그대로입니다",
+                "· 다음에 볼 때 다시 만들어집니다 — 12만 장이면 한참 걸립니다",
+              ],
+              confirmLabel: "비우기",
+              danger: true,
+            });
+            if (!ok) return;
             setBusy(true);
             try {
               await invoke("cache_clear");

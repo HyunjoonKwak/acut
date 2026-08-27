@@ -38,6 +38,7 @@ export default function Tile({
   focused,
   onClick,
   onDoubleClick,
+  onContextMenu,
   label,
   style = "card",
   scaling = "cover",
@@ -50,6 +51,7 @@ export default function Tile({
   focused: boolean;
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   label: string;
   style?: GridStyle;
   scaling?: Scaling;
@@ -94,6 +96,7 @@ export default function Tile({
     <button
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       onMouseEnter={enter}
       onMouseLeave={stop}
       className="text-left"

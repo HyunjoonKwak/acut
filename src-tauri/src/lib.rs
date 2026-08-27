@@ -114,6 +114,7 @@ pub fn run() {
             api::files_cursor_at,
             api::files_mark,
             api::file_detail,
+            api::reveal_in_finder,
             api::folders_list,
             api::cull::cull_scan,
             api::cull::cull_groups,

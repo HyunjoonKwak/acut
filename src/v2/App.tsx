@@ -12,6 +12,7 @@ import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
 import GroupMenu, { type GroupBy } from "./GroupMenu";
 import { layout, headerLabel, HEADER_H } from "./gridLayout";
 import ViewMenu from "./ViewMenu";
+import ContextMenu, { type MenuAt, type MenuItem } from "./ContextMenu";
 import {
   justify,
   ratio,
@@ -166,6 +167,9 @@ export default function App() {
   const [organizing, setOrganizing] = useState(false);
   /// 「⋯」를 연 라이브러리. 지우기는 이 안에 숨겨 둔다.
   const [menuFor, setMenuFor] = useState<number | null>(null);
+  /// 우클릭 메뉴가 뜬 자리와 그때 잡힌 사진들
+  const [ctxAt, setCtxAt] = useState<MenuAt>(null);
+  const [ctxIds, setCtxIds] = useState<number[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [culling, setCulling] = useState(false);
   /// 뷰어에 띄운 사진의 rows 안 위치. null이면 뷰어가 닫힌 상태
@@ -722,6 +726,11 @@ export default function App() {
         setPicked(new Set(rows.map((r) => r.id)));
         return;
       }
+      if (e.key === "Escape" && picked.size > 0) {
+        e.preventDefault();
+        setPicked(new Set());
+        return;
+      }
       switch (e.key) {
         case " ":
         case "Enter":
@@ -749,7 +758,17 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [viewerAt, culling, organizing, selected, rows, cols, markOne, undoLast]);
+  }, [
+    viewerAt,
+    culling,
+    organizing,
+    selected,
+    rows,
+    cols,
+    picked.size,
+    markOne,
+    undoLast,
+  ]);
 
   /// 되돌릴 수 없는 일은 여기서 확인 문구를 만들고, 프론트가 물어본 뒤에만 부른다.
   const runTrashOp = useCallback(
@@ -802,6 +821,106 @@ export default function App() {
     runTrashOp("trash_empty", { libraryId: libId, ids: [] }, "지우는 중…");
   }, [trash, libId, runTrashOp]);
 
+  /// 고른 것 전부에 같은 판정을 준다.
+  const markPicked = useCallback(
+    (patch: Parameters<typeof markOne>[1]) => {
+      picked.forEach((id) => markOne(id, patch));
+    },
+    [picked, markOne],
+  );
+
+  /// 타일 우클릭. 고른 것 밖을 우클릭하면 그것 하나만 대상으로 삼는다 —
+  /// 안 그러면 눈에 안 보이는 선택에 대고 일이 벌어진다.
+  const openContext = useCallback(
+    (id: number, e: React.MouseEvent) => {
+      e.preventDefault();
+      const target = picked.has(id) ? [...picked] : [id];
+      if (!picked.has(id)) {
+        setPicked(new Set([id]));
+        setSelected(id);
+      }
+      setCtxIds(target);
+      setCtxAt({ x: e.clientX, y: e.clientY });
+    },
+    [picked],
+  );
+
+  const ctxItems: MenuItem[] = useMemo(() => {
+    const n = ctxIds.length;
+    const many = n > 1 ? ` ${n.toLocaleString()}장` : "";
+    const mark = (patch: Parameters<typeof markOne>[1]) => () =>
+      ctxIds.forEach((id) => markOne(id, patch));
+    return [
+      {
+        kind: "item",
+        label: "크게 보기",
+        hint: "Space",
+        run: () => {
+          const i = rows.findIndex((r) => r.id === ctxIds[0]);
+          if (i >= 0) setViewerAt(i);
+        },
+      },
+      { kind: "sep" },
+      {
+        kind: "item",
+        label: `남김으로${many}`,
+        hint: "P",
+        run: mark({ cullingFlag: 1 }),
+      },
+      {
+        kind: "item",
+        label: `제외로${many}`,
+        hint: "X",
+        run: mark({ cullingFlag: 2 }),
+      },
+      {
+        kind: "item",
+        label: "판정 지우기",
+        hint: "0",
+        run: mark({ cullingFlag: 0 }),
+      },
+      {
+        kind: "item",
+        label: "즐겨찾기",
+        hint: "F",
+        run: mark({ favorite: true }),
+      },
+      { kind: "sep" },
+      {
+        kind: "item",
+        label: `정리하기${many}`,
+        run: () => {
+          setPicked(new Set(ctxIds));
+          setOrganizing(true);
+        },
+      },
+      {
+        kind: "item",
+        label: `휴지통으로 보내기${many}`,
+        danger: true,
+        run: () => {
+          if (
+            !window.confirm(
+              `${n.toLocaleString()}장을 휴지통으로 옮깁니다.\n되돌릴 수 있습니다.`,
+            )
+          )
+            return;
+          runTrashOp("trash_files", { ids: ctxIds }, "치우는 중…");
+        },
+      },
+      { kind: "sep" },
+      {
+        kind: "item",
+        label: "Finder에서 보기",
+        run: () => {
+          invoke("reveal_in_finder", { id: ctxIds[0] }).catch((e) =>
+            setBusy(String(e)),
+          );
+        },
+      },
+    ];
+  }, [ctxIds, rows, markOne, runTrashOp]);
+
   /// 찾기 결과 개수 — 눈금 합이 곧 필터에 걸린 장수라 따로 세지 않는다
   const matched = useMemo(
     () => buckets.reduce((a, b) => a + b.count, 0),
@@ -847,31 +966,6 @@ export default function App() {
             >
               고르기
             </button>
-            {picked.size > 0 && (
-              <>
-                <span className="text-[#49B8B4] tabular-nums text-[12.5px]">
-                  {picked.size.toLocaleString()}장 선택
-                </span>
-                <button
-                  onClick={() => setOrganizing(true)}
-                  disabled={libId === null}
-                  title={
-                    libId === null
-                      ? "옮겨 넣을 라이브러리를 왼쪽에서 고르세요"
-                      : undefined
-                  }
-                  className="h-7 px-3 rounded-md bg-[#49B8B4] text-[#08191a] font-semibold disabled:opacity-40"
-                >
-                  정리
-                </button>
-                <button
-                  onClick={() => setPicked(new Set())}
-                  className="h-7 px-2 rounded-md text-[#8D9A9C]"
-                >
-                  선택 해제
-                </button>
-              </>
-            )}
           </>
         )}
         <div className="flex-1" />
@@ -1184,6 +1278,9 @@ export default function App() {
                                   pick(file.id, e)
                                 }
                                 onDoubleClick={() => setViewerAt(at)}
+                                onContextMenu={(e: React.MouseEvent) =>
+                                  openContext(file.id, e)
+                                }
                                 label={fmtDate(file.taken_at)}
                                 style="justified"
                                 scaling={scaling}
@@ -1216,6 +1313,9 @@ export default function App() {
                         focused={selected === r.id}
                         onClick={(e: React.MouseEvent) => pick(r.id, e)}
                         onDoubleClick={() => setViewerAt(row.start + ci)}
+                        onContextMenu={(e: React.MouseEvent) =>
+                          openContext(r.id, e)
+                        }
                         label={fmtDate(r.taken_at)}
                         style={gridStyle}
                         scaling={scaling}
@@ -1280,6 +1380,8 @@ export default function App() {
         </div>
       </div>
 
+      <ContextMenu at={ctxAt} items={ctxItems} onClose={() => setCtxAt(null)} />
+
       {culling && libs.length > 0 && (
         <Cull
           onClose={() => {
@@ -1287,6 +1389,79 @@ export default function App() {
             loadFirst();
           }}
         />
+      )}
+
+      {/* 선택 패널 — 무엇이 골라져 있고 무엇을 할 수 있는지 (Lap의 SelectionPanel) */}
+      {picked.size > 0 && !culling && (
+        <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-[#1F2729] border-t border-[#2E383A]">
+          <span className="text-[#49B8B4] font-semibold tabular-nums text-[13px]">
+            {picked.size.toLocaleString()}장 선택
+          </span>
+          <span className="text-[11.5px] text-[#6D7B7E]">
+            {fmtBytes(
+              rows
+                .filter((r) => picked.has(r.id))
+                .reduce((a, r) => a + r.size, 0),
+            )}
+          </span>
+          <Sep />
+          <PanelBtn onClick={() => markPicked({ cullingFlag: 1 })} hint="P">
+            남김
+          </PanelBtn>
+          <PanelBtn onClick={() => markPicked({ cullingFlag: 2 })} hint="X">
+            제외
+          </PanelBtn>
+          <PanelBtn onClick={() => markPicked({ favorite: true })} hint="F">
+            즐겨찾기
+          </PanelBtn>
+          <div className="flex items-center gap-0.5 px-1">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                onClick={() => markPicked({ rating: n })}
+                title={`별 ${n}개`}
+                className="w-5 h-6 text-[13px] text-[#3A4547] hover:text-[#F0B429]"
+              >
+                ★
+              </button>
+            ))}
+          </div>
+          <Sep />
+          <button
+            onClick={() => setOrganizing(true)}
+            disabled={libId === null}
+            title={
+              libId === null
+                ? "옮겨 넣을 라이브러리를 왼쪽에서 고르세요"
+                : undefined
+            }
+            className="h-7 px-3 rounded-md bg-[#49B8B4] text-[#08191a] font-semibold text-[12.5px] disabled:opacity-40"
+          >
+            정리
+          </button>
+          <button
+            onClick={() => {
+              if (
+                !window.confirm(
+                  `${picked.size.toLocaleString()}장을 휴지통으로 옮깁니다.\n되돌릴 수 있습니다.`,
+                )
+              )
+                return;
+              runTrashOp("trash_files", { ids: [...picked] }, "치우는 중…");
+              setPicked(new Set());
+            }}
+            className="h-7 px-3 rounded-md text-[#E2685C] ring-1 ring-[#4A3330] text-[12.5px]"
+          >
+            휴지통으로
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={() => setPicked(new Set())}
+            className="h-7 px-2 rounded-md text-[#8D9A9C] text-[12.5px]"
+          >
+            선택 해제 <span className="text-[10px] font-mono">Esc</span>
+          </button>
+        </div>
       )}
 
       {/* 상태바 */}
@@ -1350,4 +1525,33 @@ function Progress({
       {total > 0 && ` / ${total.toLocaleString()}`}
     </span>
   );
+}
+
+/// 선택 패널의 작은 버튼
+function PanelBtn({
+  children,
+  hint,
+  onClick,
+}: {
+  children: React.ReactNode;
+  hint?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="h-7 px-2.5 rounded-md text-[12.5px] text-[#A3B2B4] ring-1 ring-[#333C3F] hover:text-white"
+    >
+      {children}
+      {hint && (
+        <span className="ml-1 text-[10px] font-mono text-[#5F6C6E]">
+          {hint}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function Sep() {
+  return <span className="w-px h-5 bg-[#2E383A] mx-1" />;
 }

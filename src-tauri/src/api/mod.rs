@@ -440,6 +440,38 @@ pub fn cache_usage(
     Ok(CacheUsage { bytes, files })
 }
 
+/// Finder에서 그 파일을 골라 연다.
+///
+/// 우리가 못 하는 일(이름 바꾸기·다른 앱으로 열기)은 Finder에 맡기는 게 낫다.
+/// `open -R`은 파일을 **고른 상태로** 폴더를 연다.
+#[tauri::command]
+pub fn reveal_in_finder(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let (uuid, rel): (String, String) = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT fo.volume_uuid,
+                        fo.rel_path || CASE WHEN fo.rel_path = '' THEN '' ELSE '/' END || fi.name
+                 FROM files fi JOIN folders fo ON fo.id = fi.folder_id WHERE fi.id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+        })
+        .map_err(err)?;
+    let mount = crate::db::volumes::find_mount(&uuid)
+        .ok_or("디스크가 연결되어 있지 않습니다")?;
+    let path = mount.join(&rel);
+    if !path.exists() {
+        return Err(format!("파일이 없습니다: {}", path.display()));
+    }
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 파일 하나의 상세 (인스펙터용).
 #[tauri::command]
 pub fn file_detail(state: State<'_, AppState>, id: i64) -> Result<serde_json::Value, String> {

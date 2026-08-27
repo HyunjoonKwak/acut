@@ -21,7 +21,7 @@ const GAP = 6;
 export const STRIP_H = H + 22;
 
 /**
- * 아래쪽 필름스트립 — 지금 보는 곳 둘레의 사진들.
+ * 위쪽 필름스트립 — 지금 보는 곳 둘레의 사진들.
  *
  * 그리드를 크게 키워 놓으면 한 화면에 몇 장 안 들어와 앞뒤 맥락이 사라진다.
  * 스트립은 그 맥락을 좁고 길게 되돌려 준다. 초점이 옮겨 가면 따라 움직인다.
@@ -75,7 +75,7 @@ export default function Filmstrip<T extends StripFile>({
   return (
     <div
       ref={box}
-      className="shrink-0 overflow-x-auto overflow-y-hidden bg-chrome border-t border-line px-2 py-2"
+      className="shrink-0 overflow-x-auto overflow-y-hidden bg-chrome border-b border-line px-2 py-2"
       style={{ height: STRIP_H }}
     >
       <div

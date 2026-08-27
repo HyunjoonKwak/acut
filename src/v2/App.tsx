@@ -49,6 +49,7 @@ import FacetList from "./FacetList";
 import Calendar from "./Calendar";
 import { GAP, justify, metrics, ratio, type JustifiedRow } from "./gridStyle";
 import { useCountUp } from "./useCountUp";
+import { useJob } from "./jobStore";
 import FilterButton from "./FilterBar";
 import {
   EMPTY as EMPTY_PICKS,
@@ -181,11 +182,9 @@ export default function App() {
   const [busy, setBusy] = useState("");
   const [scanMsg, setScanMsg] = useState<string>("");
   /// 진행 중인 작업의 (한 일, 전체). 숫자는 화면에서 한 칸씩 따라 오른다.
-  const [job, setJob] = useState<{
-    label: string;
-    done: number;
-    total: number;
-  } | null>(null);
+  /// 도는 일이 있는가만 본다. 숫자 자체는 jobStore가 들고 Progress만 구독한다 —
+  /// 초당 20번 오는 알림에 App 전체가 다시 그려지지 않게.
+  const hasJob = useJob((s) => s.job !== null);
   /// 되돌릴 수 없는 일을 하기 전에 묻는다
   const ask = useConfirm();
   const [thumbSize, setThumbSize] = usePref("thumbSize");
@@ -422,23 +421,31 @@ export default function App() {
       (e) => {
         const p = e.payload;
         setScanMsg("");
-        setJob({ label: "스캔", done: p.inserted + p.skipped, total: p.found });
+        useJob.getState().progress({
+          label: "스캔",
+          done: p.inserted + p.skipped,
+          total: p.found,
+        });
       },
     ).then((f) => un.push(f));
     listen("scan-done", () => {
       setScanMsg("스캔 완료 — 썸네일 만드는 중");
-      setJob(null);
+      useJob.getState().clear();
       loadFirst();
       refreshMeta();
     }).then((f) => un.push(f));
     listen<{ done: number; total: number }>("thumb-progress", (e) => {
       setScanMsg("");
-      setJob({ label: "썸네일", done: e.payload.done, total: e.payload.total });
+      useJob.getState().progress({
+        label: "썸네일",
+        done: e.payload.done,
+        total: e.payload.total,
+      });
     }).then((f) => un.push(f));
     // 2차 — 작게 나온 것을 원본에서 다시 뽑는다. 그 사이에도 앱은 쓸 수 있다.
     listen<{ done: number; total: number }>("upgrade-progress", (e) => {
       setScanMsg("");
-      setJob({
+      useJob.getState().progress({
         label: "화질 올리는 중 — 그냥 쓰셔도 됩니다",
         done: e.payload.done,
         total: e.payload.total,
@@ -446,14 +453,14 @@ export default function App() {
     }).then((f) => un.push(f));
     listen("upgrade-done", () => {
       setScanMsg("");
-      setJob(null);
+      useJob.getState().clear();
       loadFirst();
       refreshMeta();
       refreshCache();
     }).then((f) => un.push(f));
     listen("thumb-done", () => {
       setScanMsg("썸네일 완료 — 화질을 올립니다");
-      setJob(null);
+      useJob.getState().clear();
       loadFirst();
       refreshMeta();
       refreshLibs();
@@ -583,7 +590,7 @@ export default function App() {
   const stopJob = useCallback(async () => {
     await invoke("scan_cancel");
     queue.current = [];
-    setJob(null);
+    useJob.getState().clear();
     setScanMsg("멈췄습니다 — 지금까지 한 것은 저장돼 있습니다");
     await Promise.all([refreshMeta(), refreshLibs()]);
   }, [refreshMeta, refreshLibs]);
@@ -1563,9 +1570,20 @@ export default function App() {
         )}
 
         {/* 콘텐츠 영역 — 뷰어는 이 안만 덮는다. 왼쪽 폴더 목록은 계속 보인다.
-            세로로 나눈다: 위는 그리드와 타임라인, 아래는 필름스트립.
+            세로로 나눈다: 위는 필름스트립, 아래는 그리드와 타임라인.
             겹쳐 놓으면 스트립이 사진 두 줄을 가린다. */}
         <div className="flex-1 flex flex-col min-w-0 relative">
+          {/* 필름스트립 — 지금 보는 곳 둘레의 사진들 */}
+          {filmstrip && (
+            <Filmstrip
+              files={rows}
+              thumbUrl={thumbUrl}
+              selectedId={selected}
+              onPick={pick}
+              onOpen={setViewerAt}
+              onNearEnd={loadMore}
+            />
+          )}
           <div className="flex-1 flex min-h-0 min-w-0 relative">
             {/* 그리드 */}
             <main
@@ -1696,18 +1714,6 @@ export default function App() {
               onSeek={seekTo}
             />
           </div>
-
-          {/* 필름스트립 — 지금 보는 곳 둘레의 사진들 */}
-          {filmstrip && (
-            <Filmstrip
-              files={rows}
-              thumbUrl={thumbUrl}
-              selectedId={selected}
-              onPick={pick}
-              onOpen={setViewerAt}
-              onNearEnd={loadMore}
-            />
-          )}
 
           {organizing && libId !== null && (
             <Organize
@@ -1875,9 +1881,9 @@ export default function App() {
         exif={focusExif}
       >
         {busy && <span className="text-keep">{busy}</span>}
-        {job && (
+        {hasJob && (
           <>
-            <Progress label={job.label} done={job.done} total={job.total} />
+            <Progress />
             <button
               onClick={stopJob}
               title="지금까지 한 것은 저장됩니다"
@@ -1887,7 +1893,7 @@ export default function App() {
             </button>
           </>
         )}
-        {!job && viewTrash && (
+        {!hasJob && viewTrash && (
           <>
             <button
               onClick={() =>
@@ -1909,7 +1915,7 @@ export default function App() {
             </button>
           </>
         )}
-        {!job && !viewTrash && (toClean?.files ?? 0) > 0 && (
+        {!hasJob && !viewTrash && (toClean?.files ?? 0) > 0 && (
           <button
             onClick={cleanExcluded}
             title={`제외 ${toClean?.files.toLocaleString()}장 · ${fmtBytes(toClean?.bytes ?? 0)} 확보`}
@@ -1937,21 +1943,15 @@ export default function App() {
   );
 }
 
-/// 진행 표시 — 숫자가 한 칸씩 올라간다.
-function Progress({
-  label,
-  done,
-  total,
-}: {
-  label: string;
-  done: number;
-  total: number;
-}) {
-  const n = useCountUp(done);
+/// 진행 표시 — 숫자가 한 칸씩 올라간다. 알림마다 이 칸만 다시 그린다.
+function Progress() {
+  const job = useJob((s) => s.job);
+  const n = useCountUp(job?.done ?? 0);
+  if (!job) return null;
   return (
-    <span className="text-keep tabular-nums">
-      {label} {n.toLocaleString()}
-      {total > 0 && ` / ${total.toLocaleString()}`}
+    <span className="text-keep tabular-nums whitespace-nowrap">
+      {job.label} {n.toLocaleString()}
+      {job.total > 0 && ` / ${job.total.toLocaleString()}`}
     </span>
   );
 }

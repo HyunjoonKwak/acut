@@ -125,19 +125,18 @@ pub fn generate(
     // 예전엔 "200장마다"였는데, 청크 저장(500장)과 리듬이 겹쳐 숫자가 몇백씩
     // 껑충 뛰었다. 초당 몇 장이든 화면은 초당 20번 갱신되도록 하면 늘 매끄럽고,
     // 빨라져도 이벤트가 폭주하지 않는다.
+    //
+    // 방출은 **잠금을 쥔 채로** 한다. 잠금을 풀고 나서 읽어 보내면 두 스레드가
+    // 100장·105장을 읽고 105장을 먼저 보낼 수 있다 — 화면의 숫자가 뒤로 갔다
+    // 앞으로 온다. 쥐고 있는 동안 다른 스레드는 «아직 50ms 안 됐나» 확인만
+    // 기다리므로 값은 싸다.
     let last_emit = Mutex::new(Instant::now());
     let tick = |force: bool| {
-        let due = {
-            let mut l = last_emit.lock().unwrap();
-            if force || l.elapsed() >= Duration::from_millis(50) {
-                *l = Instant::now();
-                true
-            } else {
-                false
-            }
-        };
-        if due {
-            on_progress(&progress.lock().unwrap().clone());
+        let mut l = last_emit.lock().unwrap();
+        if force || l.elapsed() >= Duration::from_millis(50) {
+            *l = Instant::now();
+            let snap = progress.lock().unwrap().clone();
+            on_progress(&snap);
         }
     };
 

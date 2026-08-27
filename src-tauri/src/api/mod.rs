@@ -39,6 +39,9 @@ pub struct AppState {
     pub cache_base: PathBuf,
     /// 스캔·썸네일 생성을 멈추는 스위치.
     pub cancel: Arc<AtomicBool>,
+    /// 스캔·가져오기가 도는 중인가. 둘이 겹치면 같은 DB·캐시에 동시에 쓰고
+    /// 진행 숫자가 두 줄기로 뒤섞인다.
+    pub running: Arc<AtomicBool>,
     /// 라이브러리 id → 실제 폴더.
     ///
     /// `thumb://`는 **썸네일 한 장마다** 이걸 부른다. 한 화면에 200장이면
@@ -53,6 +56,7 @@ impl AppState {
             db: Arc::new(db),
             cache_base,
             cancel: Arc::new(AtomicBool::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
             dirs: Mutex::new(HashMap::new()),
         }
     }
@@ -217,9 +221,23 @@ pub fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     let cache_root = state.cache_root(lib.id);
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
+    let running = Arc::clone(&state.running);
+    // 이미 도는 중이면 새로 시작하지 않는다 — 두 벌이 같은 캐시에 쓴다
+    if running.swap(true, Ordering::AcqRel) {
+        return Err("이미 스캔 중입니다".into());
+    }
     cancel.store(false, Ordering::Relaxed);
 
     std::thread::spawn(move || {
+        // 어떻게 끝나든 표시를 내린다
+        struct Done(Arc<AtomicBool>);
+        impl Drop for Done {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _done = Done(running);
+
         let handle = app.clone();
         let r = scan::scan_folder(&db, lib.id, &dir, lib.area, |p| {
             let _ = handle.emit("scan-progress", p);
@@ -691,9 +709,21 @@ pub fn import_run(app: AppHandle, source: String, library_id: i64) -> Result<(),
     let cache_root = state.cache_root(library_id);
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
+    let running = Arc::clone(&state.running);
+    if running.swap(true, Ordering::AcqRel) {
+        return Err("스캔이 도는 중입니다. 끝난 뒤 가져오세요".into());
+    }
     cancel.store(false, Ordering::Relaxed);
 
     std::thread::spawn(move || {
+        struct Done(Arc<AtomicBool>);
+        impl Drop for Done {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _done = Done(running);
+
         // 스캔이 «새로 들어온 것»을 가려내는 기준. 복사 전에 찍어 둔다.
         let since = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

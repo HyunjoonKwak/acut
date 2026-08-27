@@ -65,48 +65,51 @@ export default function StatusBar({
     // 창이 좁아도 칸이 밖으로 밀려나지 않게 한다 — 밀려나면 오른쪽의
     // 진행·되돌리기까지 화면 밖으로 사라진다.
     <div className="h-8 shrink-0 flex items-center gap-4 px-3 overflow-hidden bg-chrome border-t border-line text-[11.5px] text-fg-mute tabular-nums">
-      <Cell icon="≡">
-        {index >= 0 && (
-          <span className="text-fg-dim">{(index + 1).toLocaleString()}/</span>
+      {/* 왼쪽 — 사진 정보. 자리가 모자라면 여기가 먼저 잘린다 */}
+      <div className="flex-1 min-w-0 flex items-center gap-4 overflow-hidden">
+        <Cell icon="≡">
+          {index >= 0 && (
+            <span className="text-fg-dim">{(index + 1).toLocaleString()}/</span>
+          )}
+          {total.toLocaleString()}장 · {fmtBytes(totalBytes)}
+        </Cell>
+
+        {file && (
+          <>
+            <Cell icon={file.kind === 1 ? "▶" : "▣"} grow>
+              <span className="text-fg-dim">{file.name}</span> (
+              {fmtBytes(file.size)})
+            </Cell>
+            {file.width && file.height && (
+              <Cell icon="⤢">
+                {file.width} × {file.height}
+                {megapixels(file.width, file.height) && (
+                  <span className="text-fg-faint">
+                    {" "}
+                    {megapixels(file.width, file.height)}
+                  </span>
+                )}
+              </Cell>
+            )}
+            <Cell icon="🗓">{fmtDateTime(file.taken_at)}</Cell>
+            {file.duration_ms ? (
+              <Cell icon="⏱">{fmtDuration(file.duration_ms)}</Cell>
+            ) : null}
+            {exif?.camModel && (
+              <Cell icon="📷">
+                {exif.camModel}
+                {exif.lens && (
+                  <span className="text-fg-faint"> ({exif.lens})</span>
+                )}
+              </Cell>
+            )}
+            {exif?.settings && <Cell icon="◎">{exif.settings}</Cell>}
+          </>
         )}
-        {total.toLocaleString()}장 · {fmtBytes(totalBytes)}
-      </Cell>
+      </div>
 
-      {file && (
-        <>
-          <Cell icon={file.kind === 1 ? "▶" : "▣"} grow>
-            <span className="text-fg-dim">{file.name}</span> (
-            {fmtBytes(file.size)})
-          </Cell>
-          {file.width && file.height && (
-            <Cell icon="⤢">
-              {file.width} × {file.height}
-              {megapixels(file.width, file.height) && (
-                <span className="text-fg-faint">
-                  {" "}
-                  {megapixels(file.width, file.height)}
-                </span>
-              )}
-            </Cell>
-          )}
-          <Cell icon="🗓">{fmtDateTime(file.taken_at)}</Cell>
-          {file.duration_ms ? (
-            <Cell icon="⏱">{fmtDuration(file.duration_ms)}</Cell>
-          ) : null}
-          {exif?.camModel && (
-            <Cell icon="📷">
-              {exif.camModel}
-              {exif.lens && (
-                <span className="text-fg-faint"> ({exif.lens})</span>
-              )}
-            </Cell>
-          )}
-          {exif?.settings && <Cell icon="◎">{exif.settings}</Cell>}
-        </>
-      )}
-
-      <div className="flex-1" />
-      {children}
+      {/* 오른쪽 — 진행·되돌리기. 잘리면 안 되는 쪽이다 */}
+      <div className="shrink-0 flex items-center gap-3">{children}</div>
     </div>
   );
 }

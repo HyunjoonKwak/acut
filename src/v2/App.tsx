@@ -240,11 +240,7 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-canvas text-fg text-[13px]">
-      <Toolbar
-        matched={matched}
-        addLibrary={scan.addLibrary}
-        rescan={scan.rescan}
-      />
+      <Toolbar matched={matched} />
 
       <div className="flex-1 flex min-h-0">
         <Sidebar

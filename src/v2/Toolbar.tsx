@@ -5,9 +5,8 @@ import GroupMenu from "./GroupMenu";
 import SortMenu from "./SortMenu";
 import ViewBar from "./ViewBar";
 import { useData } from "./dataStore";
-import { fmtBytes } from "./format";
 import { usePref } from "./prefs";
-import { Btn, IconBtn, Menu, MenuItem, MenuSep, Sep } from "./ui";
+import { Btn, Sep } from "./ui";
 import { useUi } from "./uiStore";
 import { useView } from "./viewStore";
 
@@ -19,17 +18,11 @@ import { useView } from "./viewStore";
  */
 export default function Toolbar({
   matched,
-  addLibrary,
-  rescan,
 }: {
   /** 지금 조건에 걸린 장수 */
   matched: number;
-  addLibrary: () => void;
-  rescan: (ids: number[]) => void;
 }) {
   const libs = useData((s) => s.libs);
-  const cache = useData((s) => s.cache);
-  const scanMsg = useData((s) => s.scanMsg);
   const tags = useData((s) => s.tags);
   const sel = useView((s) => s.sel);
   const viewTrash = useView((s) => s.viewTrash);
@@ -92,55 +85,6 @@ export default function Toolbar({
           </Btn>
         </div>
       )}
-
-      <Menu
-        align="right"
-        trigger={() => <IconBtn title="더 보기">⋯</IconBtn>}
-        width={190}
-      >
-        {(close) => (
-          <>
-            <MenuItem
-              hint="?"
-              onClick={() => {
-                close();
-                setUi({ helping: true });
-              }}
-            >
-              단축키
-            </MenuItem>
-            <MenuSep />
-            <MenuItem
-              onClick={() => {
-                close();
-                setUi({ importing: true });
-              }}
-            >
-              가져오기…
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                close();
-                addLibrary();
-              }}
-            >
-              라이브러리 추가…
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                close();
-                rescan(libId !== null ? [libId] : libs.map((l) => l.id));
-              }}
-            >
-              다시 스캔
-            </MenuItem>
-            <MenuSep />
-            <div className="px-3 py-1.5 text-[11.5px] text-fg-faint tabular-nums">
-              {scanMsg || `캐시 ${fmtBytes(cache?.bytes ?? 0)}`}
-            </div>
-          </>
-        )}
-      </Menu>
     </div>
   );
 }

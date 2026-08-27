@@ -6,6 +6,9 @@ import { fmtBytes, fmtDateTime } from "./format";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 import { usePref } from "./prefs";
+import { useData } from "./dataStore";
+import { useJob } from "./jobStore";
+import { useUi } from "./uiStore";
 
 type Backup = { path: string; name: string; bytes: number; made_at: number };
 
@@ -26,12 +29,18 @@ function Head({ children }: { children: React.ReactNode }) {
 export default function SettingsPanel({
   thumbBytes,
   onRefresh,
+  onRescanAll,
 }: {
   /** 썸네일이 쓰는 용량. 아직 안 셌으면 null */
   thumbBytes: number | null;
   onRefresh: () => void;
+  /** 연결된 라이브러리 전부를 다시 훑는다 */
+  onRescanAll: () => void;
 }) {
   const ask = useConfirm();
+  const scanMsg = useData((s) => s.scanMsg);
+  const scanning = useJob((s) => s.job !== null);
+  const setUi = useUi((s) => s.set);
   const [watch, setWatch] = usePref("watch");
   const [ver, setVer] = useState("");
   const [busy, setBusy] = useState(false);
@@ -91,6 +100,17 @@ export default function SettingsPanel({
 
   return (
     <>
+      <Head>스캔</Head>
+      <div className="px-2 flex flex-wrap gap-1">
+        <Btn disabled={scanning} onClick={onRescanAll}>
+          {scanning ? "스캔 중…" : "전부 다시 스캔"}
+        </Btn>
+      </div>
+      <div className="px-3 pt-1.5 text-[11.5px] text-fg-mute leading-relaxed">
+        {scanMsg ||
+          "새로 들어온 사진과 썸네일을 채웁니다. 이미 아는 것은 건너뜁니다."}
+      </div>
+
       <Head>썸네일 캐시</Head>
       <div className="px-3 text-[12px] text-fg-dim tabular-nums">
         {thumbBytes === null ? "—" : fmtBytes(thumbBytes)}
@@ -178,6 +198,13 @@ export default function SettingsPanel({
           ))}
         </div>
       )}
+
+      <Head>도움</Head>
+      <div className="px-2 flex flex-wrap gap-1">
+        <Btn hint="?" onClick={() => setUi({ helping: true })}>
+          단축키
+        </Btn>
+      </div>
 
       <Head>에이컷</Head>
       <div className="px-3 text-[12px] text-fg-dim leading-relaxed">

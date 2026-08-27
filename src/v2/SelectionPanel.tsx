@@ -33,10 +33,16 @@ export default function SelectionPanel({
 
   return (
     <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line">
-      <span className="text-accent font-semibold tabular-nums text-[13px]">
-        {picked.size.toLocaleString()}장 선택
-      </span>
-      <span className="text-[11.5px] text-fg-mute">{fmtBytes(bytes)}</span>
+      {/* 장수·용량은 폭을 못박는다 — 사진마다 글자 길이가 달라 뒤의 버튼들이
+          흔들리면 키보드로 빠르게 넘길 때 어지럽다 */}
+      <div className="w-[176px] shrink-0 flex items-baseline gap-2 tabular-nums overflow-hidden">
+        <span className="text-accent font-semibold text-[13px] whitespace-nowrap">
+          {picked.size.toLocaleString()}장 선택
+        </span>
+        <span className="text-[11.5px] text-fg-mute whitespace-nowrap truncate">
+          {fmtBytes(bytes)}
+        </span>
+      </div>
       <Sep />
       {picked.size >= 2 && (
         <PanelBtn onClick={() => setUi({ comparing: compareIds })}>

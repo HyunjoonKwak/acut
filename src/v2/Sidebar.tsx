@@ -214,6 +214,7 @@ export default function Sidebar({
             <SettingsPanel
               thumbBytes={cache?.bytes ?? null}
               onRefresh={refreshCache}
+              onRescanAll={() => rescan(libs.map((l) => l.id))}
             />
           )}
           {source === "trash" && (

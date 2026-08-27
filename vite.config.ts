@@ -8,7 +8,6 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   define: {
     __APP_VERSION__: JSON.stringify(
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       (await import("./package.json", { with: { type: "json" } })).default
         .version
     ),

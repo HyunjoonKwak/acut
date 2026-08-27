@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
-// v2 — 재설계된 화면. 기존 App.tsx는 참조용으로 남겨둔다.
+// v1 화면은 legacy/src/ 에 있다 (빌드 밖).
 import App from "./v2/App.tsx";
 import { ConfirmProvider } from "./v2/confirm.tsx";
 import Hydrated from "./v2/Hydrated.tsx";

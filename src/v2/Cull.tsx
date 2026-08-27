@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Viewer from "./Viewer";
+import { fmtBytes } from "./format";
 
 type Group = {
   id: number;
@@ -34,18 +35,6 @@ const KINDS = [
   { id: 2, label: "같은 순간", hint: "연달아 찍은 것" },
   { id: 1, label: "잡동사니", hint: "스크린샷·다운로드본" },
 ];
-
-const fmtBytes = (n: number) => {
-  if (n < 1024) return `${n} B`;
-  const u = ["KB", "MB", "GB", "TB"];
-  let v = n / 1024,
-    i = 0;
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(1)} ${u[i]}`;
-};
 
 export default function Cull({ onClose }: { onClose: () => void }) {
   const [kind, setKind] = useState(2); // 같은 순간이 가장 많다

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { fmtBytes, fmtDateTime, fmtDuration } from "./format";
 
 type Detail = {
   name: string;
@@ -24,35 +25,6 @@ type Detail = {
 };
 
 const SOURCE_LABEL = ["EXIF", "파일명 추정", "파일시각 추정", "알 수 없음"];
-
-const fmtBytes = (n: number) => {
-  const u = ["B", "KB", "MB", "GB"];
-  let v = n,
-    i = 0;
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${i === 0 ? v : v.toFixed(1)} ${u[i]}`;
-};
-/** 12345678 → `2:03` */
-const fmtDuration = (ms: number) => {
-  const t = Math.round(ms / 1000);
-  const h = Math.floor(t / 3600);
-  const m = Math.floor((t % 3600) / 60);
-  const sec = t % 60;
-  return h > 0
-    ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
-    : `${m}:${String(sec).padStart(2, "0")}`;
-};
-const fmtDateTime = (ts: number) =>
-  new Date(ts * 1000).toLocaleString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 
 export default function Viewer({
   ids,

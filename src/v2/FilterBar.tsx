@@ -13,6 +13,8 @@ export type Picks = {
   name_like: string | null;
   /** 사이드바에서 고른 연도 (`2024`) */
   year: string | null;
+  /** 사이드바에서 고른 달 (`2024-08`) */
+  month: string | null;
   /** 사이드바에서 고른 카메라 모델 */
   camera: string | null;
 };
@@ -24,6 +26,7 @@ export const EMPTY: Picks = {
   favorite_only: false,
   name_like: null,
   year: null,
+  month: null,
   camera: null,
 };
 
@@ -34,6 +37,7 @@ export const isEmpty = (p: Picks) =>
   !p.favorite_only &&
   !p.name_like &&
   !p.year &&
+  !p.month &&
   !p.camera;
 
 const KINDS = [

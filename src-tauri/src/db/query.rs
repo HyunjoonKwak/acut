@@ -136,6 +136,8 @@ pub struct Filter {
     pub sort: Sort,
     /// 사이드바에서 고른 연도 (`2024`)
     pub year: Option<String>,
+    /// 사이드바에서 고른 달 (`2024-08`)
+    pub month: Option<String>,
     /// 사이드바에서 고른 카메라 모델
     pub camera: Option<String>,
 }
@@ -235,6 +237,10 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     if let Some(y) = f.year.as_deref().filter(|s| !s.is_empty()) {
         w.push("strftime('%Y', fi.taken_at,'unixepoch','localtime') = ?".into());
         p.push(Box::new(y.to_string()));
+    }
+    if let Some(m) = f.month.as_deref().filter(|s| !s.is_empty()) {
+        w.push("strftime('%Y-%m', fi.taken_at,'unixepoch','localtime') = ?".into());
+        p.push(Box::new(m.to_string()));
     }
     if let Some(cam) = f.camera.as_ref() {
         // 빈 문자열은 "카메라 정보 없음"을 뜻한다

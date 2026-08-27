@@ -5,6 +5,7 @@ import {
   claimHoverPreview,
   releaseHoverPreview,
 } from "./hoverPreview";
+import { fmtDuration } from "./format";
 
 export type TileFile = {
   id: number;
@@ -15,13 +16,6 @@ export type TileFile = {
   favorite: boolean;
   taken_at: number;
   duration_ms: number | null;
-};
-
-const fmtDuration = (ms: number) => {
-  const t = Math.round(ms / 1000);
-  const m = Math.floor(t / 60);
-  const s = t % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
 };
 
 /**
@@ -145,47 +139,52 @@ export default function Tile({
           />
         )}
 
-        {file.kind === 2 && (
-          <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-keep">
-            RAW
-          </span>
-        )}
-        {isVideo && !ready && (
-          <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-fg">
-            ▶{file.duration_ms ? ` ${fmtDuration(file.duration_ms)}` : ""}
-          </span>
-        )}
+        {/* 위 — 상태 배지 (Lap: statusBadges). 판정·별점·즐겨찾기 */}
+        <div className="absolute top-1 right-1 flex items-center gap-1">
+          {file.favorite && (
+            <span className="px-1 h-4 rounded bg-black/55 text-drop text-[10px] flex items-center">
+              ♥
+            </span>
+          )}
+          {file.rating > 0 && (
+            <span className="px-1 h-4 rounded bg-black/55 text-keep text-[10px] flex items-center tracking-tighter">
+              {"★".repeat(file.rating)}
+            </span>
+          )}
+          {file.culling_flag !== 0 && (
+            <span
+              className="w-4 h-4 rounded text-[10px] font-bold flex items-center justify-center"
+              style={
+                file.culling_flag === 1
+                  ? {
+                      background: "var(--color-keep)",
+                      color: "var(--color-keep-fg)",
+                    }
+                  : {
+                      background: "var(--color-drop)",
+                      color: "var(--color-drop-fg)",
+                    }
+              }
+              title={file.culling_flag === 1 ? "남김" : "제외"}
+            >
+              {file.culling_flag === 1 ? "★" : "✕"}
+            </span>
+          )}
+        </div>
 
-        {file.culling_flag !== 0 && (
-          <span
-            className="absolute top-1 right-1 w-4 h-4 rounded text-[10px] font-bold flex items-center justify-center"
-            style={
-              file.culling_flag === 1
-                ? {
-                    background: "var(--color-keep)",
-                    color: "var(--color-keep-fg)",
-                  }
-                : {
-                    background: "var(--color-drop)",
-                    color: "var(--color-drop-fg)",
-                  }
-            }
-            title={file.culling_flag === 1 ? "남김" : "제외"}
-          >
-            {file.culling_flag === 1 ? "★" : "✕"}
-          </span>
-        )}
-        {(file.rating > 0 || file.favorite) && (
-          <div className="absolute bottom-0 inset-x-0 flex items-center gap-1 px-1 py-0.5 bg-gradient-to-t from-black/70 to-transparent">
-            {file.rating > 0 && (
-              <span className="text-[9px] text-keep tracking-tighter">
-                {"★".repeat(file.rating)}
-              </span>
-            )}
-            <div className="flex-1" />
-            {file.favorite && <span className="text-[9px] text-drop">♥</span>}
-          </div>
-        )}
+        {/* 아래 — 미디어 배지 (Lap: bottom badges). 형식과 길이 */}
+        <div className="absolute bottom-1 left-1 flex items-center gap-1">
+          {file.kind === 2 && (
+            <span className="px-1 h-4 rounded bg-black/55 text-keep text-[9px] flex items-center font-semibold">
+              RAW
+            </span>
+          )}
+          {isVideo && !ready && (
+            <span className="px-1 h-4 rounded bg-black/55 text-fg text-[9px] flex items-center gap-0.5">
+              ▶{file.duration_ms ? fmtDuration(file.duration_ms) : ""}
+            </span>
+          )}
+        </div>
       </div>
       {style === "card" && (
         <div className="text-[10.5px] text-fg-mute mt-1 truncate tabular-nums">

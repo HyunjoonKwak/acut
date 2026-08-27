@@ -16,10 +16,12 @@ import ContextMenu, {
   type MenuAt,
   type MenuItem as CtxItem,
 } from "./ContextMenu";
-import Rail, { type Source } from "./Rail";
+import Rail, { SOURCES, type Source } from "./Rail";
 import Breadcrumb from "./Breadcrumb";
-import { Btn, IconBtn, Kbd, Menu, MenuItem, Sep } from "./ui";
+import StatusBar from "./StatusBar";
+import { Btn, IconBtn, Kbd, Label, Menu, MenuItem, MenuSep, Sep } from "./ui";
 import FacetList from "./FacetList";
+import Calendar from "./Calendar";
 import {
   justify,
   ratio,
@@ -29,6 +31,7 @@ import {
 } from "./gridStyle";
 import { useCountUp } from "./useCountUp";
 import FilterButton, { EMPTY as EMPTY_PICKS, type Picks } from "./FilterBar";
+import { fmtBytes, fmtDate } from "./format";
 
 // ── 타입 (Rust 쪽과 맞춰야 한다) ─────────────────────────────────────
 type FileRow = {
@@ -106,24 +109,6 @@ type FolderRow = {
 
 const PAGE = 300;
 const GAP = 10;
-
-const fmtBytes = (n: number) => {
-  if (n < 1024) return `${n} B`;
-  const u = ["KB", "MB", "GB", "TB"];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(1)} ${u[i]}`;
-};
-const fmtDate = (ts: number) =>
-  new Date(ts * 1000).toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
 
 export default function App() {
   /// 등록된 라이브러리 전부
@@ -933,11 +918,76 @@ export default function App() {
     ];
   }, [ctxIds, rows, markOne, runTrashOp]);
 
+  /// 상태바에 띄울 지금 사진의 카메라·설정. 상세는 따로 읽는다.
+  const [focusExif, setFocusExif] = useState<{
+    camModel: string | null;
+    lens: string | null;
+    settings: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (selected === null) {
+      setFocusExif(null);
+      return;
+    }
+    let live = true;
+    invoke<{
+      camModel: string | null;
+      lens: string | null;
+      iso: number | null;
+      aperture: number | null;
+      shutter: string | null;
+      focalMm: number | null;
+    }>("file_detail", { id: selected })
+      .then((d) => {
+        if (!live) return;
+        setFocusExif({
+          camModel: d.camModel,
+          lens: d.lens,
+          settings: [
+            d.focalMm ? `${d.focalMm}mm` : null,
+            d.shutter,
+            d.aperture ? `f${d.aperture}` : null,
+            d.iso ? `ISO ${d.iso}` : null,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        });
+      })
+      .catch(() => live && setFocusExif(null));
+    return () => {
+      live = false;
+    };
+  }, [selected]);
+
+  /// 지금 고른 사진과 그 순번 — 상태바가 쓴다
+  const focusAt = useMemo(
+    () => (selected === null ? -1 : rows.findIndex((r) => r.id === selected)),
+    [rows, selected],
+  );
+
   /// 갈래 목록을 셀 때 쓰는 필터. 그 갈래 자신은 빼야 다른 값도 보인다.
   const facetFilter = useMemo(
-    () => ({ ...filter, year: null, camera: null, min_rating: null }),
+    () => ({
+      ...filter,
+      year: null,
+      month: null,
+      camera: null,
+      min_rating: null,
+    }),
     [filter],
   );
+
+  /// 달력이 쓸 눈금 — **날짜 조건을 뺀** 필터로 읽는다.
+  /// 그리드용 buckets를 그대로 쓰면 2024년을 고른 순간 목록에 2024년만
+  /// 남아 다른 해로 갈 수가 없다.
+  const [calBuckets, setCalBuckets] = useState<Bucket[]>([]);
+  useEffect(() => {
+    if (source !== "date") return;
+    invoke<Bucket[]>("files_timeline", { filter: facetFilter })
+      .then(setCalBuckets)
+      .catch(() => setCalBuckets([]));
+  }, [source, facetFilter]);
 
   /// 찾기 결과 개수 — 눈금 합이 곧 필터에 걸린 장수라 따로 세지 않는다
   const matched = useMemo(
@@ -1024,6 +1074,10 @@ export default function App() {
               >
                 다시 스캔
               </MenuItem>
+              <MenuSep />
+              <div className="px-3 py-1.5 text-[11.5px] text-fg-faint tabular-nums">
+                {scanMsg || `캐시 ${fmtBytes(cache?.bytes ?? 0)}`}
+              </div>
             </>
           )}
         </Menu>
@@ -1053,6 +1107,7 @@ export default function App() {
             className="shrink-0 bg-chrome border-r border-line overflow-y-auto py-2"
             style={{ width: panelW }}
           >
+            <Label>{SOURCES.find((x) => x.v === source)?.label}</Label>
             {source === "library" && (
               <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
                 라이브러리
@@ -1147,10 +1202,7 @@ export default function App() {
             )}
 
             {source === "folder" && folders.length > 0 && (
-              <div className="mt-3 pt-2 border-t border-line">
-                <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
-                  폴더
-                </div>
+              <div>
                 <button
                   onClick={() => setSel(null)}
                   className={`w-full text-left px-3 py-1 ${
@@ -1198,11 +1250,11 @@ export default function App() {
               </div>
             )}
             {source === "date" && (
-              <FacetList
-                kind="year"
-                filter={facetFilter}
-                selected={picks.year ?? null}
-                onPick={(v) => setPicks({ ...picks, year: v })}
+              <Calendar
+                buckets={calBuckets}
+                year={picks.year}
+                month={picks.month}
+                onPick={(y, m) => setPicks({ ...picks, year: y, month: m })}
               />
             )}
             {source === "camera" && (
@@ -1515,11 +1567,17 @@ export default function App() {
         </div>
       )}
 
-      {/* 상태바 — 지금 벌어지는 일과 라이브러리 형편.
-          진행·멈추기·치우기가 여기 모인다. 위쪽 줄을 늘리지 않기 위해서다. */}
-      <div className="h-8 shrink-0 flex items-center gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-fg-mute tabular-nums">
+      {/* 상태바 — 지금 보고 있는 사진의 정보 (Lap의 StatusBar 구성).
+          오른쪽에는 벌어지는 일과 되돌리기. */}
+      <StatusBar
+        index={focusAt >= 0 ? baseIndex + focusAt : -1}
+        total={matched || (stats?.files ?? 0)}
+        totalBytes={stats?.bytes ?? 0}
+        file={focusAt >= 0 ? rows[focusAt] : null}
+        exif={focusExif}
+      >
         {busy && <span className="text-keep">{busy}</span>}
-        {job ? (
+        {job && (
           <>
             <Progress label={job.label} done={job.done} total={job.total} />
             <button
@@ -1530,16 +1588,9 @@ export default function App() {
               멈추기
             </button>
           </>
-        ) : (
-          scanMsg && <span className="text-keep">{scanMsg}</span>
         )}
-
-        {!job && !scanMsg && viewTrash && (
+        {!job && viewTrash && (
           <>
-            <span className="text-fg-dim">
-              휴지통 {trash?.files.toLocaleString() ?? 0}장 ·{" "}
-              {fmtBytes(trash?.bytes ?? 0)}
-            </span>
             <button
               onClick={() =>
                 runTrashOp(
@@ -1560,25 +1611,15 @@ export default function App() {
             </button>
           </>
         )}
-
-        {!job && !scanMsg && !viewTrash && (toClean?.files ?? 0) > 0 && (
-          <>
-            <span className="text-fg-dim">
-              제외 {toClean?.files.toLocaleString()}장 ·{" "}
-              <b className="text-keep">{fmtBytes(toClean?.bytes ?? 0)}</b> 확보
-              가능
-            </span>
-            <button
-              onClick={cleanExcluded}
-              className="h-5 px-2 rounded bg-keep text-keep-fg font-semibold"
-            >
-              휴지통으로 치우기
-            </button>
-          </>
+        {!job && !viewTrash && (toClean?.files ?? 0) > 0 && (
+          <button
+            onClick={cleanExcluded}
+            title={`제외 ${toClean?.files.toLocaleString()}장 · ${fmtBytes(toClean?.bytes ?? 0)} 확보`}
+            className="h-5 px-2 rounded bg-keep text-keep-fg font-semibold"
+          >
+            제외 {toClean?.files.toLocaleString()}장 치우기
+          </button>
         )}
-
-        <div className="flex-1" />
-
         {batches.some((b) => b.undone_at === null) && (
           <button
             onClick={undoLast}
@@ -1588,24 +1629,12 @@ export default function App() {
             ↩ 되돌리기 <Kbd>⌘Z</Kbd>
           </button>
         )}
-        {stats && (
-          <>
-            <span>
-              {stats.files.toLocaleString()}장 · {fmtBytes(stats.bytes)}
-            </span>
-            {stats.thumbs_pending > 0 && (
-              <span className="text-keep">
-                썸네일 대기 {stats.thumbs_pending.toLocaleString()}
-              </span>
-            )}
-            {cache && (
-              <span className="text-fg-faint">
-                캐시 {fmtBytes(cache.bytes)}
-              </span>
-            )}
-          </>
+        {stats && stats.thumbs_pending > 0 && (
+          <span className="text-keep">
+            썸네일 대기 {stats.thumbs_pending.toLocaleString()}
+          </span>
         )}
-      </div>
+      </StatusBar>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 export type Facet = { value: string; label: string; count: number };
-export type FacetKind = "year" | "camera" | "rating" | "kind";
+export type FacetKind = "year" | "camera" | "rating" | "kind" | "place";
 
 /**
  * 사이드바의 갈래 목록 — 연도·카메라·평점.
@@ -48,7 +48,7 @@ export default function FacetList({
       <button
         onClick={() => onPick(null)}
         className={`w-full text-left px-3 py-1.5 text-[12.5px] ${
-          selected === null ? "bg-raised text-white" : "text-fg-dim"
+          selected === null ? "bg-raised text-fg" : "text-fg-dim"
         }`}
       >
         전체{" "}
@@ -62,7 +62,7 @@ export default function FacetList({
           onClick={() => onPick(selected === f.value ? null : f.value)}
           title={f.label}
           className={`w-full text-left px-3 py-1 text-[12.5px] truncate ${
-            selected === f.value ? "bg-raised text-white" : "text-fg-dim"
+            selected === f.value ? "bg-raised text-fg" : "text-fg-dim"
           }`}
         >
           {f.label}{" "}

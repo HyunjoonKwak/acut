@@ -1,44 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
+import { EMPTY, isEmpty, type Picks } from "./picks";
+import { useDebouncedText } from "./useDebouncedText";
 import { Btn, Menu } from "./ui";
-
-/** 백엔드 `db::query::Filter`에서 사용자가 고르는 부분만 */
-export type Picks = {
-  /** 0 사진 · 1 영상 · 2 RAW */
-  kind: number | null;
-  /** 0 미판정 · 1 남김 · 2 제외 */
-  culling_flag: number | null;
-  /** 이 값 이상만 */
-  min_rating: number | null;
-  favorite_only: boolean;
-  name_like: string | null;
-  /** 사이드바에서 고른 연도 (`2024`) */
-  year: string | null;
-  /** 사이드바에서 고른 달 (`2024-08`) */
-  month: string | null;
-  /** 사이드바에서 고른 카메라 모델 */
-  camera: string | null;
-};
-
-export const EMPTY: Picks = {
-  kind: null,
-  culling_flag: null,
-  min_rating: null,
-  favorite_only: false,
-  name_like: null,
-  year: null,
-  month: null,
-  camera: null,
-};
-
-export const isEmpty = (p: Picks) =>
-  p.kind === null &&
-  p.culling_flag === null &&
-  p.min_rating === null &&
-  !p.favorite_only &&
-  !p.name_like &&
-  !p.year &&
-  !p.month &&
-  !p.camera;
 
 const KINDS = [
   { v: 0, label: "사진" },
@@ -66,22 +29,13 @@ export default function FilterButton({
   value: Picks;
   onChange: (p: Picks) => void;
 }) {
-  const [text, setText] = useState(value.name_like ?? "");
   const set = (patch: Partial<Picks>) => onChange({ ...value, ...patch });
 
-  // 한 글자마다 14만 행을 훑지 않게 잠깐 기다린다.
-  // value/onChange를 의존성에 넣으면 필터가 바뀔 때마다 타이머가 되감겨
-  // 입력이 영영 반영되지 않는다. 최신 값은 ref로 본다.
-  const latest = useRef({ value, onChange });
-  latest.current = { value, onChange };
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const next = text.trim() || null;
-      const { value: v, onChange: fire } = latest.current;
-      if (next !== (v.name_like ?? null)) fire({ ...v, name_like: next });
-    }, 250);
-    return () => clearTimeout(t);
-  }, [text]);
+  // 한 글자마다 14만 행을 훑지 않게 타이핑이 멎기를 기다린다
+  const [text, setText] = useDebouncedText(value.name_like ?? "", 250, (t) => {
+    const next = t.trim() || null;
+    if (next !== (value.name_like ?? null)) onChange({ ...value, name_like: next });
+  });
 
   useEffect(() => {
     if (value.name_like === null) setText((t) => (t.trim() === "" ? t : ""));

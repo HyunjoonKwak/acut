@@ -10,6 +10,8 @@ pub mod cull;
 pub mod organize;
 pub mod photo_protocol;
 pub mod thumb_protocol;
+pub mod smart;
+pub mod tags;
 pub mod trash;
 pub mod video_protocol;
 
@@ -448,6 +450,35 @@ pub fn cache_usage(
         .map(|root| cache::cache_stats(&root))
         .fold((0u64, 0usize), |(b, n), (rb, rn)| (b + rb, n + rn));
     Ok(CacheUsage { bytes, files })
+}
+
+/// 썸네일·미리보기를 모두 지운다.
+///
+/// 사진은 건드리지 않는다. 다음에 볼 때 다시 만들어지므로 되돌릴 것이 없다.
+/// 캐시가 망가졌을 때(빈 그림, 옛 방향)의 마지막 수단이다.
+#[tauri::command]
+pub fn cache_clear(state: State<'_, AppState>, library_id: Option<i64>) -> Result<(), String> {
+    let libs = crate::db::libraries::list(&state.db).map_err(err)?;
+    for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
+        for root in [
+            cache::cache_root(&state.cache_base, l.id),
+            cache::preview_root(&state.cache_base, l.id),
+        ] {
+            // 없으면 지울 것도 없다 — NotFound는 성공으로 본다.
+            match std::fs::remove_dir_all(&root) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", root.display())),
+            }
+        }
+    }
+    // 디스크에서 지웠으니 "만들어 뒀다"는 기록도 함께 지운다. 안 지우면
+    // 다음 스캔이 이미 있는 줄 알고 건너뛰어 빈 자리만 남는다.
+    state
+        .db
+        .write(|c| c.execute("DELETE FROM thumbs", []))
+        .map_err(err)?;
+    Ok(())
 }
 
 /// Finder에서 그 파일을 골라 연다.

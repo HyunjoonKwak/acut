@@ -16,7 +16,12 @@ import ContextMenu, {
   type MenuAt,
   type MenuItem as CtxItem,
 } from "./ContextMenu";
-import Rail, { SOURCES, type Source } from "./Rail";
+import Rail from "./Rail";
+import { sourceTitle, type Source } from "./railItems";
+import TagPanel from "./TagPanel";
+import SmartPanel from "./SmartPanel";
+import SearchPanel from "./SearchPanel";
+import SettingsPanel from "./SettingsPanel";
 import Breadcrumb from "./Breadcrumb";
 import StatusBar from "./StatusBar";
 import { Btn, IconBtn, Kbd, Label, Menu, MenuItem, MenuSep, Sep } from "./ui";
@@ -30,7 +35,13 @@ import {
   type Scaling,
 } from "./gridStyle";
 import { useCountUp } from "./useCountUp";
-import FilterButton, { EMPTY as EMPTY_PICKS, type Picks } from "./FilterBar";
+import FilterButton from "./FilterBar";
+import {
+  EMPTY as EMPTY_PICKS,
+  isEmpty as isEmptyPicks,
+  picksFrom,
+  type Picks,
+} from "./picks";
 import { fmtBytes, fmtDate } from "./format";
 
 // ── 타입 (Rust 쪽과 맞춰야 한다) ─────────────────────────────────────
@@ -160,7 +171,7 @@ export default function App() {
   /// 「⋯」를 연 라이브러리. 지우기는 이 안에 숨겨 둔다.
   const [menuFor, setMenuFor] = useState<number | null>(null);
   /// 사이드바가 무엇을 보여줄지, 펴져 있는지, 얼마나 넓은지
-  const [source, setSource] = useState<Source>("library");
+  const [source, setSource] = useState<Source>("all");
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelW, setPanelW] = useState(224);
   const dragPanel = useRef(false);
@@ -205,6 +216,24 @@ export default function App() {
     }),
     [picks, sort, libId, sel, viewTrash],
   );
+
+  /// 스마트 앨범을 편다 — 저장해 둔 조건을 지금 화면에 그대로 건다.
+  ///
+  /// 저장한 것은 `Filter` 통짜라 라이브러리·폴더·정렬까지 들어 있다. 조건만
+  /// 골라 담지 않고 전부 되돌리는 편이 "그때 보던 그대로"에 가깝다.
+  const applySmart = useCallback((f: unknown, srt: unknown) => {
+    const v = (f ?? {}) as {
+      library_id?: number | null;
+      folder_path?: string | null;
+      trashed?: boolean;
+    };
+    setPicks(picksFrom(f));
+    setLibId(v.library_id ?? null);
+    // 폴더는 경로만 되살린다 — 트리에서 고른 것과 같은 모양이면 충분하다.
+    setSel(v.folder_path ? { path: v.folder_path, rel: v.folder_path } : null);
+    setViewTrash(v.trashed ?? false);
+    if (srt) setSort(srt as Sort);
+  }, []);
 
   const loadFirst = useCallback(async () => {
     if (inflight.current) return;
@@ -974,6 +1003,8 @@ export default function App() {
       month: null,
       camera: null,
       min_rating: null,
+      tag_id: null,
+      place: null,
     }),
     [filter],
   );
@@ -983,7 +1014,7 @@ export default function App() {
   /// 남아 다른 해로 갈 수가 없다.
   const [calBuckets, setCalBuckets] = useState<Bucket[]>([]);
   useEffect(() => {
-    if (source !== "date") return;
+    if (source !== "calendar") return;
     invoke<Bucket[]>("files_timeline", { filter: facetFilter })
       .then(setCalBuckets)
       .catch(() => setCalBuckets([]));
@@ -1107,13 +1138,8 @@ export default function App() {
             className="shrink-0 bg-chrome border-r border-line overflow-y-auto py-2"
             style={{ width: panelW }}
           >
-            <Label>{SOURCES.find((x) => x.v === source)?.label}</Label>
-            {source === "library" && (
-              <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
-                라이브러리
-              </div>
-            )}
-            {source === "library" && (
+            <Label>{sourceTitle(source)}</Label>
+            {source === "all" && (
               <>
                 <button
                   onClick={() => {
@@ -1201,7 +1227,14 @@ export default function App() {
               </>
             )}
 
-            {source === "folder" && folders.length > 0 && (
+            {source === "album" && folders.length === 0 && (
+              <div className="px-3 py-2 text-[12px] text-fg-mute leading-relaxed">
+                폴더가 없습니다.
+                <br />
+                「모든」에서 라이브러리를 고르세요.
+              </div>
+            )}
+            {source === "album" && folders.length > 0 && (
               <div>
                 <button
                   onClick={() => setSel(null)}
@@ -1249,7 +1282,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            {source === "date" && (
+            {source === "calendar" && (
               <Calendar
                 buckets={calBuckets}
                 year={picks.year}
@@ -1265,19 +1298,41 @@ export default function App() {
                 onPick={(v) => setPicks({ ...picks, camera: v })}
               />
             )}
-            {source === "rating" && (
+            {source === "location" && (
               <FacetList
-                kind="rating"
+                kind="place"
                 filter={facetFilter}
-                selected={
-                  picks.min_rating === null ? null : String(picks.min_rating)
-                }
-                onPick={(v) =>
-                  setPicks({
-                    ...picks,
-                    min_rating: v === null ? null : Number(v),
-                  })
-                }
+                selected={picks.place}
+                onPick={(v) => setPicks({ ...picks, place: v })}
+              />
+            )}
+            {source === "tag" && (
+              <TagPanel
+                selected={picks.tag_id}
+                onPick={(v) => setPicks({ ...picks, tag_id: v })}
+                pickedIds={[...picked]}
+                onChanged={loadFirst}
+              />
+            )}
+            {source === "smart" && (
+              <SmartPanel
+                current={filter}
+                currentSort={sort}
+                hasFilter={!isEmptyPicks(picks)}
+                onApply={applySmart}
+              />
+            )}
+            {source === "search" && (
+              <SearchPanel
+                value={picks}
+                onChange={setPicks}
+                facetFilter={facetFilter}
+              />
+            )}
+            {source === "settings" && (
+              <SettingsPanel
+                thumbBytes={cache?.bytes ?? null}
+                onRefresh={refreshCache}
               />
             )}
             {source === "trash" && (

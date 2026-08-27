@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fmtBytes, fmtDateTime, fmtDuration } from "./format";
+import TagEditor from "./TagEditor";
 
 type Detail = {
   name: string;
@@ -341,6 +342,9 @@ export default function Viewer({
                 제외 <span className="font-mono text-[10px]">X</span>
               </button>
             </div>
+
+            <Sep />
+            <TagEditor id={id} />
 
             <Sep />
             <div className="text-[10.5px] text-fg-mute leading-relaxed">

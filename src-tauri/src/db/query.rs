@@ -140,6 +140,10 @@ pub struct Filter {
     pub month: Option<String>,
     /// 사이드바에서 고른 카메라 모델
     pub camera: Option<String>,
+    /// 사이드바에서 고른 태그
+    pub tag_id: Option<i64>,
+    /// 위치 — 좌표 격자 한 칸 (`37.5,127.0`). 빈 문자열이면 "위치 없음".
+    pub place: Option<String>,
 }
 
 /// 그리드에 머리글을 넣어 묶는 기준. Lap의 GROUP과 같다.
@@ -249,6 +253,27 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         } else {
             w.push("fi.cam_model = ?".into());
             p.push(Box::new(cam.clone()));
+        }
+    }
+    if let Some(t) = f.tag_id {
+        w.push("EXISTS (SELECT 1 FROM file_tags ft WHERE ft.file_id = fi.id AND ft.tag_id = ?)".into());
+        p.push(Box::new(t));
+    }
+    if let Some(pl) = f.place.as_ref() {
+        if pl.is_empty() {
+            w.push("fi.gps_lat IS NULL".into());
+        } else if let Some((a, b)) = pl.split_once(',') {
+            // 격자 한 칸 = 0.1도 (위도로 약 11km). 그 칸 안이면 같은 곳으로 친다.
+            if let (Ok(lat), Ok(lon)) = (a.parse::<f64>(), b.parse::<f64>()) {
+                w.push(
+                    "fi.gps_lat >= ? AND fi.gps_lat < ? AND fi.gps_lon >= ? AND fi.gps_lon < ?"
+                        .into(),
+                );
+                p.push(Box::new(lat));
+                p.push(Box::new(lat + 0.1));
+                p.push(Box::new(lon));
+                p.push(Box::new(lon + 0.1));
+            }
         }
     }
     if f.favorite_only {
@@ -497,6 +522,7 @@ pub enum FacetKind {
     Camera,
     Rating,
     Kind,
+    Place,
 }
 
 /// 지금 필터 안에서 각 값이 몇 장인지 센다.
@@ -515,10 +541,18 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
         FacetKind::Camera => "COALESCE(NULLIF(fi.cam_model,''),'')",
         FacetKind::Rating => "CAST(fi.rating AS TEXT)",
         FacetKind::Kind => "CAST(fi.kind AS TEXT)",
+        // 좌표를 0.1도 격자로 내린다. 역지오코딩이 없어 지명은 못 붙이지만
+        // "이 근처에서 찍은 것"을 모아 보는 데는 충분하다.
+        FacetKind::Place => {
+            "CASE WHEN fi.gps_lat IS NULL THEN ''
+                  ELSE CAST(ROUND(fi.gps_lat*10-0.5)/10 AS TEXT) || ',' ||
+                       CAST(ROUND(fi.gps_lon*10-0.5)/10 AS TEXT) END"
+        }
     };
     let order = match kind {
         // 연도·평점은 값 순서로, 카메라는 많이 쓴 것부터
         FacetKind::Year | FacetKind::Rating => "v DESC",
+        FacetKind::Place => "n DESC, v",
         _ => "n DESC, v",
     };
     let sql = format!(
@@ -551,6 +585,27 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
                         "(카메라 정보 없음)".into()
                     } else {
                         value.clone()
+                    }
+                }
+                FacetKind::Place => {
+                    if value.is_empty() {
+                        "(위치 정보 없음)".into()
+                    } else {
+                        // `37.5,127` → `북위 37.5° 동경 127.0°`
+                        match value.split_once(',') {
+                            Some((a, b)) => {
+                                let lat: f64 = a.parse().unwrap_or(0.0);
+                                let lon: f64 = b.parse().unwrap_or(0.0);
+                                format!(
+                                    "{} {:.1}° {} {:.1}°",
+                                    if lat >= 0.0 { "북위" } else { "남위" },
+                                    lat.abs(),
+                                    if lon >= 0.0 { "동경" } else { "서경" },
+                                    lon.abs(),
+                                )
+                            }
+                            None => value.clone(),
+                        }
                     }
                 }
             };
@@ -1088,6 +1143,126 @@ mod tests {
         // 연도는 최근이 위
         for w in y.windows(2) {
             assert!(w[0].value >= w[1].value);
+        }
+    }
+
+    /// 태그는 폴더와 달리 한 장에 여럿 붙는다. 필터가 그중 하나만 걸려도
+    /// 그 사진이 나와야 한다.
+    #[test]
+    fn tag_filter_matches_any_of_a_files_tags() {
+        let (_d, db) = seeded();
+        db.transaction(|tx| {
+            tx.execute("INSERT INTO tags(id,name) VALUES(1,'여행'),(2,'가족')", [])?;
+            // 1~5번은 여행, 4~6번은 가족 — 4·5번은 둘 다
+            for i in 1..=5 {
+                tx.execute("INSERT INTO file_tags(file_id,tag_id) VALUES(?,1)", [i])?;
+            }
+            for i in 4..=6 {
+                tx.execute("INSERT INTO file_tags(file_id,tag_id) VALUES(?,2)", [i])?;
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        let f = |t: i64| Filter { tag_id: Some(t), ..Default::default() };
+        assert_eq!(summary(&db, &f(1)).unwrap().0, 5);
+        assert_eq!(summary(&db, &f(2)).unwrap().0, 3);
+
+        // 겹치는 두 장이 양쪽에 다 들어 있어야 한다
+        let a: Vec<i64> = page(&db, &f(1), None, 99, GroupBy::None)
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        let b: Vec<i64> = page(&db, &f(2), None, 99, GroupBy::None)
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert!(a.contains(&4) && b.contains(&4));
+        assert!(a.contains(&5) && b.contains(&5));
+        // 없는 태그는 빈 목록
+        assert_eq!(summary(&db, &f(99)).unwrap().0, 0);
+    }
+
+    /// 자리 갈래는 0.1도 격자다. 같은 칸에 든 것이 한 줄로 모여야 하고,
+    /// 그 값을 필터로 되돌려 걸면 같은 장수가 나와야 한다.
+    #[test]
+    fn place_facet_grids_coordinates_and_round_trips() {
+        let (_d, db) = seeded();
+        db.write(|c| {
+            // 1~4번은 서울 한 칸(37.55, 126.98), 5번은 다른 칸
+            c.execute(
+                "UPDATE files SET gps_lat=37.55, gps_lon=126.98 WHERE id<=4",
+                [],
+            )?;
+            c.execute(
+                "UPDATE files SET gps_lat=35.15, gps_lon=129.05 WHERE id=5",
+                [],
+            )
+        })
+        .unwrap();
+
+        let fs = facets(&db, &Filter::default(), FacetKind::Place).unwrap();
+        // 좌표 없는 것들이 한 줄, 서울 한 줄, 부산 한 줄
+        let none = fs.iter().find(|f| f.value.is_empty()).unwrap();
+        assert_eq!(none.count, 45);
+        assert_eq!(none.label, "(위치 정보 없음)");
+
+        let seoul = fs.iter().find(|f| f.value.starts_with("37.5")).unwrap();
+        assert_eq!(seoul.count, 4);
+        assert_eq!(seoul.label, "북위 37.5° 동경 126.9°");
+
+        // 갈래가 준 값을 그대로 필터로 되돌린다
+        for f in &fs {
+            let n = summary(
+                &db,
+                &Filter { place: Some(f.value.clone()), ..Default::default() },
+            )
+            .unwrap()
+            .0;
+            assert_eq!(n, f.count, "{} 되돌리기", f.label);
+        }
+    }
+
+    /// 남반구·서반구 좌표도 같은 칸에서 갈라지면 안 된다 — 음수를 내림할 때
+    /// 0 쪽으로 자르면 -0.05와 0.05가 같은 칸에 들어간다.
+    #[test]
+    fn place_grid_handles_negative_coordinates() {
+        let (_d, db) = seeded();
+        db.write(|c| {
+            c.execute("UPDATE files SET gps_lat=-33.87, gps_lon=-70.65 WHERE id=1", [])?;
+            c.execute("UPDATE files SET gps_lat=-33.83, gps_lon=-70.61 WHERE id=2", [])?;
+            c.execute("UPDATE files SET gps_lat=0.05, gps_lon=0.05 WHERE id=3", [])?;
+            c.execute("UPDATE files SET gps_lat=-0.05, gps_lon=-0.05 WHERE id=4", [])
+        })
+        .unwrap();
+
+        let fs = facets(&db, &Filter::default(), FacetKind::Place).unwrap();
+        // -33.87과 -33.83은 다른 칸(-33.9 / -33.9? 아니다: -33.9와 -33.9)
+        // 중요한 건 0을 사이에 둔 3·4번이 갈라지는 것이다
+        let a = fs.iter().find(|f| f.value == "0.0,0.0").map(|f| f.count);
+        let b = fs.iter().find(|f| f.value == "-0.1,-0.1").map(|f| f.count);
+        assert_eq!(a, Some(1), "{fs:?}");
+        assert_eq!(b, Some(1), "{fs:?}");
+
+        let south = fs.iter().find(|f| f.value.starts_with("-33")).unwrap();
+        assert!(south.label.starts_with("남위"), "{}", south.label);
+        assert!(south.label.contains("서경"), "{}", south.label);
+
+        // 음수에서도 갈래가 준 값이 그대로 필터로 되돌아가야 한다.
+        // 격자 상자를 `[v, v+0.1)`로 잡는데 v가 음수면 부동소수 오차가
+        // 반대쪽으로 새기 쉽다.
+        for f in &fs {
+            let n = summary(
+                &db,
+                &Filter { place: Some(f.value.clone()), ..Default::default() },
+            )
+            .unwrap()
+            .0;
+            assert_eq!(n, f.count, "{} 되돌리기", f.label);
         }
     }
 

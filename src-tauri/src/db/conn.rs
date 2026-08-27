@@ -28,6 +28,10 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("데이터베이스 폴더를 만들 수 없습니다: {0}")]
     CreateDir(#[from] std::io::Error),
+    /// 값이 규칙에 안 맞아 DB까지 갈 것도 없는 경우 (빈 이름 따위).
+    /// 그대로 사용자에게 보여 줄 문장이어야 한다.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 pub type Result<T> = std::result::Result<T, DbError>;
@@ -157,7 +161,7 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(n, 15, "테이블 15개가 만들어져야 한다");
+        assert_eq!(n, 16, "테이블 16개가 만들어져야 한다");
     }
 
     #[test]

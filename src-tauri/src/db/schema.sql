@@ -251,6 +251,21 @@ CREATE TABLE IF NOT EXISTS journal (
 CREATE INDEX IF NOT EXISTS idx_journal_batch ON journal(batch_id);
 
 -- ---------------------------------------------------------------------------
+-- 스마트 앨범 — 조건을 저장해 두고 이름으로 부른다
+--
+-- 폴더가 "어디에 있나"라면 이것은 "어떤 것인가"다. 「별 4개 이상 영상」처럼
+-- 자주 쓰는 조건에 이름을 붙여 둔다. 조건은 Filter를 그대로 JSON으로 담는다 —
+-- 필터가 늘어나도 스키마를 바꾸지 않는다.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS smart_albums (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    filter     TEXT NOT NULL,               -- Filter를 직렬화한 JSON
+    sort       TEXT,                        -- Sort를 직렬화한 JSON
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+-- ---------------------------------------------------------------------------
 -- 설정
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS settings (

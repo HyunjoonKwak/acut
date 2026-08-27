@@ -47,6 +47,11 @@ pub struct Filter {
     pub library_id: Option<i64>,
     /// 이 폴더와 하위 폴더. None이면 전체.
     pub folder_id: Option<i64>,
+    /// 볼륨 기준 폴더 경로. 이 폴더와 하위 폴더를 고른다.
+    ///
+    /// 사이드바 트리에는 DB에 행이 없는 중간 마디가 있어서 id로는 못 고른다.
+    /// (`연도별`처럼 자기 자신엔 사진이 없고 아래에만 있는 폴더)
+    pub folder_path: Option<String>,
     /// 0 작업대 · 1 내사진 · 2 공용
     pub area: Option<i32>,
     /// 0 사진 · 1 영상 · 2 RAW
@@ -77,7 +82,7 @@ fn escape_like(s: &str) -> String {
 /// 안 볼 때는 조인을 빼야 한다. `files`만 훑으면 되는 집계에서 14만 번의
 /// rowid 조회가 통째로 사라진다 (실측 타임라인 395ms -> 240ms).
 fn needs_folder_join(f: &Filter) -> bool {
-    f.area.is_some() || f.library_id.is_some()
+    f.area.is_some() || f.library_id.is_some() || f.folder_path.is_some()
 }
 
 /// 필터를 WHERE 절과 파라미터로 바꾼다.
@@ -88,6 +93,13 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     if let Some(id) = f.library_id {
         w.push("fo.library_id = ?".into());
         p.push(Box::new(id));
+    }
+    if let Some(p_) = f.folder_path.as_deref().filter(|s| !s.is_empty()) {
+        // LIKE는 `_`와 `%`를 와일드카드로 본다. 실제 폴더에 `#0_사진백업…`
+        // 같은 이름이 있어 이스케이프가 필수다.
+        w.push("(fo.rel_path = ? OR fo.rel_path LIKE ? ESCAPE '\\')".into());
+        p.push(Box::new(p_.to_string()));
+        p.push(Box::new(format!("{}/%", escape_like(p_))));
     }
     if let Some(id) = f.folder_id {
         // 하위 폴더까지 포함한다. rel_path 접두사로 찾는다.
@@ -396,6 +408,50 @@ mod tests {
         assert!(cursor_at(&db, &f, -5).unwrap().is_none(), "음수도 맨 앞으로");
         // 끝을 넘어가면 행이 없다 — 빈 페이지가 되지 손잡이가 깨지면 안 된다
         assert!(cursor_at(&db, &f, 9999).unwrap().is_none());
+    }
+
+    /// 경로 앞부분으로 폴더와 그 아래를 고른다. 사이드바 트리의 중간 마디는
+    /// DB 행이 없어 id로는 못 고른다.
+    #[test]
+    fn folder_path_selects_the_subtree() {
+        let (_d, db) = seeded();
+        // 폴더 1 = 'a', 폴더 2 = 'a/b', 폴더 3 = 'z'
+        let f = Filter { folder_path: Some("a".into()), ..Default::default() };
+        let n = page(&db, &f, None, 500).unwrap().rows.len();
+        assert_eq!(n, 40, "a(30) + a/b(10)");
+
+        let only_b = Filter { folder_path: Some("a/b".into()), ..Default::default() };
+        assert_eq!(page(&db, &only_b, None, 500).unwrap().rows.len(), 10);
+
+        // 이름이 겹치는 형제를 잡아먹으면 안 된다
+        let none = Filter { folder_path: Some("a/bb".into()), ..Default::default() };
+        assert_eq!(page(&db, &none, None, 500).unwrap().rows.len(), 0);
+    }
+
+    /// LIKE의 `_`는 아무 글자나 매치한다. 실제 라이브러리에 `#0_사진백업…`
+    /// 같은 폴더가 있어 이스케이프하지 않으면 엉뚱한 폴더까지 딸려온다.
+    #[test]
+    fn folder_path_escapes_like_wildcards() {
+        let (dir, db) = seeded();
+        let _ = dir;
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES
+                   (10,'V','p_q','p_q',1),(11,'V','pXq','pXq',1)",
+                [],
+            )?;
+            c.execute(
+                "INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at)
+                 VALUES(101,10,'a.jpg',1,0,1000,0,0),(102,11,'b.jpg',1,0,1000,0,0)",
+                [],
+            )
+        })
+        .unwrap();
+
+        let f = Filter { folder_path: Some("p_q".into()), ..Default::default() };
+        let rows = page(&db, &f, None, 500).unwrap().rows;
+        assert_eq!(rows.len(), 1, "pXq까지 잡히면 안 된다");
+        assert_eq!(rows[0].name, "a.jpg");
     }
 
     #[test]

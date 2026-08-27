@@ -49,13 +49,17 @@ type Stats = {
 /** 캐시 용량 — 디스크를 훑어야 해서 자주 부르지 않는다 */
 type CacheUsage = { bytes: number; files: number };
 type Bucket = { year: number; month: number; count: number; top: number };
+/** 사이드바 트리 한 줄. 중간 마디는 DB 행이 없어 id가 null이다. */
 type FolderRow = {
-  id: number;
+  id: number | null;
+  /** 라이브러리 루트 기준 — 접기의 열쇠 */
+  path: string;
+  /** 볼륨 기준 — 필터로 보낸다 */
   rel_path: string;
   name: string;
-  area: number;
-  file_count: number;
   depth: number;
+  file_count: number;
+  has_children: boolean;
 };
 
 const PAGE = 300;
@@ -91,7 +95,12 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [cache, setCache] = useState<CacheUsage | null>(null);
   const [folders, setFolders] = useState<FolderRow[]>([]);
-  const [folderId, setFolderId] = useState<number | null>(null);
+  /// 고른 폴더. `path`는 트리 표시용(라이브러리 기준), `rel`은 필터용(볼륨 기준).
+  /// 둘을 함께 들고 있어야 한다 — 폴더 목록에서 되찾으려 하면 목록이
+  /// 필터에 얽혀 무한 루프가 된다.
+  const [sel, setSel] = useState<{ path: string; rel: string } | null>(null);
+  /// 펼쳐 둔 마디들 (라이브러리 기준 경로)
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [scanMsg, setScanMsg] = useState<string>("");
   const [thumbSize, setThumbSize] = useState(180);
   const [selected, setSelected] = useState<number | null>(null);
@@ -111,6 +120,8 @@ export default function App() {
   const inflight = useRef(false);
   /// 잠겨 있는 동안 들어온 스크롤바 요청. 마지막 것만 남는다.
   const pending = useRef<number | null>(null);
+  /// 아직 스캔하지 않은 라이브러리들. 하나가 끝나면 다음을 시작한다.
+  const queue = useRef<number[]>([]);
   /// 잠금이 풀릴 때 밀린 요청을 이어받는다 (아래에서 채운다)
   const drain = useRef<() => void>(() => {});
   /// 어떤 경로로 끝나든 여기서만 잠금을 푼다. 안 그러면 밀린 요청이 사라진다.
@@ -120,8 +131,8 @@ export default function App() {
   }, []);
 
   const filter = useMemo(
-    () => ({ library_id: libId, folder_id: folderId }),
-    [libId, folderId],
+    () => ({ library_id: libId, folder_path: sel?.rel ?? null }),
+    [libId, sel],
   );
 
   const loadFirst = useCallback(async () => {
@@ -166,20 +177,27 @@ export default function App() {
   }, []);
 
   // 셋을 한꺼번에 던진다. 줄줄이 await하면 셋의 시간이 그대로 더해진다.
+  // 둘을 한꺼번에 던진다. 줄줄이 await하면 시간이 그대로 더해진다.
   const refreshMeta = useCallback(async () => {
     try {
-      const [st, fo, bk] = await Promise.all([
+      const [st, bk] = await Promise.all([
         invoke<Stats>("library_stats", { libraryId: libId }),
-        invoke<FolderRow[]>("folders_list", { libraryId: libId }),
         invoke<Bucket[]>("files_timeline", { filter }),
       ]);
       setStats(st);
-      setFolders(fo);
       setBuckets(bk);
     } catch {
       /* 아직 등록된 라이브러리가 없을 수 있다 */
     }
   }, [filter, libId]);
+
+  /// 폴더 트리는 라이브러리에만 달려 있다. 필터가 바뀔 때마다 다시 읽으면
+  /// 목록이 필터를 바꾸고 필터가 목록을 다시 읽는 고리가 생긴다.
+  useEffect(() => {
+    invoke<FolderRow[]>("folders_list", { libraryId: libId })
+      .then(setFolders)
+      .catch(() => setFolders([]));
+  }, [libId]);
 
   /// 캐시 용량은 디스크의 파일 12만 개를 훑는다. 폴더를 누를 때마다 하면
   /// 앱이 멈춘 것처럼 보인다 — 시작할 때와 썸네일이 끝났을 때만 센다.
@@ -205,7 +223,7 @@ export default function App() {
     setDone(false);
     loadFirst();
     refreshMeta();
-  }, [libs.length, libId, folderId, loadFirst, refreshMeta]);
+  }, [libs.length, libId, sel, loadFirst, refreshMeta]);
 
   // 스캔·썸네일 진행 상황
   useEffect(() => {
@@ -227,11 +245,19 @@ export default function App() {
       setScanMsg(`썸네일 ${p.done}/${p.total}`);
     }).then((f) => un.push(f));
     listen("thumb-done", () => {
-      setScanMsg("");
       loadFirst();
       refreshMeta();
       refreshLibs();
       refreshCache();
+      const next = queue.current.shift();
+      if (next === undefined) {
+        setScanMsg("");
+      } else {
+        setScanMsg("다음 라이브러리 스캔…");
+        invoke("scan_start", { libraryId: next }).catch((e) =>
+          setScanMsg(String(e)),
+        );
+      }
     }).then((f) => un.push(f));
     listen<string>("scan-error", (e) =>
       setScanMsg(`스캔 실패: ${e.payload}`),
@@ -276,7 +302,11 @@ export default function App() {
       const l = await invoke<Library>("library_add", { path: picked, area: 1 });
       await refreshLibs();
       setLibId(l.id);
-      setFolderId(null);
+      setSel(null);
+      setOpen(new Set());
+      // rescan()을 쓰지 않는다 — 방금 등록한 것이 아직 libs 상태에 없어
+      // "연결된 디스크가 없습니다"로 걸린다. 어차피 방금 고른 폴더다.
+      queue.current = [];
       await invoke("scan_start", { libraryId: l.id });
       setScanMsg("스캔 시작…");
     } catch (e) {
@@ -284,19 +314,32 @@ export default function App() {
     }
   };
 
-  const rescan = async (id: number) => {
-    try {
-      await invoke("scan_start", { libraryId: id });
-      setScanMsg("스캔 시작…");
-    } catch (e) {
-      setScanMsg(String(e));
-    }
-  };
+  /// 고른 라이브러리를 다시 훑는다. 「전체」를 보고 있으면 연결된 것을
+  /// 하나씩 차례로 — 예전에는 libs[0]만 훑어서 두 번째 라이브러리는
+  /// 아무리 눌러도 썸네일이 생기지 않았다.
+  const rescan = useCallback(
+    async (ids: number[]) => {
+      const targets = ids.filter((id) => libs.find((l) => l.id === id)?.online);
+      if (targets.length === 0) {
+        setScanMsg("연결된 디스크가 없습니다");
+        return;
+      }
+      queue.current = targets.slice(1);
+      try {
+        await invoke("scan_start", { libraryId: targets[0] });
+        setScanMsg("스캔 시작…");
+      } catch (e) {
+        setScanMsg(String(e));
+      }
+    },
+    [libs],
+  );
 
   const dropLibrary = async (l: Library) => {
     await invoke("library_remove", { id: l.id });
     if (libId === l.id) setLibId(null);
-    setFolderId(null);
+    setSel(null);
+    setOpen(new Set());
     await refreshLibs();
     loadFirst();
     refreshMeta();
@@ -396,6 +439,34 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [viewerAt, culling, selected, rows]);
 
+  /// 접힌 마디의 자식은 그리지 않는다. 3,161줄을 통째로 그리면 사이드바가
+  /// 느려지고 스크롤 막대가 실오라기가 된다.
+  const visibleFolders = useMemo(
+    () =>
+      folders.filter((f) => {
+        if (f.depth === 0) return true;
+        const parent = f.path.slice(0, f.path.lastIndexOf("/"));
+        // 조상이 전부 펼쳐져 있어야 보인다
+        let p = parent;
+        while (p) {
+          if (!open.has(p)) return false;
+          const i = p.lastIndexOf("/");
+          p = i < 0 ? "" : p.slice(0, i);
+        }
+        return true;
+      }),
+    [folders, open],
+  );
+
+  const toggleOpen = useCallback((path: string) => {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
   /// 스크롤바가 알아야 하는 두 값 — 지금 맨 위 사진의 전역 순번과 한 화면 장수
   const offset = baseIndex + Math.floor(scrollTop / rowH) * cols;
   const pageSize = Math.max(cols, Math.ceil(viewH / rowH) * cols);
@@ -420,7 +491,9 @@ export default function App() {
         {libs.length > 0 && (
           <>
             <button
-              onClick={() => rescan(libId ?? libs[0].id)}
+              onClick={() =>
+                rescan(libId !== null ? [libId] : libs.map((l) => l.id))
+              }
               disabled={!libs.some((l) => l.online)}
               className="h-7 px-3 rounded-md text-[#A3B2B4] ring-1 ring-[#333C3F] disabled:opacity-40"
             >
@@ -457,7 +530,8 @@ export default function App() {
           <button
             onClick={() => {
               setLibId(null);
-              setFolderId(null);
+              setSel(null);
+              setOpen(new Set());
             }}
             className={`w-full text-left px-3 py-1.5 ${
               libId === null ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
@@ -473,7 +547,8 @@ export default function App() {
               <button
                 onClick={() => {
                   setLibId(l.id);
-                  setFolderId(null);
+                  setSel(null);
+                  setOpen(new Set());
                 }}
                 title={l.dir ?? `${l.volume_name}/${l.rel_path} (연결 안 됨)`}
                 className={`w-full text-left px-3 py-1.5 truncate ${
@@ -489,14 +564,24 @@ export default function App() {
                   {l.file_count.toLocaleString()}
                 </span>
               </button>
-              {/* 등록만 지운다 — 원본 사진은 그대로다 */}
-              <button
-                onClick={() => dropLibrary(l)}
-                title="목록에서 빼기 (원본은 그대로)"
-                className="absolute right-1 top-1.5 hidden group-hover:block px-1 text-[#6D7B7E] hover:text-[#E2685C] bg-[#1C2123]"
-              >
-                ✕
-              </button>
+              {/* 이 라이브러리만 다시 훑는다 / 등록만 지운다 */}
+              <div className="absolute right-1 top-1.5 hidden group-hover:flex bg-[#1C2123]">
+                <button
+                  onClick={() => rescan([l.id])}
+                  disabled={!l.online}
+                  title="이 라이브러리 다시 스캔"
+                  className="px-1 text-[#6D7B7E] hover:text-[#49B8B4] disabled:opacity-30"
+                >
+                  ⟳
+                </button>
+                <button
+                  onClick={() => dropLibrary(l)}
+                  title="목록에서 빼기 (원본은 그대로)"
+                  className="px-1 text-[#6D7B7E] hover:text-[#E2685C]"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           ))}
 
@@ -506,11 +591,9 @@ export default function App() {
                 폴더
               </div>
               <button
-                onClick={() => setFolderId(null)}
+                onClick={() => setSel(null)}
                 className={`w-full text-left px-3 py-1 ${
-                  folderId === null
-                    ? "bg-[#232A2C] text-white"
-                    : "text-[#A3B2B4]"
+                  sel === null ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
                 }`}
               >
                 전체{" "}
@@ -518,23 +601,38 @@ export default function App() {
                   {stats?.files.toLocaleString() ?? "—"}
                 </span>
               </button>
-              {folders.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setFolderId(f.id)}
-                  title={f.rel_path}
-                  style={{ paddingLeft: 12 + f.depth * 10 }}
-                  className={`w-full text-left pr-3 py-1 truncate ${
-                    folderId === f.id
-                      ? "bg-[#232A2C] text-white"
-                      : "text-[#A3B2B4]"
+              {visibleFolders.map((f) => (
+                <div
+                  key={f.path}
+                  className={`flex items-center pr-2 ${
+                    sel?.path === f.path ? "bg-[#232A2C]" : ""
                   }`}
+                  style={{ paddingLeft: 6 + f.depth * 11 }}
                 >
-                  {f.name}{" "}
-                  <span className="text-[#5F6C6E] tabular-nums text-[11px]">
-                    {f.file_count}
+                  {/* 펼침 삼각형 — 자식이 없으면 자리만 차지한다 */}
+                  <button
+                    onClick={() => f.has_children && toggleOpen(f.path)}
+                    className={`w-4 shrink-0 text-[9px] ${
+                      f.has_children
+                        ? "text-[#7C8A8D] hover:text-white"
+                        : "text-transparent"
+                    }`}
+                  >
+                    {open.has(f.path) ? "▼" : "▶"}
+                  </button>
+                  <button
+                    onClick={() => setSel({ path: f.path, rel: f.rel_path })}
+                    title={f.path}
+                    className={`flex-1 min-w-0 text-left py-1 truncate ${
+                      sel?.path === f.path ? "text-white" : "text-[#A3B2B4]"
+                    }`}
+                  >
+                    {f.name}
+                  </button>
+                  <span className="text-[#5F6C6E] tabular-nums text-[11px] shrink-0 pl-1.5">
+                    {f.file_count.toLocaleString()}
                   </span>
-                </button>
+                </div>
               ))}
             </div>
           )}

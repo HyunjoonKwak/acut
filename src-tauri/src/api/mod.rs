@@ -13,6 +13,7 @@ pub mod thumb_protocol;
 use crate::db::conn::Db;
 use crate::db::libraries::Library as LibRow;
 use crate::db::query::{self, Cursor, Filter, Page};
+use crate::db::tree;
 use crate::media::cache;
 use crate::scan;
 use serde::Serialize;
@@ -253,45 +254,55 @@ pub fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result<Summa
 
 // ── 사이드바 ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
-pub struct FolderRow {
-    pub id: i64,
-    pub rel_path: String,
-    pub name: String,
-    pub area: i32,
-    pub file_count: i64,
-    pub depth: usize,
-}
-
-/// 폴더 트리. 파일이 하나도 없는 폴더는 빼서 사이드바를 짧게 유지한다.
+/// 사이드바 폴더 트리. 라이브러리를 고른 뒤에만 의미가 있다.
+///
+/// 스캐너는 파일이 든 폴더만 기록하므로 중간 마디는 [`tree::build`]가 만든다.
 #[tauri::command]
 pub fn folders_list(
     state: State<'_, AppState>,
     library_id: Option<i64>,
-) -> Result<Vec<FolderRow>, String> {
-    state
+) -> Result<Vec<tree::Node>, String> {
+    // 라이브러리를 고르지 않았으면 폴더를 주지 않는다. 두 라이브러리의 트리를
+    // 한 줄로 늘어놓으면 4,476개가 되어 읽을 수도 없고 느리다.
+    let Some(library_id) = library_id else {
+        return Ok(Vec::new());
+    };
+    let library_rel: String = state
         .db
         .read(|c| {
-            // library_id가 없으면 전부. NULL 비교는 IS로 해야 한다.
+            c.query_row("SELECT rel_path FROM libraries WHERE id = ?1", [library_id], |r| {
+                r.get(0)
+            })
+        })
+        .map_err(err)?;
+
+    let leaves: Vec<tree::Leaf> = state
+        .db
+        .read(|c| {
+            // rel_path는 **볼륨** 기준이라 라이브러리 루트만큼 앞이 길다.
+            // 그대로 쓰면 들여쓰기가 통째로 밀린다. 여기서 잘라 낸다.
             let mut st = c.prepare(
-                "SELECT id, rel_path, name, area, file_count FROM folders
-                 WHERE (?1 IS NULL OR library_id = ?1) AND file_count > 0
-                 ORDER BY rel_path",
+                "SELECT fo.id,
+                        CASE WHEN l.rel_path = '' THEN fo.rel_path
+                             ELSE substr(fo.rel_path, length(l.rel_path) + 2) END,
+                        fo.rel_path, fo.file_count
+                 FROM folders fo JOIN libraries l ON l.id = fo.library_id
+                 WHERE fo.library_id = ?1 AND fo.file_count > 0
+                 ORDER BY fo.rel_path",
             )?;
             let it = st.query_map([library_id], |r| {
-                let rel_path: String = r.get(1)?;
-                Ok(FolderRow {
+                Ok(tree::Leaf {
                     id: r.get(0)?,
-                    depth: rel_path.matches('/').count(),
-                    rel_path,
-                    name: r.get(2)?,
-                    area: r.get(3)?,
-                    file_count: r.get(4)?,
+                    path: r.get(1)?,
+                    rel_path: r.get(2)?,
+                    file_count: r.get(3)?,
                 })
             })?;
             it.collect::<rusqlite::Result<Vec<_>>>()
         })
-        .map_err(err)
+        .map_err(err)?;
+
+    Ok(tree::build(leaves, &library_rel))
 }
 
 // ── 상태 ───────────────────────────────────────────────────────────────

@@ -18,7 +18,8 @@ use crate::scan;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// 앱이 살아 있는 동안 유지되는 상태.
@@ -30,6 +31,12 @@ pub struct AppState {
     pub db: Arc<Db>,
     /// 스캔·썸네일 생성을 멈추는 스위치.
     pub cancel: Arc<AtomicBool>,
+    /// 라이브러리 id → 실제 폴더.
+    ///
+    /// `thumb://`는 **썸네일 한 장마다** 이걸 부른다. 한 화면에 200장이면
+    /// 200번이다. 매번 DB를 읽고 `/Volumes`를 훑으면 그리드가 그대로 멈춘다.
+    /// 등록이 바뀔 때만 비운다.
+    dirs: Mutex<HashMap<i64, PathBuf>>,
 }
 
 impl AppState {
@@ -37,6 +44,41 @@ impl AppState {
         Self {
             db: Arc::new(db),
             cancel: Arc::new(AtomicBool::new(false)),
+            dirs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// 라이브러리의 실제 폴더. 없으면 디스크가 빠진 것이다.
+    ///
+    /// 한 번 찾은 것은 기억한다. 디스크를 뽑았다 꽂으면 경로가 달라질 수
+    /// 있는데, 그건 `forget_dirs()`를 부르는 쪽(등록 변경·스캔 시작)에서 처리한다.
+    pub fn library_dir(&self, id: i64) -> Option<PathBuf> {
+        if let Ok(m) = self.dirs.lock() {
+            if let Some(p) = m.get(&id) {
+                return Some(p.clone());
+            }
+        }
+        let (uuid, rel): (String, String) = self
+            .db
+            .read(|c| {
+                c.query_row(
+                    "SELECT volume_uuid, rel_path FROM libraries WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .ok()?;
+        let dir = crate::db::libraries::dir_of(&uuid, &rel)?;
+        if let Ok(mut m) = self.dirs.lock() {
+            m.insert(id, dir.clone());
+        }
+        Some(dir)
+    }
+
+    /// 기억해 둔 경로를 버린다. 등록이 바뀌거나 디스크 상태가 달라졌을 때.
+    pub fn forget_dirs(&self) {
+        if let Ok(mut m) = self.dirs.lock() {
+            m.clear();
         }
     }
 }
@@ -60,13 +102,17 @@ pub fn library_add(state: State<'_, AppState>, path: String, area: i32) -> Resul
     if !dir.is_dir() {
         return Err(format!("폴더가 아닙니다: {path}"));
     }
-    crate::db::libraries::add(&state.db, &dir, area)
+    let r = crate::db::libraries::add(&state.db, &dir, area);
+    state.forget_dirs();
+    r
 }
 
 /// 등록을 지운다. **원본 사진과 디스크의 캐시 파일은 건드리지 않는다.**
 #[tauri::command]
 pub fn library_remove(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    crate::db::libraries::remove(&state.db, id).map_err(err)
+    let r = crate::db::libraries::remove(&state.db, id).map_err(err);
+    state.forget_dirs();
+    r
 }
 
 /// 등록된 볼륨 목록 (연결 여부 포함).
@@ -256,49 +302,77 @@ pub struct LibraryStats {
     pub bytes: i64,
     pub thumbs_done: i64,
     pub thumbs_pending: i64,
-    pub cache_bytes: u64,
-    pub cache_files: usize,
 }
 
 /// 상태바에 띄울 값들. `library_id`가 없으면 등록된 전부를 합친다.
+///
+/// **캐시 용량은 여기서 세지 않는다.** 디스크의 파일 12만 개를 훑는 일이라
+/// 1초쯤 걸린다. 폴더를 누를 때마다 그걸 하면 앱이 멈춘 것처럼 보인다.
+/// 캐시 용량은 [`cache_usage`]로 따로, 가끔만 부른다.
 #[tauri::command]
 pub fn library_stats(
     state: State<'_, AppState>,
     library_id: Option<i64>,
 ) -> Result<LibraryStats, String> {
-    let (files, bytes, done): (i64, i64, i64) = state
+    let (files, bytes): (i64, i64) = state
         .db
         .read(|c| {
             c.query_row(
-                "SELECT COUNT(*), COALESCE(SUM(fi.size),0),
-                        COALESCE(SUM(CASE WHEN t.state=1 THEN 1 ELSE 0 END),0)
-                 FROM files fi
-                 JOIN folders fo ON fo.id=fi.folder_id
-                 LEFT JOIN thumbs t ON t.file_id=fi.id
+                "SELECT COUNT(*), COALESCE(SUM(fi.size),0)
+                 FROM files fi JOIN folders fo ON fo.id=fi.folder_id
                  WHERE (?1 IS NULL OR fo.library_id = ?1)",
                 [library_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
         })
         .map_err(err)?;
-
-    // 캐시는 라이브러리마다 따로 있다. 합쳐서 보여준다.
-    let libs = crate::db::libraries::list(&state.db).map_err(err)?;
-    let (cache_bytes, cache_files) = libs
-        .iter()
-        .filter(|l| library_id.is_none_or(|id| l.id == id))
-        .filter_map(|l| l.dir.as_deref())
-        .map(|d| cache::cache_stats(&cache::cache_root(d)))
-        .fold((0u64, 0usize), |(b, n), (db_, dn)| (b + db_, n + dn));
+    // thumbs를 따로 센다. LEFT JOIN으로 14만 행을 훑는 것보다 빠르다 —
+    // 이쪽은 thumbs 테이블만 보면 된다.
+    let done: i64 = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM thumbs t
+                 JOIN files fi ON fi.id = t.file_id
+                 JOIN folders fo ON fo.id = fi.folder_id
+                 WHERE t.state = 1 AND (?1 IS NULL OR fo.library_id = ?1)",
+                [library_id],
+                |r| r.get(0),
+            )
+        })
+        .map_err(err)?;
 
     Ok(LibraryStats {
         files,
         bytes,
         thumbs_done: done,
         thumbs_pending: files - done,
-        cache_bytes,
-        cache_files,
     })
+}
+
+#[derive(Debug, Serialize)]
+pub struct CacheUsage {
+    pub bytes: u64,
+    pub files: usize,
+}
+
+/// 썸네일·미리보기 캐시가 디스크에서 차지하는 용량.
+///
+/// 폴더를 통째로 훑으므로 느리다. 앱 시작과 썸네일 생성이 끝났을 때만 부른다.
+#[tauri::command]
+pub fn cache_usage(
+    state: State<'_, AppState>,
+    library_id: Option<i64>,
+) -> Result<CacheUsage, String> {
+    let libs = crate::db::libraries::list(&state.db).map_err(err)?;
+    let (bytes, files) = libs
+        .iter()
+        .filter(|l| library_id.is_none_or(|id| l.id == id))
+        .filter_map(|l| l.dir.as_deref())
+        .flat_map(|d| [cache::cache_root(d), cache::preview_root(d)])
+        .map(|root| cache::cache_stats(&root))
+        .fold((0u64, 0usize), |(b, n), (rb, rn)| (b + rb, n + rn));
+    Ok(CacheUsage { bytes, files })
 }
 
 /// 파일 하나의 상세 (인스펙터용).

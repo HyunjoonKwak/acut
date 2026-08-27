@@ -45,9 +45,9 @@ type Stats = {
   bytes: number;
   thumbs_done: number;
   thumbs_pending: number;
-  cache_bytes: number;
-  cache_files: number;
 };
+/** 캐시 용량 — 디스크를 훑어야 해서 자주 부르지 않는다 */
+type CacheUsage = { bytes: number; files: number };
 type Bucket = { year: number; month: number; count: number; top: number };
 type FolderRow = {
   id: number;
@@ -89,6 +89,7 @@ export default function App() {
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [cache, setCache] = useState<CacheUsage | null>(null);
   const [folders, setFolders] = useState<FolderRow[]>([]);
   const [folderId, setFolderId] = useState<number | null>(null);
   const [scanMsg, setScanMsg] = useState<string>("");
@@ -164,22 +165,37 @@ export default function App() {
     setLibs(await invoke<Library[]>("libraries_list"));
   }, []);
 
+  // 셋을 한꺼번에 던진다. 줄줄이 await하면 셋의 시간이 그대로 더해진다.
   const refreshMeta = useCallback(async () => {
     try {
-      setStats(await invoke<Stats>("library_stats", { libraryId: libId }));
-      setFolders(
-        await invoke<FolderRow[]>("folders_list", { libraryId: libId }),
-      );
-      setBuckets(await invoke<Bucket[]>("files_timeline", { filter }));
+      const [st, fo, bk] = await Promise.all([
+        invoke<Stats>("library_stats", { libraryId: libId }),
+        invoke<FolderRow[]>("folders_list", { libraryId: libId }),
+        invoke<Bucket[]>("files_timeline", { filter }),
+      ]);
+      setStats(st);
+      setFolders(fo);
+      setBuckets(bk);
     } catch {
       /* 아직 등록된 라이브러리가 없을 수 있다 */
     }
   }, [filter, libId]);
 
+  /// 캐시 용량은 디스크의 파일 12만 개를 훑는다. 폴더를 누를 때마다 하면
+  /// 앱이 멈춘 것처럼 보인다 — 시작할 때와 썸네일이 끝났을 때만 센다.
+  const refreshCache = useCallback(async () => {
+    try {
+      setCache(await invoke<CacheUsage>("cache_usage", { libraryId: null }));
+    } catch {
+      /* 디스크가 빠져 있을 수 있다 */
+    }
+  }, []);
+
   // 앱 시작 — 등록된 라이브러리를 읽어 온다
   useEffect(() => {
     refreshLibs();
-  }, [refreshLibs]);
+    refreshCache();
+  }, [refreshLibs, refreshCache]);
 
   // 보는 라이브러리나 폴더가 바뀌면 목록을 새로 읽는다
   useEffect(() => {
@@ -215,12 +231,13 @@ export default function App() {
       loadFirst();
       refreshMeta();
       refreshLibs();
+      refreshCache();
     }).then((f) => un.push(f));
     listen<string>("scan-error", (e) =>
       setScanMsg(`스캔 실패: ${e.payload}`),
     ).then((f) => un.push(f));
     return () => un.forEach((f) => f());
-  }, [loadFirst, refreshMeta, refreshLibs]);
+  }, [loadFirst, refreshMeta, refreshLibs, refreshCache]);
 
   // ── 가상 스크롤 ──────────────────────────────────────────────────
   const [cols, setCols] = useState(6);
@@ -660,9 +677,11 @@ export default function App() {
                 </span>
               )}
             </span>
-            <span className="text-[#5F6C6E]">
-              캐시 {fmtBytes(stats.cache_bytes)}
-            </span>
+            {cache && (
+              <span className="text-[#5F6C6E]">
+                캐시 {fmtBytes(cache.bytes)}
+              </span>
+            )}
           </>
         )}
         <div className="flex-1" />

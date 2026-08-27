@@ -85,6 +85,7 @@ pub fn run() {
             api::library_add,
             api::library_remove,
             api::library_stats,
+            api::cache_usage,
             api::volumes_list,
             api::scan_start,
             api::scan_cancel,

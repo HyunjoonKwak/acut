@@ -7,6 +7,7 @@ import Cull from "./Cull";
 import Viewer from "./Viewer";
 import ScrollBar from "./ScrollBar";
 import Organize from "./Organize";
+import { useCountUp } from "./useCountUp";
 import FilterBar, {
   EMPTY as EMPTY_PICKS,
   isEmpty as picksAreEmpty,
@@ -132,6 +133,12 @@ export default function App() {
   const [toClean, setToClean] = useState<Counted | null>(null);
   const [busy, setBusy] = useState("");
   const [scanMsg, setScanMsg] = useState<string>("");
+  /// 진행 중인 작업의 (한 일, 전체). 숫자는 화면에서 한 칸씩 따라 오른다.
+  const [job, setJob] = useState<{
+    label: string;
+    done: number;
+    total: number;
+  } | null>(null);
   const [thumbSize, setThumbSize] = useState(180);
   /// 키보드·뷰어가 기준으로 삼는 한 장
   const [selected, setSelected] = useState<number | null>(null);
@@ -298,33 +305,39 @@ export default function App() {
       "scan-progress",
       (e) => {
         const p = e.payload;
-        setScanMsg(`스캔 ${p.inserted + p.skipped}/${p.found}`);
+        setScanMsg("");
+        setJob({ label: "스캔", done: p.inserted + p.skipped, total: p.found });
       },
     ).then((f) => un.push(f));
     listen("scan-done", () => {
-      setScanMsg("스캔 완료 — 썸네일 생성 중");
+      setScanMsg("스캔 완료 — 썸네일 만드는 중");
+      setJob(null);
       loadFirst();
       refreshMeta();
     }).then((f) => un.push(f));
     listen<{ done: number; total: number }>("thumb-progress", (e) => {
-      const p = e.payload;
-      setScanMsg(`썸네일 ${p.done.toLocaleString()}/${p.total.toLocaleString()}`);
+      setScanMsg("");
+      setJob({ label: "썸네일", done: e.payload.done, total: e.payload.total });
     }).then((f) => un.push(f));
     // 2차 — 작게 나온 것을 원본에서 다시 뽑는다. 그 사이에도 앱은 쓸 수 있다.
     listen<{ done: number; total: number }>("upgrade-progress", (e) => {
-      const p = e.payload;
-      setScanMsg(
-        `화질 올리는 중 ${p.done.toLocaleString()}/${p.total.toLocaleString()} — 그냥 쓰셔도 됩니다`,
-      );
+      setScanMsg("");
+      setJob({
+        label: "화질 올리는 중 — 그냥 쓰셔도 됩니다",
+        done: e.payload.done,
+        total: e.payload.total,
+      });
     }).then((f) => un.push(f));
     listen("upgrade-done", () => {
       setScanMsg("");
+      setJob(null);
       loadFirst();
       refreshMeta();
       refreshCache();
     }).then((f) => un.push(f));
     listen("thumb-done", () => {
-      setScanMsg("썸네일 완료 — 화질을 올리는 중입니다");
+      setScanMsg("썸네일 완료 — 화질을 올립니다");
+      setJob(null);
       loadFirst();
       refreshMeta();
       refreshLibs();
@@ -778,7 +791,10 @@ export default function App() {
           </>
         )}
         <div className="flex-1" />
-        {scanMsg && (
+        {job && (
+          <Progress label={job.label} done={job.done} total={job.total} />
+        )}
+        {!job && scanMsg && (
           <span className="text-[#F0B429] tabular-nums">{scanMsg}</span>
         )}
         <input
@@ -1209,5 +1225,24 @@ export default function App() {
         <span>표시 {rows.length.toLocaleString()}</span>
       </div>
     </div>
+  );
+}
+
+/// 진행 표시 — 숫자가 한 칸씩 올라간다.
+function Progress({
+  label,
+  done,
+  total,
+}: {
+  label: string;
+  done: number;
+  total: number;
+}) {
+  const n = useCountUp(done);
+  return (
+    <span className="text-[#F0B429] tabular-nums">
+      {label} {n.toLocaleString()}
+      {total > 0 && ` / ${total.toLocaleString()}`}
+    </span>
   );
 }

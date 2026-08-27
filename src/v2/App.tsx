@@ -8,6 +8,8 @@ import Filmstrip from "./Filmstrip";
 import Import from "./Import";
 import Organize from "./Organize";
 import PhotoGrid from "./PhotoGrid";
+import Preview from "./Preview";
+import ScrollBar from "./ScrollBar";
 import RenameDialog from "./RenameDialog";
 import SelectionPanel from "./SelectionPanel";
 import Shortcuts from "./Shortcuts";
@@ -257,30 +259,46 @@ export default function App() {
         {/* 콘텐츠 영역 — 뷰어는 이 안만 덮는다. 왼쪽 폴더 목록은 계속 보인다.
             세로로 나눈다: 위는 필름스트립, 아래는 그리드와 타임라인. */}
         <div className="flex-1 flex flex-col min-w-0 relative">
-          {filmstrip && (
-            <Filmstrip
-              files={rows}
-              thumbUrl={thumbUrl}
-              selectedId={selected}
+          {filmstrip ? (
+            /* 필름스트립 — 위는 띠, 아래는 고른 한 장 (Lap의 Content.vue) */
+            <>
+              <Filmstrip
+                files={rows}
+                thumbUrl={thumbUrl}
+                selectedId={selected}
+                onPick={pick}
+                onOpen={openViewer}
+                onNearEnd={loadMore}
+              />
+              <div className="flex-1 flex min-h-0 min-w-0 relative">
+                <Preview
+                  file={focusAt >= 0 ? rows[focusAt] : null}
+                  onOpen={() => focusAt >= 0 && openViewer(focusAt)}
+                />
+                <ScrollBar
+                  buckets={buckets}
+                  offset={list.baseIndex + Math.max(0, focusAt)}
+                  pageSize={1}
+                  onSeek={list.seekTo}
+                />
+              </div>
+            </>
+          ) : (
+            <PhotoGrid
+              loading={list.loading}
+              empty={libs.length === 0}
+              layout={layout}
+              baseIndex={list.baseIndex}
+              buckets={buckets}
+              caption={caption}
+              gridStyle={gridStyle}
+              group={group}
               onPick={pick}
               onOpen={openViewer}
-              onNearEnd={loadMore}
+              onContext={openContext}
+              onSeek={list.seekTo}
             />
           )}
-          <PhotoGrid
-            loading={list.loading}
-            empty={libs.length === 0}
-            layout={layout}
-            baseIndex={list.baseIndex}
-            buckets={buckets}
-            caption={caption}
-            gridStyle={gridStyle}
-            group={group}
-            onPick={pick}
-            onOpen={openViewer}
-            onContext={openContext}
-            onSeek={list.seekTo}
-          />
 
           {ui.organizing && libId !== null && (
             <Organize

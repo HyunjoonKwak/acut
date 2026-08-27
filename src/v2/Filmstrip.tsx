@@ -15,8 +15,8 @@ export type StripFile = {
 };
 
 /** 한 칸의 크기 (px). 세로는 여백까지 합쳐 STRIP_H가 된다. */
-const W = 96;
-const H = 72;
+const W = 128;
+const H = 96;
 const GAP = 6;
 export const STRIP_H = H + 22;
 

@@ -28,6 +28,7 @@ export default function StatusActions({
   const batches = useData((s) => s.batches);
   const stats = useData((s) => s.stats);
   const viewTrash = useView((s) => s.viewTrash);
+  const noThumb = useView((s) => s.picks.no_thumb);
   const hasJob = useJob((s) => s.job !== null);
   const undoable = batches.find((b) => b.undone_at === null);
 
@@ -82,11 +83,21 @@ export default function StatusActions({
       )}
       {stats && stats.thumbs_pending > 0 && !hasJob && (
         <button
-          onClick={() => useView.getState().patchPicks({ no_thumb: true })}
-          title="썸네일을 못 만들었거나 아직 안 만든 사진입니다. 누르면 그것만 봅니다. 다시 스캔하면 다시 만들어 봅니다."
-          className="text-fg-mute hover:text-fg"
+          onClick={() => useView.getState().patchPicks({ no_thumb: !noThumb })}
+          title={
+            noThumb
+              ? "누르면 다시 전체를 봅니다"
+              : "썸네일을 못 만들었거나 아직 안 만든 사진입니다. 누르면 그것만 봅니다. 다시 스캔하면 다시 만들어 봅니다."
+          }
+          className={
+            noThumb
+              ? "px-1.5 rounded bg-accent text-accent-fg font-semibold"
+              : "text-fg-mute hover:text-fg"
+          }
         >
-          썸네일 없음 {stats.thumbs_pending.toLocaleString()}장
+          {noThumb
+            ? `썸네일 없음 ${stats.thumbs_pending.toLocaleString()}장만 보는 중 ✕`
+            : `썸네일 없음 ${stats.thumbs_pending.toLocaleString()}장`}
         </button>
       )}
     </>

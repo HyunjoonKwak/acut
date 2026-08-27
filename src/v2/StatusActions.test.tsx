@@ -40,6 +40,23 @@ describe("상태바 오른쪽", () => {
     expect(noop.cleanExcluded).toHaveBeenCalled();
   });
 
+  it("«썸네일 없음»을 누르면 그것만 보고, 다시 누르면 풀린다", async () => {
+    useData.setState({
+      stats: { files: 100, bytes: 1, thumbs_done: 86, thumbs_pending: 14 },
+    });
+    useView.setState({
+      picks: { ...useView.getState().picks, no_thumb: false },
+    });
+    const { rerender } = render(<StatusActions {...noop} />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "썸네일 없음 14장" }),
+    );
+    expect(useView.getState().picks.no_thumb).toBe(true);
+    rerender(<StatusActions {...noop} />);
+    await userEvent.click(screen.getByRole("button", { name: /만 보는 중/ }));
+    expect(useView.getState().picks.no_thumb).toBe(false);
+  });
+
   it("휴지통을 보고 있으면 되돌리기·비우기", () => {
     useView.setState({ viewTrash: true });
     render(<StatusActions {...noop} />);

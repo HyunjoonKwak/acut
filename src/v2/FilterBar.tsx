@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Btn, Menu } from "./ui";
 
 /** 백엔드 `db::query::Filter`에서 사용자가 고르는 부분만 */
 export type Picks = {
@@ -40,27 +41,26 @@ const KINDS = [
   { v: 1, label: "영상" },
   { v: 2, label: "RAW" },
 ];
-const FLAGS = [
-  { v: 1, label: "남김", on: "#F0B429", fg: "#231A00" },
-  { v: 2, label: "제외", on: "#E2685C", fg: "#2A0D09" },
-  { v: 0, label: "미판정", on: "#3E4A4C", fg: "#EAEFEF" },
-];
+const FLAGS: { v: number; label: string; tone: "keep" | "drop" | undefined }[] =
+  [
+    { v: 1, label: "남김", tone: "keep" },
+    { v: 2, label: "제외", tone: "drop" },
+    { v: 0, label: "미판정", tone: undefined },
+  ];
 
 /**
- * 툴바의 찾기 줄.
+ * 찾기 — 툴바의 버튼 하나와 그 안의 팝오버.
  *
- * 스키마와 백엔드 필터는 처음부터 Lap 수준으로 만들어 뒀다 — 여기서 하는 일은
- * 그걸 누를 수 있게 꺼내 놓는 것뿐이다.
+ * 예전에는 툴바 아래 상시 줄이었다. 필터를 안 쓸 때도 사진 한 줄만큼을
+ * 차지했고, 정렬·묶기·보기가 같은 줄에 끼면서 무엇이 무엇인지 흐려졌다.
+ * 지금은 걸린 조건이 있을 때만 버튼에 표시가 붙는다.
  */
-export default function FilterBar({
+export default function FilterButton({
   value,
   onChange,
-  children,
 }: {
   value: Picks;
   onChange: (p: Picks) => void;
-  /** 정렬·그룹 같은 이웃 도구. 같은 줄에 놓는다. */
-  children?: React.ReactNode;
 }) {
   const [text, setText] = useState(value.name_like ?? "");
   const set = (patch: Partial<Picks>) => onChange({ ...value, ...patch });
@@ -79,113 +79,149 @@ export default function FilterBar({
     return () => clearTimeout(t);
   }, [text]);
 
-  // 밖에서 필터를 비우면 입력칸도 따라 비운다
   useEffect(() => {
     if (value.name_like === null) setText((t) => (t.trim() === "" ? t : ""));
   }, [value.name_like]);
 
-  /// 켜진 칩에 색을 직접 줄 때는 배경 클래스를 비운다 (style이 이긴다)
-  const chip = (active: boolean, colored = false) =>
-    `h-6 px-2 rounded text-[11.5px] whitespace-nowrap ${
-      active
-        ? colored
-          ? ""
-          : "bg-[#2E3739] text-white"
-        : "text-[#8D9A9C] hover:text-[#EAEFEF]"
-    }`;
+  const on = !isEmpty(value);
 
   return (
-    <div className="h-9 shrink-0 flex items-center gap-1.5 px-3 bg-[#1B2123] border-b border-[#242C2E]">
-      <input
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="파일명"
-        className="h-6 w-36 px-2 rounded bg-[#141A1B] text-[12px] text-[#EAEFEF] placeholder:text-[#4E5A5C] outline-none ring-1 ring-[#2A3335] focus:ring-[#49B8B4]"
-      />
-
-      <Sep />
-      {KINDS.map((k) => (
-        <button
-          key={k.v}
-          onClick={() => set({ kind: value.kind === k.v ? null : k.v })}
-          className={chip(value.kind === k.v)}
-        >
-          {k.label}
-        </button>
-      ))}
-
-      <Sep />
-      {FLAGS.map((f) => {
-        const on = value.culling_flag === f.v;
-        return (
-          <button
-            key={f.v}
-            onClick={() => set({ culling_flag: on ? null : f.v })}
-            className={chip(on, true)}
-            style={on ? { background: f.on, color: f.fg } : undefined}
-          >
-            {f.label}
-          </button>
-        );
-      })}
-
-      <Sep />
-      {/* 별점은 "이 값 이상" — 4를 누르면 4·5가 나온다 */}
-      <div className="flex items-center gap-0.5">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            title={`별 ${n}개 이상`}
-            onClick={() =>
-              set({ min_rating: value.min_rating === n ? null : n })
-            }
-            className={`w-5 h-6 text-[13px] ${
-              (value.min_rating ?? 0) >= n
-                ? "text-[#F0B429]"
-                : "text-[#3A4547] hover:text-[#5F6C6E]"
-            }`}
-          >
-            ★
-          </button>
-        ))}
-      </div>
-
-      <button
-        onClick={() => set({ favorite_only: !value.favorite_only })}
-        title="즐겨찾기만"
-        className={`w-6 h-6 text-[13px] ${
-          value.favorite_only
-            ? "text-[#E2685C]"
-            : "text-[#3A4547] hover:text-[#5F6C6E]"
-        }`}
-      >
-        ♥
-      </button>
-
-      {children && (
-        <>
-          <div className="flex-1" />
-          {children}
-        </>
+    <Menu
+      align="right"
+      width={250}
+      trigger={() => (
+        <Btn active={on} title="찾기">
+          <span className={on ? "text-accent" : undefined}>⌕</span>
+          찾기
+          {on && <span className="w-1.5 h-1.5 rounded-full bg-accent" />}
+        </Btn>
       )}
-      {!isEmpty(value) && (
-        <>
-          <Sep />
-          <button
-            onClick={() => {
-              setText("");
-              onChange(EMPTY);
-            }}
-            className="h-6 px-2 rounded text-[11.5px] text-[#8D9A9C] ring-1 ring-[#333C3F]"
-          >
-            찾기 해제
-          </button>
-        </>
+    >
+      {(close) => (
+        <div className="px-3 py-2 flex flex-col gap-3">
+          <input
+            value={text}
+            autoFocus
+            onChange={(e) => setText(e.target.value)}
+            placeholder="파일명"
+            className="h-control px-2 rounded-md bg-canvas text-[12.5px] text-fg
+              placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
+          />
+
+          <Group label="종류">
+            {KINDS.map((k) => (
+              <Chip
+                key={k.v}
+                on={value.kind === k.v}
+                onClick={() => set({ kind: value.kind === k.v ? null : k.v })}
+              >
+                {k.label}
+              </Chip>
+            ))}
+          </Group>
+
+          <Group label="판정">
+            {FLAGS.map((f) => (
+              <Chip
+                key={f.v}
+                on={value.culling_flag === f.v}
+                tone={f.tone}
+                onClick={() =>
+                  set({ culling_flag: value.culling_flag === f.v ? null : f.v })
+                }
+              >
+                {f.label}
+              </Chip>
+            ))}
+          </Group>
+
+          <Group label="별점 이상">
+            <div className="flex items-center gap-0.5">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  onClick={() =>
+                    set({ min_rating: value.min_rating === n ? null : n })
+                  }
+                  className={`w-5 h-6 text-[13px] ${
+                    (value.min_rating ?? 0) >= n
+                      ? "text-keep"
+                      : "text-fg-faint hover:text-fg-mute"
+                  }`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            <Chip
+              on={value.favorite_only}
+              tone="drop"
+              onClick={() => set({ favorite_only: !value.favorite_only })}
+            >
+              ♥ 즐겨찾기
+            </Chip>
+          </Group>
+
+          {on && (
+            <button
+              onClick={() => {
+                setText("");
+                onChange(EMPTY);
+                close();
+              }}
+              className="h-control rounded-md text-[12px] text-fg-dim ring-1 ring-line-strong hover:bg-hover"
+            >
+              조건 모두 지우기
+            </button>
+          )}
+        </div>
       )}
+    </Menu>
+  );
+}
+
+function Group({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[10px] uppercase tracking-[0.08em] text-fg-faint">
+        {label}
+      </span>
+      <div className="flex flex-wrap items-center gap-1.5">{children}</div>
     </div>
   );
 }
 
-function Sep() {
-  return <span className="w-px h-4 bg-[#2A3335] mx-1" />;
+function Chip({
+  children,
+  on,
+  tone,
+  onClick,
+}: {
+  children: React.ReactNode;
+  on: boolean;
+  tone?: "keep" | "drop";
+  onClick: () => void;
+}) {
+  const active =
+    tone === "keep"
+      ? "bg-keep text-keep-fg"
+      : tone === "drop"
+        ? "bg-drop text-drop-fg"
+        : "bg-accent text-accent-fg";
+  return (
+    <button
+      onClick={onClick}
+      className={`h-6 px-2 rounded text-[11.5px] whitespace-nowrap transition-colors ${
+        on ? active : "text-fg-dim ring-1 ring-line-strong hover:text-fg"
+      }`}
+    >
+      {children}
+    </button>
+  );
 }

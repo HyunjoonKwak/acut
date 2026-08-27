@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Btn, Menu, MenuItem } from "./ui";
 
 /** 백엔드 `db::query::GroupBy`와 이름이 같아야 한다 */
 export type GroupBy =
@@ -33,54 +33,32 @@ export default function GroupMenu({
   value: GroupBy;
   onChange: (g: GroupBy) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => {
-      if (!box.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", away);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", away);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [open]);
-
   const cur = ITEMS.find((i) => i.by === value) ?? ITEMS[0];
-
+  const on = value !== "none";
   return (
-    <div ref={box} className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title="묶어 보기"
-        className={`h-7 px-2.5 rounded-md text-[12.5px] ring-1 ring-[#333C3F] ${
-          value === "none" ? "text-[#A3B2B4]" : "text-[#49B8B4]"
-        }`}
-      >
-        ▤ {cur.label}
-      </button>
-      {open && (
-        <div className="absolute right-0 top-8 z-30 min-w-[120px] bg-[#232A2C] rounded-md ring-1 ring-[#3B4649] shadow-xl py-1">
-          {ITEMS.map((i) => (
-            <button
-              key={i.by}
-              onClick={() => {
-                onChange(i.by);
-                setOpen(false);
-              }}
-              className={`block w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-[#2E3739] ${
-                i.by === value ? "text-[#49B8B4]" : "text-[#A3B2B4]"
-              }`}
-            >
-              {i.label}
-            </button>
-          ))}
-        </div>
+    <Menu
+      align="right"
+      trigger={() => (
+        <Btn active={on} title="묶어 보기">
+          <span className={on ? "text-accent" : undefined}>▤</span>
+          {on ? cur.label : "묶기"}
+        </Btn>
       )}
-    </div>
+    >
+      {(close) =>
+        ITEMS.map((i) => (
+          <MenuItem
+            key={i.by}
+            selected={i.by === value}
+            onClick={() => {
+              onChange(i.by);
+              close();
+            }}
+          >
+            {i.label}
+          </MenuItem>
+        ))
+      }
+    </Menu>
   );
 }

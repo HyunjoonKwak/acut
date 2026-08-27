@@ -190,9 +190,9 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   const total = summary.reduce((a, s) => a + s.reclaimable, 0);
 
   return (
-    <div className="fixed inset-0 bg-[#15191A] text-[#EAEFEF] flex flex-col z-50">
+    <div className="fixed inset-0 bg-canvas text-fg flex flex-col z-50">
       {/* 헤더 */}
-      <div className="h-12 shrink-0 flex items-center gap-3 px-4 bg-[#1C2123] border-b border-[#242C2E]">
+      <div className="h-12 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line">
         <span className="font-semibold">고르기</span>
         {KINDS.map((k) => {
           const s = summary.find((x) => x.kind === k.id);
@@ -203,12 +203,12 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               title={k.hint}
               className={`h-7 px-3 rounded-md text-[12.5px] ${
                 kind === k.id
-                  ? "bg-[#232A2C] text-white ring-1 ring-[#3B4649]"
-                  : "text-[#8D9A9C]"
+                  ? "bg-raised text-white ring-1 ring-line-strong"
+                  : "text-fg-dim"
               }`}
             >
               {k.label}{" "}
-              <span className="tabular-nums text-[#6D7B7E]">
+              <span className="tabular-nums text-fg-mute">
                 {s?.groups ?? 0}
               </span>
             </button>
@@ -221,7 +221,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               await invoke("scan_cancel");
               setBusy("");
             }}
-            className="h-7 px-3 rounded-md text-[12.5px] text-[#E2685C] ring-1 ring-[#4A3330]"
+            className="h-7 px-3 rounded-md text-[12.5px] text-drop ring-1 ring-drop"
           >
             멈추기
           </button>
@@ -231,33 +231,31 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               setBusy("찾는 중…");
               invoke("cull_scan").catch((e) => setBusy(String(e)));
             }}
-            className="h-7 px-3 rounded-md text-[12.5px] text-[#A3B2B4] ring-1 ring-[#333C3F]"
+            className="h-7 px-3 rounded-md text-[12.5px] text-fg-dim ring-1 ring-line-strong"
           >
             다시 찾기
           </button>
         )}
         {busy && (
-          <span className="text-[#F0B429] text-[12px] tabular-nums">
-            {busy}
-          </span>
+          <span className="text-keep text-[12px] tabular-nums">{busy}</span>
         )}
         <div className="flex-1" />
-        <span className="text-[12px] text-[#7C8A8D] tabular-nums">
-          확보 가능 <b className="text-[#F0B429]">{fmtBytes(total)}</b>
+        <span className="text-[12px] text-fg-mute tabular-nums">
+          확보 가능 <b className="text-keep">{fmtBytes(total)}</b>
         </span>
-        <button onClick={onClose} className="text-[#8D9A9C] px-2">
+        <button onClick={onClose} className="text-fg-dim px-2">
           닫기 <span className="text-[10px]">Esc</span>
         </button>
       </div>
 
       {/* 진행 */}
-      <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-[#1B2123] border-b border-[#242C2E] text-[12.5px]">
-        <span className="tabular-nums text-[#A3B2B4]">
+      <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[12.5px]">
+        <span className="tabular-nums text-fg-dim">
           {groups.length === 0 ? "0 / 0" : `${idx + 1} / ${groups.length}`}
         </span>
-        <div className="w-56 h-1.5 rounded bg-[#282F31] overflow-hidden">
+        <div className="w-56 h-1.5 rounded bg-raised overflow-hidden">
           <i
-            className="block h-full bg-[#49B8B4]"
+            className="block h-full bg-accent"
             style={{
               width: groups.length
                 ? `${((idx + 1) / groups.length) * 100}%`
@@ -266,7 +264,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
           />
         </div>
         {cur && (
-          <span className="text-[#6D7B7E]">
+          <span className="text-fg-mute">
             {cur.reason} · {cur.member_count}장 · 확보{" "}
             {fmtBytes(cur.size_bytes)}
           </span>
@@ -278,7 +276,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       <div className="flex-1 relative min-h-0">
         <div className="absolute inset-0 overflow-y-auto p-4">
           {!cur && (
-            <div className="h-full flex items-center justify-center text-[#6D7B7E]">
+            <div className="h-full flex items-center justify-center text-fg-mute">
               {busy
                 ? busy
                 : "정리할 그룹이 없습니다 — 「다시 찾기」를 눌러보세요"}
@@ -301,12 +299,12 @@ export default function Cull({ onClose }: { onClose: () => void }) {
                     className="text-left"
                   >
                     <div
-                      className="relative rounded-lg overflow-hidden bg-[#0F1314]"
+                      className="relative rounded-lg overflow-hidden bg-canvas"
                       style={{
                         aspectRatio: "3/2",
                         boxShadow: m.is_best
-                          ? "0 0 0 2px #F0B429, 0 8px 22px -10px rgba(240,180,41,.5)"
-                          : "0 0 0 1px #2B3436",
+                          ? "0 0 0 2px var(--color-keep), 0 8px 22px -10px rgb(240 180 41 / 0.5)"
+                          : "0 0 0 1px var(--color-line-strong)",
                       }}
                     >
                       {u ? (
@@ -317,16 +315,16 @@ export default function Cull({ onClose }: { onClose: () => void }) {
                           style={{ opacity: m.is_best ? 1 : 0.55 }}
                         />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-[#3A4547]">
+                        <div className="w-full h-full flex items-center justify-center text-fg-faint">
                           …
                         </div>
                       )}
                       {m.is_best ? (
-                        <span className="absolute top-2 left-2 h-5 px-2 rounded bg-[#F0B429] text-[#231A00] text-[11px] font-bold flex items-center">
+                        <span className="absolute top-2 left-2 h-5 px-2 rounded bg-keep text-keep-fg text-[11px] font-bold flex items-center">
                           ★ 남김
                         </span>
                       ) : (
-                        <span className="absolute top-2 left-2 h-5 px-2 rounded bg-[#E2685C]/90 text-[#2A0D09] text-[11px] font-bold flex items-center">
+                        <span className="absolute top-2 left-2 h-5 px-2 rounded bg-drop/90 text-drop-fg text-[11px] font-bold flex items-center">
                           ✕ 제외
                         </span>
                       )}
@@ -337,10 +335,10 @@ export default function Cull({ onClose }: { onClose: () => void }) {
                       )}
                     </div>
                     <div className="flex justify-between items-baseline mt-1.5 gap-2">
-                      <span className="text-[11.5px] text-[#A3B2B4] truncate">
+                      <span className="text-[11.5px] text-fg-dim truncate">
                         {m.name}
                       </span>
-                      <span className="text-[11px] text-[#6D7B7E] tabular-nums shrink-0">
+                      <span className="text-[11px] text-fg-mute tabular-nums shrink-0">
                         {fmtBytes(m.size)}
                       </span>
                     </div>
@@ -368,11 +366,11 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       </div>
 
       {/* 액션 */}
-      <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-[#1C2123] border-t border-[#242C2E]">
+      <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line">
         <button
           onClick={apply}
           disabled={!cur}
-          className="h-8 px-4 rounded-lg bg-[#F0B429] text-[#231A00] font-semibold text-[13px] disabled:opacity-40 flex items-center gap-2"
+          className="h-8 px-4 rounded-lg bg-keep text-keep-fg font-semibold text-[13px] disabled:opacity-40 flex items-center gap-2"
         >
           이대로 확정
           <span className="text-[10.5px] bg-black/20 px-1.5 py-0.5 rounded font-mono">
@@ -382,19 +380,19 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         <button
           onClick={skip}
           disabled={!cur}
-          className="h-8 px-4 rounded-lg text-[#A3B2B4] text-[13px] ring-1 ring-[#333C3F] disabled:opacity-40 flex items-center gap-2"
+          className="h-8 px-4 rounded-lg text-fg-dim text-[13px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
         >
           나중에
           <span className="text-[10.5px] bg-white/8 px-1.5 py-0.5 rounded font-mono">
             S
           </span>
         </button>
-        <span className="text-[12px] text-[#6D7B7E] ml-2">
+        <span className="text-[12px] text-fg-mute ml-2">
           숫자키 <span className="font-mono">1–9</span> 로 남길 것을 바꿉니다 ·
           두 번 누르면 크게 봅니다
         </span>
         <div className="flex-1" />
-        <span className="text-[12px] text-[#6D7B7E]">
+        <span className="text-[12px] text-fg-mute">
           여기서는 판정만 합니다 — 닫으면 「휴지통으로 치우기」가 나옵니다
         </span>
       </div>

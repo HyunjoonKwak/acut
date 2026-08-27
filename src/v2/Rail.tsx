@@ -31,7 +31,7 @@ export default function Rail({
   trashCount: number;
 }) {
   return (
-    <div className="w-12 shrink-0 flex flex-col items-center gap-1 py-2 bg-[#171C1E] border-r border-[#242C2E]">
+    <div className="w-12 shrink-0 flex flex-col items-center gap-1 py-2 bg-rail border-r border-line">
       {SOURCES.map((s) => {
         const on = value === s.v && open;
         return (
@@ -41,13 +41,13 @@ export default function Rail({
             title={s.label}
             className={`relative w-9 h-9 rounded-lg text-[15px] flex items-center justify-center ${
               on
-                ? "bg-[#232A2C] text-[#49B8B4]"
-                : "text-[#6D7B7E] hover:text-[#EAEFEF] hover:bg-[#1F2729]"
+                ? "bg-raised text-accent"
+                : "text-fg-mute hover:text-fg hover:bg-chrome"
             }`}
           >
             {s.icon}
             {s.v === "trash" && trashCount > 0 && (
-              <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-[#E2685C] text-[#2A0D09] text-[9px] font-bold flex items-center justify-center tabular-nums">
+              <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-drop text-drop-fg text-[9px] font-bold flex items-center justify-center tabular-nums">
                 {trashCount > 99 ? "99+" : trashCount}
               </span>
             )}

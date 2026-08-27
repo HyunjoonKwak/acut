@@ -123,7 +123,7 @@ export default function ScrollBar({
   const curY = (Math.min(at, total - 1) / total) * h;
 
   return (
-    <div className="w-[58px] shrink-0 flex relative bg-[#181D1F] border-l border-[#242C2E] select-none">
+    <div className="w-[58px] shrink-0 flex relative bg-rail border-l border-line select-none">
       {/* 연·월 눈금 — 누르거나 끌면 그 달로 간다 */}
       <div
         ref={colRef}
@@ -155,14 +155,16 @@ export default function ScrollBar({
                 style={{
                   fontSize: m.isYear ? 10 : 9,
                   fontWeight: m.isYear ? 700 : 400,
-                  color: m.isYear ? "#8D9A9C" : "#5A6668",
+                  color: m.isYear
+                    ? "var(--color-fg-dim)"
+                    : "var(--color-fg-faint)",
                 }}
               >
                 {m.label}
               </span>
             ) : (
               <span
-                className="block rounded-full bg-[#3A4547]"
+                className="block rounded-full bg-fg-faint"
                 style={{ height: 1, width: m.isYear ? 8 : 4 }}
               />
             )}
@@ -175,7 +177,7 @@ export default function ScrollBar({
           style={{
             top: curY - 1,
             height: 2,
-            background: "#49B8B4",
+            background: "var(--color-accent)",
             opacity: 0.9,
           }}
         />
@@ -184,22 +186,29 @@ export default function ScrollBar({
         {hoverY !== null && (
           <div
             className="absolute left-1 right-0 pointer-events-none"
-            style={{ top: hoverY - 1, height: 2, background: "#8D9A9C" }}
+            style={{
+              top: hoverY - 1,
+              height: 2,
+              background: "var(--color-fg-dim)",
+            }}
           />
         )}
       </div>
 
       {/* 트랙 */}
       <div
-        className="w-2.5 relative mr-1 rounded-full bg-[#232A2C] touch-none"
+        className="w-2.5 relative mr-1 rounded-full bg-raised touch-none"
         onPointerDown={onTrackDown}
       >
         <div
-          className="absolute inset-x-0 rounded-full hover:bg-[#4E5C5F]"
+          className="absolute inset-x-0 rounded-full hover:bg-fg-mute"
           style={{
             top: thumb.top,
             height: thumb.height,
-            background: dragging.current === "thumb" ? "#49B8B4" : "#3E4A4C",
+            background:
+              dragging.current === "thumb"
+                ? "var(--color-accent)"
+                : "var(--color-fg-faint)",
             cursor: "grab",
           }}
           onPointerDown={onThumbDown}
@@ -212,11 +221,11 @@ export default function ScrollBar({
       {/* 말풍선 */}
       {hoverY !== null && hoverBucket && (
         <div
-          className="absolute z-40 right-[62px] px-2 py-1 rounded-md bg-[#2C3436] text-[#EAEFEF] text-[11.5px] whitespace-nowrap shadow-lg pointer-events-none"
+          className="absolute z-40 right-[62px] px-2 py-1 rounded-md bg-raised text-fg text-[11.5px] whitespace-nowrap shadow-lg pointer-events-none"
           style={{ top: hoverY, transform: "translateY(-50%)" }}
         >
           {hoverBucket.year}년 {hoverBucket.month}월{" "}
-          <span className="text-[#7C8A8D] tabular-nums">
+          <span className="text-fg-mute tabular-nums">
             {hoverBucket.count.toLocaleString()}장
           </span>
         </div>

@@ -168,47 +168,47 @@ export default function Viewer({
     <div
       className={`${
         fullScreen ? "fixed inset-0 z-50" : "absolute inset-0 z-30"
-      } bg-[#0B0E0F] flex flex-col`}
+      } bg-canvas flex flex-col`}
     >
       {/* 상단 */}
-      <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-[#141A1B]/95 border-b border-[#212A2C] text-[12.5px]">
-        <span className="text-[#EAEFEF] truncate max-w-[40%]">
+      <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[12.5px]">
+        <span className="text-fg truncate max-w-[40%]">
           {detail?.name ?? "…"}
         </span>
-        <span className="text-[#6D7B7E] tabular-nums">
+        <span className="text-fg-mute tabular-nums">
           {index + 1} / {ids.length}
         </span>
         {detail && detail.cullingFlag === 1 && (
-          <span className="px-2 py-0.5 rounded bg-[#F0B429] text-[#231A00] text-[11px] font-bold">
+          <span className="px-2 py-0.5 rounded bg-keep text-keep-fg text-[11px] font-bold">
             ★ 남김
           </span>
         )}
         {detail && detail.cullingFlag === 2 && (
-          <span className="px-2 py-0.5 rounded bg-[#E2685C] text-[#2A0D09] text-[11px] font-bold">
+          <span className="px-2 py-0.5 rounded bg-drop text-drop-fg text-[11px] font-bold">
             ✕ 제외
           </span>
         )}
         {detail && detail.rating > 0 && (
-          <span className="text-[#F0B429] tracking-tight">
+          <span className="text-keep tracking-tight">
             {"★".repeat(detail.rating)}
           </span>
         )}
-        {detail?.favorite && <span className="text-[#E2685C]">♥</span>}
+        {detail?.favorite && <span className="text-drop">♥</span>}
         <div className="flex-1" />
         <button
           onClick={() => setShowInfo((s) => !s)}
-          className="text-[#8D9A9C] px-2"
+          className="text-fg-dim px-2"
         >
           정보 <span className="text-[10px] font-mono">I</span>
         </button>
         <button
           onClick={onToggleFullScreen}
-          className={`px-2 ${fullScreen ? "text-[#49B8B4]" : "text-[#8D9A9C]"}`}
+          className={`px-2 ${fullScreen ? "text-accent" : "text-fg-dim"}`}
         >
           {fullScreen ? "창 안에서" : "전체화면"}{" "}
           <span className="text-[10px] font-mono">\</span>
         </button>
-        <button onClick={onClose} className="text-[#8D9A9C] px-2">
+        <button onClick={onClose} className="text-fg-dim px-2">
           닫기 <span className="text-[10px] font-mono">Esc</span>
         </button>
       </div>
@@ -220,15 +220,15 @@ export default function Viewer({
           onClick={() => setZoom((z) => !z)}
         >
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center text-[#4E5A5C] text-[13px] pointer-events-none">
+            <div className="absolute inset-0 flex items-center justify-center text-fg-faint text-[13px] pointer-events-none">
               불러오는 중…
             </div>
           )}
           {/* 영상도 QuickLook이 대표 프레임을 준다. 재생은 아직 못 한다. */}
           {failed ? (
-            <div className="flex flex-col items-center gap-2 text-[#5F6C6E] text-[13px]">
+            <div className="flex flex-col items-center gap-2 text-fg-mute text-[13px]">
               읽을 수 없는 파일입니다
-              <span className="text-[11.5px] text-[#4E5A5C]">
+              <span className="text-[11.5px] text-fg-faint">
                 {detail?.name}
               </span>
             </div>
@@ -251,7 +251,7 @@ export default function Viewer({
 
           {/* 영상임을 알린다 — 정지 프레임이라 사진과 구분이 안 된다 */}
           {isVideo && !failed && !loading && (
-            <span className="absolute bottom-4 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/60 text-[#EAEFEF] text-[12px] pointer-events-none">
+            <span className="absolute bottom-4 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/60 text-fg text-[12px] pointer-events-none">
               ▶ 영상
               {detail?.durationMs ? ` · ${fmtDuration(detail.durationMs)}` : ""}
             </span>
@@ -284,7 +284,7 @@ export default function Viewer({
 
         {/* 인스펙터 */}
         {showInfo && detail && (
-          <aside className="w-64 shrink-0 bg-[#141A1B] border-l border-[#212A2C] p-4 overflow-y-auto text-[12px]">
+          <aside className="w-64 shrink-0 bg-raised border-l border-line p-4 overflow-y-auto text-[12px]">
             <Row k="촬영" v={fmtDateTime(detail.takenAt)} />
             <Row
               k="날짜 출처"
@@ -327,7 +327,7 @@ export default function Viewer({
             )}
 
             <Sep />
-            <div className="text-[10.5px] text-[#5F6C6E] uppercase tracking-wider mb-2">
+            <div className="text-[10.5px] text-fg-mute uppercase tracking-wider mb-2">
               판정
             </div>
             <div className="flex gap-1 mb-2">
@@ -336,7 +336,7 @@ export default function Viewer({
                   key={n}
                   onClick={() => mark({ rating: detail.rating === n ? 0 : n })}
                   className={`w-6 h-6 rounded ${
-                    detail.rating >= n ? "text-[#F0B429]" : "text-[#3A4547]"
+                    detail.rating >= n ? "text-keep" : "text-fg-faint"
                   }`}
                 >
                   ★
@@ -350,8 +350,8 @@ export default function Viewer({
                 }
                 className={`flex-1 h-7 rounded text-[11.5px] font-semibold ${
                   detail.cullingFlag === 1
-                    ? "bg-[#F0B429] text-[#231A00]"
-                    : "text-[#8D9A9C] ring-1 ring-[#2E383A]"
+                    ? "bg-keep text-keep-fg"
+                    : "text-fg-dim ring-1 ring-line"
                 }`}
               >
                 남김 <span className="font-mono text-[10px]">P</span>
@@ -362,8 +362,8 @@ export default function Viewer({
                 }
                 className={`flex-1 h-7 rounded text-[11.5px] font-semibold ${
                   detail.cullingFlag === 2
-                    ? "bg-[#E2685C] text-[#2A0D09]"
-                    : "text-[#8D9A9C] ring-1 ring-[#2E383A]"
+                    ? "bg-drop text-drop-fg"
+                    : "text-fg-dim ring-1 ring-line"
                 }`}
               >
                 제외 <span className="font-mono text-[10px]">X</span>
@@ -371,8 +371,8 @@ export default function Viewer({
             </div>
 
             <Sep />
-            <div className="text-[10.5px] text-[#5F6C6E] leading-relaxed">
-              <b className="text-[#7C8A8D]">단축키</b>
+            <div className="text-[10.5px] text-fg-mute leading-relaxed">
+              <b className="text-fg-mute">단축키</b>
               <br />← → 이동 · Space 확대 · 0–5 별점
               <br />P 남김 · X 제외 · F 즐겨찾기
               <br />I 정보 · \ 전체화면
@@ -387,9 +387,9 @@ export default function Viewer({
 function Row({ k, v, dim }: { k: string; v: string; dim?: boolean }) {
   return (
     <div className="flex justify-between gap-3 py-[3px]">
-      <span className="text-[#5F6C6E] shrink-0">{k}</span>
+      <span className="text-fg-mute shrink-0">{k}</span>
       <span
-        className={`text-right truncate font-mono text-[11px] ${dim ? "text-[#E0955A]" : "text-[#A3B2B4]"}`}
+        className={`text-right truncate font-mono text-[11px] ${dim ? "text-keep" : "text-fg-dim"}`}
         title={v}
       >
         {v}
@@ -398,5 +398,5 @@ function Row({ k, v, dim }: { k: string; v: string; dim?: boolean }) {
   );
 }
 function Sep() {
-  return <div className="h-px bg-[#212A2C] my-3" />;
+  return <div className="h-px bg-line my-3" />;
 }

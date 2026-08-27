@@ -37,10 +37,10 @@ export default function FacetList({
   }, [kind, filter]);
 
   if (loading && items.length === 0) {
-    return <div className="px-3 py-2 text-[12px] text-[#5F6C6E]">세는 중…</div>;
+    return <div className="px-3 py-2 text-[12px] text-fg-mute">세는 중…</div>;
   }
   if (items.length === 0) {
-    return <div className="px-3 py-2 text-[12px] text-[#5F6C6E]">없음</div>;
+    return <div className="px-3 py-2 text-[12px] text-fg-mute">없음</div>;
   }
 
   return (
@@ -48,11 +48,11 @@ export default function FacetList({
       <button
         onClick={() => onPick(null)}
         className={`w-full text-left px-3 py-1.5 text-[12.5px] ${
-          selected === null ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
+          selected === null ? "bg-raised text-white" : "text-fg-dim"
         }`}
       >
         전체{" "}
-        <span className="text-[#6D7B7E] tabular-nums float-right">
+        <span className="text-fg-mute tabular-nums float-right">
           {items.reduce((a, f) => a + f.count, 0).toLocaleString()}
         </span>
       </button>
@@ -62,11 +62,11 @@ export default function FacetList({
           onClick={() => onPick(selected === f.value ? null : f.value)}
           title={f.label}
           className={`w-full text-left px-3 py-1 text-[12.5px] truncate ${
-            selected === f.value ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
+            selected === f.value ? "bg-raised text-white" : "text-fg-dim"
           }`}
         >
           {f.label}{" "}
-          <span className="text-[#5F6C6E] tabular-nums text-[11px] float-right">
+          <span className="text-fg-mute tabular-nums text-[11px] float-right">
             {f.count.toLocaleString()}
           </span>
         </button>

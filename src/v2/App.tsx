@@ -12,8 +12,13 @@ import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
 import GroupMenu, { type GroupBy } from "./GroupMenu";
 import { layout, headerLabel, HEADER_H } from "./gridLayout";
 import ViewMenu from "./ViewMenu";
-import ContextMenu, { type MenuAt, type MenuItem } from "./ContextMenu";
+import ContextMenu, {
+  type MenuAt,
+  type MenuItem as CtxItem,
+} from "./ContextMenu";
 import Rail, { type Source } from "./Rail";
+import Breadcrumb from "./Breadcrumb";
+import { Btn, IconBtn, Kbd, Menu, MenuItem, Sep } from "./ui";
 import FacetList from "./FacetList";
 import {
   justify,
@@ -23,11 +28,7 @@ import {
   type Scaling,
 } from "./gridStyle";
 import { useCountUp } from "./useCountUp";
-import FilterBar, {
-  EMPTY as EMPTY_PICKS,
-  isEmpty as picksAreEmpty,
-  type Picks,
-} from "./FilterBar";
+import FilterButton, { EMPTY as EMPTY_PICKS, type Picks } from "./FilterBar";
 
 // ── 타입 (Rust 쪽과 맞춰야 한다) ─────────────────────────────────────
 type FileRow = {
@@ -856,7 +857,7 @@ export default function App() {
     [picked],
   );
 
-  const ctxItems: MenuItem[] = useMemo(() => {
+  const ctxItems: CtxItem[] = useMemo(() => {
     const n = ctxIds.length;
     const many = n > 1 ? ` ${n.toLocaleString()}장` : "";
     const mark = (patch: Parameters<typeof markOne>[1]) => () =>
@@ -943,7 +944,6 @@ export default function App() {
     () => buckets.reduce((a, b) => a + b.count, 0),
     [buckets],
   );
-  const filterIsEmpty = picksAreEmpty(picks) && sel === null;
 
   /// 스크롤바가 알아야 하는 두 값 — 지금 맨 위 사진의 전역 순번과 한 화면 장수
   const offset = baseIndex + Math.floor(scrollTop / rowH) * cols;
@@ -957,129 +957,77 @@ export default function App() {
       : null;
 
   return (
-    <div className="h-screen flex flex-col bg-[#15191A] text-[#EAEFEF] text-[13px]">
-      {/* 툴바 */}
-      <div className="h-11 shrink-0 flex items-center gap-3 px-3 bg-[#1C2123] border-b border-[#242C2E]">
-        <button
-          onClick={addLibrary}
-          className="h-7 px-3 rounded-md bg-[#49B8B4] text-[#08191a] font-semibold"
-        >
-          라이브러리 추가
-        </button>
+    <div className="h-screen flex flex-col bg-canvas text-fg text-[13px]">
+      {/* 툴바 — 한 줄로 모은다.
+          왼쪽은 "지금 어디를 보고 있나", 오른쪽은 "어떻게 볼까".
+          진행 상황과 판정 처리는 아래 상태바로 내렸다 — 위에 줄이 셋이나
+          쌓여 사진이 밀려나 있었다. */}
+      <div className="h-12 shrink-0 flex items-center gap-2 px-3 bg-chrome border-b border-line">
+        <Breadcrumb
+          libs={libs}
+          libId={libId}
+          folder={sel?.path ?? null}
+          viewTrash={viewTrash}
+          matched={matched}
+        />
+
+        <div className="flex-1" />
+
         {libs.length > 0 && (
           <>
-            <button
-              onClick={() =>
-                rescan(libId !== null ? [libId] : libs.map((l) => l.id))
-              }
-              disabled={!libs.some((l) => l.online)}
-              className="h-7 px-3 rounded-md text-[#A3B2B4] ring-1 ring-[#333C3F] disabled:opacity-40"
-            >
-              다시 스캔
-            </button>
-            <button
-              onClick={() => setCulling(true)}
-              className="h-7 px-3 rounded-md bg-[#F0B429] text-[#231A00] font-semibold"
-            >
+            <FilterButton value={picks} onChange={setPicks} />
+            <SortMenu value={sort} onChange={setSort} />
+            <GroupMenu value={group} onChange={setGroup} />
+            <ViewMenu
+              style={gridStyle}
+              scaling={scaling}
+              onStyle={setGridStyle}
+              onScaling={setScaling}
+              filmstrip={filmstrip}
+              onFilmstrip={setFilmstrip}
+            />
+            <input
+              type="range"
+              min={100}
+              max={320}
+              value={thumbSize}
+              onChange={(e) => setThumbSize(+e.target.value)}
+              title="썸네일 크기"
+              className="w-20 accent-accent"
+            />
+            <Sep />
+            <Btn tone="keep" onClick={() => setCulling(true)}>
               고르기
-            </button>
+            </Btn>
           </>
         )}
-        <div className="flex-1" />
-        {job && (
-          <>
-            <Progress label={job.label} done={job.done} total={job.total} />
-            <button
-              onClick={stopJob}
-              title="지금까지 한 것은 저장됩니다"
-              className="h-7 px-3 rounded-md text-[#E2685C] ring-1 ring-[#4A3330] hover:bg-[#2A1D1B]"
-            >
-              멈추기
-            </button>
-          </>
-        )}
-        {!job && scanMsg && (
-          <span className="text-[#F0B429] tabular-nums">{scanMsg}</span>
-        )}
-        <input
-          type="range"
-          min={100}
-          max={320}
-          value={thumbSize}
-          onChange={(e) => setThumbSize(+e.target.value)}
-          className="w-28"
-        />
-      </div>
-
-      {libs.length > 0 && (
-        <FilterBar value={picks} onChange={setPicks}>
-          <SortMenu value={sort} onChange={setSort} />
-          <GroupMenu value={group} onChange={setGroup} />
-          <ViewMenu
-            style={gridStyle}
-            scaling={scaling}
-            onStyle={setGridStyle}
-            onScaling={setScaling}
-            filmstrip={filmstrip}
-            onFilmstrip={setFilmstrip}
-          />
-        </FilterBar>
-      )}
-
-      {/* 치우기 줄 — 판정이 실제 정리로 이어지는 곳 */}
-      {(viewTrash || (toClean?.files ?? 0) > 0 || busy) && (
-        <div className="h-9 shrink-0 flex items-center gap-2 px-3 bg-[#1B2123] border-b border-[#242C2E] text-[12px]">
-          {viewTrash ? (
+        <Menu
+          align="right"
+          trigger={() => <IconBtn title="더 보기">⋯</IconBtn>}
+          width={190}
+        >
+          {(close) => (
             <>
-              <span className="text-[#A3B2B4]">
-                휴지통 {trash?.files.toLocaleString() ?? 0}장 ·{" "}
-                {fmtBytes(trash?.bytes ?? 0)}
-              </span>
-              <button
-                onClick={() =>
-                  runTrashOp(
-                    "trash_restore",
-                    { libraryId: libId, ids: [] },
-                    "되돌리는 중…",
-                  )
-                }
-                className="h-6 px-2.5 rounded text-[#A3B2B4] ring-1 ring-[#333C3F]"
+              <MenuItem
+                onClick={() => {
+                  close();
+                  addLibrary();
+                }}
               >
-                전부 되돌리기
-              </button>
-              <button
-                onClick={emptyTrash}
-                className="h-6 px-2.5 rounded bg-[#E2685C] text-[#2A0D09] font-semibold"
+                라이브러리 추가…
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  close();
+                  rescan(libId !== null ? [libId] : libs.map((l) => l.id));
+                }}
               >
-                영구히 비우기
-              </button>
-              <span className="text-[#6D7B7E]">
-                비우기 전까지는 원본이 그대로 있습니다
-              </span>
+                다시 스캔
+              </MenuItem>
             </>
-          ) : (
-            (toClean?.files ?? 0) > 0 && (
-              <>
-                <span className="text-[#A3B2B4]">
-                  제외로 판정한 {toClean?.files.toLocaleString()}장 ·{" "}
-                  <b className="text-[#F0B429]">
-                    {fmtBytes(toClean?.bytes ?? 0)}
-                  </b>{" "}
-                  확보 가능
-                </span>
-                <button
-                  onClick={cleanExcluded}
-                  className="h-6 px-2.5 rounded bg-[#F0B429] text-[#231A00] font-semibold"
-                >
-                  휴지통으로 치우기
-                </button>
-              </>
-            )
           )}
-          <div className="flex-1" />
-          {busy && <span className="text-[#F0B429]">{busy}</span>}
-        </div>
-      )}
+        </Menu>
+      </div>
 
       <div className="flex-1 flex min-h-0">
         {/* 레일 — 사이드바가 무엇을 보여줄지 고른다 */}
@@ -1102,11 +1050,11 @@ export default function App() {
 
         {panelOpen && (
           <aside
-            className="shrink-0 bg-[#1C2123] border-r border-[#242C2E] overflow-y-auto py-2"
+            className="shrink-0 bg-chrome border-r border-line overflow-y-auto py-2"
             style={{ width: panelW }}
           >
             {source === "library" && (
-              <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-[#5F6C6E]">
+              <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
                 라이브러리
               </div>
             )}
@@ -1120,13 +1068,11 @@ export default function App() {
                     setViewTrash(false);
                   }}
                   className={`w-full text-left px-3 py-1.5 ${
-                    libId === null
-                      ? "bg-[#232A2C] text-white"
-                      : "text-[#A3B2B4]"
+                    libId === null ? "bg-raised text-white" : "text-fg-dim"
                   }`}
                 >
                   전체{" "}
-                  <span className="text-[#6D7B7E] tabular-nums float-right">
+                  <span className="text-fg-mute tabular-nums float-right">
                     {libs
                       .reduce((a, l) => a + l.file_count, 0)
                       .toLocaleString()}
@@ -1145,28 +1091,30 @@ export default function App() {
                         l.dir ?? `${l.volume_name}/${l.rel_path} (연결 안 됨)`
                       }
                       className={`w-full text-left px-3 py-1.5 truncate ${
-                        libId === l.id
-                          ? "bg-[#232A2C] text-white"
-                          : "text-[#A3B2B4]"
+                        libId === l.id ? "bg-raised text-white" : "text-fg-dim"
                       } ${l.online ? "" : "opacity-50"}`}
                     >
                       <span
                         className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle"
-                        style={{ background: l.online ? "#49B8B4" : "#5A6668" }}
+                        style={{
+                          background: l.online
+                            ? "var(--color-accent)"
+                            : "var(--color-fg-faint)",
+                        }}
                       />
                       {l.name}{" "}
-                      <span className="text-[#6D7B7E] tabular-nums float-right">
+                      <span className="text-fg-mute tabular-nums float-right">
                         {l.file_count.toLocaleString()}
                       </span>
                     </button>
                     {/* ⟳ 옆에 지우기를 두지 않는다 — 실제로 잘못 눌려 라이브러리가
                     통째로 날아갔다. 지우기는 「⋯」 안으로 숨기고 확인도 받는다. */}
-                    <div className="absolute right-1 top-1.5 hidden group-hover:flex bg-[#1C2123]">
+                    <div className="absolute right-1 top-1.5 hidden group-hover:flex bg-chrome">
                       <button
                         onClick={() => rescan([l.id])}
                         disabled={!l.online}
                         title="이 라이브러리 다시 스캔"
-                        className="px-1.5 text-[#6D7B7E] hover:text-[#49B8B4] disabled:opacity-30"
+                        className="px-1.5 text-fg-mute hover:text-accent disabled:opacity-30"
                       >
                         ⟳
                       </button>
@@ -1175,19 +1123,19 @@ export default function App() {
                           setMenuFor(menuFor === l.id ? null : l.id)
                         }
                         title="더 보기"
-                        className="px-1.5 text-[#6D7B7E] hover:text-white"
+                        className="px-1.5 text-fg-mute hover:text-white"
                       >
                         ⋯
                       </button>
                     </div>
                     {menuFor === l.id && (
-                      <div className="absolute right-1 top-8 z-20 bg-[#232A2C] rounded-md ring-1 ring-[#3B4649] shadow-lg py-1">
+                      <div className="absolute right-1 top-8 z-20 bg-raised rounded-md ring-1 ring-line-strong shadow-lg py-1">
                         <button
                           onClick={() => {
                             setMenuFor(null);
                             dropLibrary(l);
                           }}
-                          className="block w-full text-left px-3 py-1.5 text-[12px] text-[#E2685C] hover:bg-[#2E3739] whitespace-nowrap"
+                          className="block w-full text-left px-3 py-1.5 text-[12px] text-drop hover:bg-hover whitespace-nowrap"
                         >
                           목록에서 빼기
                         </button>
@@ -1199,18 +1147,18 @@ export default function App() {
             )}
 
             {source === "folder" && folders.length > 0 && (
-              <div className="mt-3 pt-2 border-t border-[#242C2E]">
-                <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-[#5F6C6E]">
+              <div className="mt-3 pt-2 border-t border-line">
+                <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
                   폴더
                 </div>
                 <button
                   onClick={() => setSel(null)}
                   className={`w-full text-left px-3 py-1 ${
-                    sel === null ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
+                    sel === null ? "bg-raised text-white" : "text-fg-dim"
                   }`}
                 >
                   전체{" "}
-                  <span className="text-[#6D7B7E] tabular-nums float-right">
+                  <span className="text-fg-mute tabular-nums float-right">
                     {stats?.files.toLocaleString() ?? "—"}
                   </span>
                 </button>
@@ -1218,7 +1166,7 @@ export default function App() {
                   <div
                     key={f.path}
                     className={`flex items-center pr-2 ${
-                      sel?.path === f.path ? "bg-[#232A2C]" : ""
+                      sel?.path === f.path ? "bg-raised" : ""
                     }`}
                     style={{ paddingLeft: 6 + f.depth * 11 }}
                   >
@@ -1227,7 +1175,7 @@ export default function App() {
                       onClick={() => f.has_children && toggleOpen(f.path)}
                       className={`w-4 shrink-0 text-[9px] ${
                         f.has_children
-                          ? "text-[#7C8A8D] hover:text-white"
+                          ? "text-fg-mute hover:text-white"
                           : "text-transparent"
                       }`}
                     >
@@ -1237,12 +1185,12 @@ export default function App() {
                       onClick={() => setSel({ path: f.path, rel: f.rel_path })}
                       title={f.path}
                       className={`flex-1 min-w-0 text-left py-1 truncate ${
-                        sel?.path === f.path ? "text-white" : "text-[#A3B2B4]"
+                        sel?.path === f.path ? "text-white" : "text-fg-dim"
                       }`}
                     >
                       {f.name}
                     </button>
-                    <span className="text-[#5F6C6E] tabular-nums text-[11px] shrink-0 pl-1.5">
+                    <span className="text-fg-mute tabular-nums text-[11px] shrink-0 pl-1.5">
                       {f.file_count.toLocaleString()}
                     </span>
                   </div>
@@ -1281,10 +1229,10 @@ export default function App() {
               />
             )}
             {source === "trash" && (
-              <div className="px-3 py-2 text-[12px] text-[#8D9A9C]">
+              <div className="px-3 py-2 text-[12px] text-fg-dim">
                 버린 사진 {(trash?.files ?? 0).toLocaleString()}장
                 <br />
-                <span className="text-[#5F6C6E]">
+                <span className="text-fg-mute">
                   {fmtBytes(trash?.bytes ?? 0)}
                 </span>
               </div>
@@ -1304,7 +1252,7 @@ export default function App() {
               setPanelW(Math.max(160, Math.min(480, e.clientX - 48)));
             }}
             onPointerUp={() => (dragPanel.current = false)}
-            className="w-1 shrink-0 cursor-col-resize hover:bg-[#49B8B4]"
+            className="w-1 shrink-0 cursor-col-resize hover:bg-accent"
           />
         )}
 
@@ -1317,7 +1265,7 @@ export default function App() {
             className="flex-1 overflow-y-auto p-2.5"
           >
             {libs.length === 0 && (
-              <div className="h-full flex items-center justify-center text-[#6D7B7E]">
+              <div className="h-full flex items-center justify-center text-fg-mute">
                 「라이브러리 추가」로 사진 폴더를 등록하세요
               </div>
             )}
@@ -1339,13 +1287,13 @@ export default function App() {
                       style={{ ...box, height: HEADER_H }}
                       className="flex items-baseline gap-2 px-0.5"
                     >
-                      <span className="text-[13px] font-semibold text-[#EAEFEF]">
+                      <span className="text-[13px] font-semibold text-fg">
                         {headerLabel(row.label, group)}
                       </span>
-                      <span className="text-[11.5px] text-[#6D7B7E] tabular-nums">
+                      <span className="text-[11.5px] text-fg-mute tabular-nums">
                         {row.count.toLocaleString()}장
                       </span>
-                      <div className="flex-1 h-px bg-[#242C2E]" />
+                      <div className="flex-1 h-px bg-line" />
                     </div>
                   );
                 }
@@ -1422,16 +1370,14 @@ export default function App() {
               })}
             </div>
             {loading && (
-              <div className="py-4 text-center text-[#6D7B7E]">
-                불러오는 중…
-              </div>
+              <div className="py-4 text-center text-fg-mute">불러오는 중…</div>
             )}
           </main>
 
           {/* 필름스트립 자리 — 아직 비어 있다 */}
           {filmstrip && selected !== null && (
-            <div className="absolute bottom-0 inset-x-0 h-1/3 bg-[#101415] border-t border-[#242C2E] flex items-center justify-center">
-              <span className="text-[12.5px] text-[#5F6C6E]">
+            <div className="absolute bottom-0 inset-x-0 h-1/3 bg-canvas border-t border-line flex items-center justify-center">
+              <span className="text-[12.5px] text-fg-mute">
                 필름스트립은 아직 준비 중입니다 — 두 번 눌러 크게 보세요
               </span>
             </div>
@@ -1498,11 +1444,11 @@ export default function App() {
 
       {/* 선택 패널 — 무엇이 골라져 있고 무엇을 할 수 있는지 (Lap의 SelectionPanel) */}
       {picked.size > 0 && !culling && (
-        <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-[#1F2729] border-t border-[#2E383A]">
-          <span className="text-[#49B8B4] font-semibold tabular-nums text-[13px]">
+        <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line">
+          <span className="text-accent font-semibold tabular-nums text-[13px]">
             {picked.size.toLocaleString()}장 선택
           </span>
-          <span className="text-[11.5px] text-[#6D7B7E]">
+          <span className="text-[11.5px] text-fg-mute">
             {fmtBytes(
               rows
                 .filter((r) => picked.has(r.id))
@@ -1525,7 +1471,7 @@ export default function App() {
                 key={n}
                 onClick={() => markPicked({ rating: n })}
                 title={`별 ${n}개`}
-                className="w-5 h-6 text-[13px] text-[#3A4547] hover:text-[#F0B429]"
+                className="w-5 h-6 text-[13px] text-fg-faint hover:text-keep"
               >
                 ★
               </button>
@@ -1540,7 +1486,7 @@ export default function App() {
                 ? "옮겨 넣을 라이브러리를 왼쪽에서 고르세요"
                 : undefined
             }
-            className="h-7 px-3 rounded-md bg-[#49B8B4] text-[#08191a] font-semibold text-[12.5px] disabled:opacity-40"
+            className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
           >
             정리
           </button>
@@ -1555,59 +1501,110 @@ export default function App() {
               runTrashOp("trash_files", { ids: [...picked] }, "치우는 중…");
               setPicked(new Set());
             }}
-            className="h-7 px-3 rounded-md text-[#E2685C] ring-1 ring-[#4A3330] text-[12.5px]"
+            className="h-7 px-3 rounded-md text-drop ring-1 ring-drop text-[12.5px]"
           >
             휴지통으로
           </button>
           <div className="flex-1" />
           <button
             onClick={() => setPicked(new Set())}
-            className="h-7 px-2 rounded-md text-[#8D9A9C] text-[12.5px]"
+            className="h-7 px-2 rounded-md text-fg-dim text-[12.5px]"
           >
             선택 해제 <span className="text-[10px] font-mono">Esc</span>
           </button>
         </div>
       )}
 
-      {/* 상태바 */}
-      <div className="h-7 shrink-0 flex items-center gap-4 px-3 bg-[#1C2123] border-t border-[#242C2E] text-[11.5px] text-[#7C8A8D] tabular-nums">
+      {/* 상태바 — 지금 벌어지는 일과 라이브러리 형편.
+          진행·멈추기·치우기가 여기 모인다. 위쪽 줄을 늘리지 않기 위해서다. */}
+      <div className="h-8 shrink-0 flex items-center gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-fg-mute tabular-nums">
+        {busy && <span className="text-keep">{busy}</span>}
+        {job ? (
+          <>
+            <Progress label={job.label} done={job.done} total={job.total} />
+            <button
+              onClick={stopJob}
+              title="지금까지 한 것은 저장됩니다"
+              className="h-5 px-2 rounded text-drop ring-1 ring-drop/40 hover:bg-drop/10"
+            >
+              멈추기
+            </button>
+          </>
+        ) : (
+          scanMsg && <span className="text-keep">{scanMsg}</span>
+        )}
+
+        {!job && !scanMsg && viewTrash && (
+          <>
+            <span className="text-fg-dim">
+              휴지통 {trash?.files.toLocaleString() ?? 0}장 ·{" "}
+              {fmtBytes(trash?.bytes ?? 0)}
+            </span>
+            <button
+              onClick={() =>
+                runTrashOp(
+                  "trash_restore",
+                  { libraryId: libId, ids: [] },
+                  "되돌리는 중…",
+                )
+              }
+              className="h-5 px-2 rounded text-fg-dim ring-1 ring-line-strong hover:bg-hover"
+            >
+              전부 되돌리기
+            </button>
+            <button
+              onClick={emptyTrash}
+              className="h-5 px-2 rounded text-drop ring-1 ring-drop/40 hover:bg-drop/10"
+            >
+              영구히 비우기
+            </button>
+          </>
+        )}
+
+        {!job && !scanMsg && !viewTrash && (toClean?.files ?? 0) > 0 && (
+          <>
+            <span className="text-fg-dim">
+              제외 {toClean?.files.toLocaleString()}장 ·{" "}
+              <b className="text-keep">{fmtBytes(toClean?.bytes ?? 0)}</b> 확보
+              가능
+            </span>
+            <button
+              onClick={cleanExcluded}
+              className="h-5 px-2 rounded bg-keep text-keep-fg font-semibold"
+            >
+              휴지통으로 치우기
+            </button>
+          </>
+        )}
+
+        <div className="flex-1" />
+
+        {batches.some((b) => b.undone_at === null) && (
+          <button
+            onClick={undoLast}
+            title={`되돌리기: ${batches.find((b) => b.undone_at === null)?.label ?? ""}`}
+            className="hover:text-fg"
+          >
+            ↩ 되돌리기 <Kbd>⌘Z</Kbd>
+          </button>
+        )}
         {stats && (
           <>
             <span>
               {stats.files.toLocaleString()}장 · {fmtBytes(stats.bytes)}
             </span>
-            <span>
-              썸네일 {stats.thumbs_done.toLocaleString()}
-              {stats.thumbs_pending > 0 && (
-                <span className="text-[#F0B429]">
-                  {" "}
-                  · 대기 {stats.thumbs_pending.toLocaleString()}
-                </span>
-              )}
-            </span>
+            {stats.thumbs_pending > 0 && (
+              <span className="text-keep">
+                썸네일 대기 {stats.thumbs_pending.toLocaleString()}
+              </span>
+            )}
             {cache && (
-              <span className="text-[#5F6C6E]">
+              <span className="text-fg-faint">
                 캐시 {fmtBytes(cache.bytes)}
               </span>
             )}
           </>
         )}
-        {batches.some((b) => b.undone_at === null) && (
-          <button
-            onClick={undoLast}
-            title={`되돌리기: ${batches.find((b) => b.undone_at === null)?.label ?? ""}`}
-            className="text-[#8D9A9C] hover:text-[#EAEFEF]"
-          >
-            ↩ 되돌리기 <span className="text-[10px] font-mono">⌘Z</span>
-          </button>
-        )}
-        {!filterIsEmpty && (
-          <span className="text-[#49B8B4]">
-            찾은 것 {matched.toLocaleString()}장
-          </span>
-        )}
-        <div className="flex-1" />
-        <span>표시 {rows.length.toLocaleString()}</span>
       </div>
     </div>
   );
@@ -1625,7 +1622,7 @@ function Progress({
 }) {
   const n = useCountUp(done);
   return (
-    <span className="text-[#F0B429] tabular-nums">
+    <span className="text-keep tabular-nums">
       {label} {n.toLocaleString()}
       {total > 0 && ` / ${total.toLocaleString()}`}
     </span>
@@ -1645,18 +1642,12 @@ function PanelBtn({
   return (
     <button
       onClick={onClick}
-      className="h-7 px-2.5 rounded-md text-[12.5px] text-[#A3B2B4] ring-1 ring-[#333C3F] hover:text-white"
+      className="h-7 px-2.5 rounded-md text-[12.5px] text-fg-dim ring-1 ring-line-strong hover:text-white"
     >
       {children}
       {hint && (
-        <span className="ml-1 text-[10px] font-mono text-[#5F6C6E]">
-          {hint}
-        </span>
+        <span className="ml-1 text-[10px] font-mono text-fg-mute">{hint}</span>
       )}
     </button>
   );
-}
-
-function Sep() {
-  return <span className="w-px h-5 bg-[#2E383A] mx-1" />;
 }

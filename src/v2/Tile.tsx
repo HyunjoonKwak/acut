@@ -103,15 +103,15 @@ export default function Tile({
       style={aspect ? { width: aspect.width } : undefined}
     >
       <div
-        className="rounded overflow-hidden bg-[#0F1314] relative"
+        className="rounded overflow-hidden bg-canvas relative"
         style={{
           ...(aspect
             ? { height: aspect.height }
             : { aspectRatio: style === "card" ? "1/1" : "4/3" }),
           boxShadow: picked
-            ? "0 0 0 2px #49B8B4"
+            ? "0 0 0 2px var(--color-accent)"
             : focused
-              ? "0 0 0 2px #6C6CE8"
+              ? "0 0 0 2px var(--color-focus)"
               : undefined,
         }}
       >
@@ -123,7 +123,7 @@ export default function Tile({
             className={`w-full h-full ${objectFit(scaling)}`}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-[#3A4547] text-[10px]">
+          <div className="w-full h-full flex items-center justify-center text-fg-faint text-[10px]">
             {isVideo ? "영상" : "…"}
           </div>
         )}
@@ -146,12 +146,12 @@ export default function Tile({
         )}
 
         {file.kind === 2 && (
-          <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-[#F0B429]">
+          <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-keep">
             RAW
           </span>
         )}
         {isVideo && !ready && (
-          <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-[#EAEFEF]">
+          <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-fg">
             ▶{file.duration_ms ? ` ${fmtDuration(file.duration_ms)}` : ""}
           </span>
         )}
@@ -161,8 +161,14 @@ export default function Tile({
             className="absolute top-1 right-1 w-4 h-4 rounded text-[10px] font-bold flex items-center justify-center"
             style={
               file.culling_flag === 1
-                ? { background: "#F0B429", color: "#231A00" }
-                : { background: "#E2685C", color: "#2A0D09" }
+                ? {
+                    background: "var(--color-keep)",
+                    color: "var(--color-keep-fg)",
+                  }
+                : {
+                    background: "var(--color-drop)",
+                    color: "var(--color-drop-fg)",
+                  }
             }
             title={file.culling_flag === 1 ? "남김" : "제외"}
           >
@@ -172,19 +178,17 @@ export default function Tile({
         {(file.rating > 0 || file.favorite) && (
           <div className="absolute bottom-0 inset-x-0 flex items-center gap-1 px-1 py-0.5 bg-gradient-to-t from-black/70 to-transparent">
             {file.rating > 0 && (
-              <span className="text-[9px] text-[#F0B429] tracking-tighter">
+              <span className="text-[9px] text-keep tracking-tighter">
                 {"★".repeat(file.rating)}
               </span>
             )}
             <div className="flex-1" />
-            {file.favorite && (
-              <span className="text-[9px] text-[#E2685C]">♥</span>
-            )}
+            {file.favorite && <span className="text-[9px] text-drop">♥</span>}
           </div>
         )}
       </div>
       {style === "card" && (
-        <div className="text-[10.5px] text-[#6D7B7E] mt-1 truncate tabular-nums">
+        <div className="text-[10.5px] text-fg-mute mt-1 truncate tabular-nums">
           {label}
         </div>
       )}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Btn, Menu, MenuItem, MenuSep } from "./ui";
 
 /** 백엔드 `db::query::SortBy`와 이름이 같아야 한다 */
 export type SortBy =
@@ -35,40 +35,23 @@ export default function SortMenu({
   value: Sort;
   onChange: (s: Sort) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-
-  // 바깥을 누르면 닫힌다. 메뉴가 열린 채 남으면 그리드를 가린다.
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => {
-      if (!box.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", away);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", away);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [open]);
-
   return (
-    <div ref={box} className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title="정렬 기준"
-        className="h-7 px-2.5 rounded-md text-[12.5px] text-[#A3B2B4] ring-1 ring-[#333C3F] flex items-center gap-1"
-      >
-        <span className="text-[#6D7B7E]">{value.desc ? "↓" : "↑"}</span>
-        {sortLabel(value)}
-      </button>
-
-      {open && (
-        <div className="absolute left-0 top-8 z-30 min-w-[140px] bg-[#232A2C] rounded-md ring-1 ring-[#3B4649] shadow-xl py-1">
+    <Menu
+      align="right"
+      trigger={() => (
+        <Btn title="정렬 기준">
+          <span className="text-fg-mute">{value.desc ? "↓" : "↑"}</span>
+          {sortLabel(value)}
+        </Btn>
+      )}
+    >
+      {(close) => (
+        <>
           {ITEMS.map((i) => (
-            <button
+            <MenuItem
               key={i.by}
+              selected={i.by === value.by}
+              hint={i.by === value.by ? (value.desc ? "↓" : "↑") : undefined}
               onClick={() => {
                 // 같은 기준을 다시 누르면 방향이 바뀐다
                 onChange(
@@ -76,30 +59,23 @@ export default function SortMenu({
                     ? { by: i.by, desc: !value.desc }
                     : { by: i.by, desc: true },
                 );
-                setOpen(false);
+                close();
               }}
-              className={`block w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-[#2E3739] ${
-                i.by === value.by ? "text-[#49B8B4]" : "text-[#A3B2B4]"
-              }`}
             >
-              {i.by === value.by && (
-                <span className="mr-1">{value.desc ? "↓" : "↑"}</span>
-              )}
               {i.label}
-            </button>
+            </MenuItem>
           ))}
-          <div className="h-px bg-[#333C3F] my-1" />
-          <button
+          <MenuSep />
+          <MenuItem
             onClick={() => {
               onChange({ ...value, desc: !value.desc });
-              setOpen(false);
+              close();
             }}
-            className="block w-full text-left px-3 py-1.5 text-[12.5px] text-[#8D9A9C] hover:bg-[#2E3739]"
           >
-            {value.desc ? "↑ 오름차순으로" : "↓ 내림차순으로"}
-          </button>
-        </div>
+            {value.desc ? "오름차순으로" : "내림차순으로"}
+          </MenuItem>
+        </>
       )}
-    </div>
+    </Menu>
   );
 }

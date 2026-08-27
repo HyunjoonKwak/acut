@@ -1,17 +1,36 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f5f5f5;
-  --color-bg-elevated: #ffffff;
-  --color-text-primary: #1a1a1a;
-  --color-text-secondary: #666666;
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-border: #e5e7eb;
-  --color-danger: #ef4444;
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
+  /* ── 바탕 ──────────────────────────────────────────────────────────
+     사진이 주인공이다. 크롬은 뒤로 물러나야 하고, 그리드 바탕이 가장
+     어두워야 사진이 떠 보인다. 위로 갈수록 밝아진다. */
+  --color-canvas: #0e1213; /* 그리드 바탕 — 가장 어둡다 */
+  --color-chrome: #171b1d; /* 툴바·사이드바·상태바 */
+  --color-rail: #121718; /* 레일 — 크롬보다 한 겹 뒤 */
+  --color-raised: #1e2426; /* 메뉴·패널·입력칸 */
+  --color-hover: #262d30;
+  --color-line: #252c2e; /* 경계선 */
+  --color-line-strong: #36403f; /* 링·구분이 필요한 테두리 */
+
+  /* ── 글자 ────────────────────────────────────────────────────────── */
+  --color-fg: #e8edee;
+  --color-fg-dim: #98a5a8; /* 보조 설명 */
+  --color-fg-mute: #6b7779; /* 숫자·라벨 */
+  --color-fg-faint: #46514f; /* 꺼진 것 */
+
+  /* ── 뜻이 있는 색 ─────────────────────────────────────────────────
+     세 개뿐이다. 늘리면 의미가 흐려진다. */
+  --color-accent: #49b8b4; /* 지금 고른 것·진행 */
+  --color-accent-fg: #06201f;
+  --color-keep: #f0b429; /* 남김·별점 */
+  --color-keep-fg: #231a00;
+  --color-drop: #e2685c; /* 제외·되돌릴 수 없는 일 */
+  --color-drop-fg: #2a0d09;
+  --color-focus: #6c6ce8; /* 키보드 포커스 */
+
+  /* ── 크기 ──────────────────────────────────────────────────────────
+     컨트롤 높이는 한 가지다. 8종류를 쓰면 줄이 안 맞는다. */
+  --spacing-control: 1.75rem; /* 28px */
 }
 
 @layer base {

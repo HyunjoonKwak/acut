@@ -65,7 +65,7 @@ export default function ContextMenu({
   return (
     <div
       ref={box}
-      className="fixed z-50 min-w-[180px] bg-[#232A2C] rounded-md ring-1 ring-[#3B4649] shadow-2xl py-1"
+      className="fixed z-50 min-w-[180px] bg-raised rounded-md ring-1 ring-line-strong shadow-2xl py-1"
       style={{
         left: pos?.left ?? at.x,
         top: pos?.top ?? at.y,
@@ -75,7 +75,7 @@ export default function ContextMenu({
     >
       {items.map((it, i) =>
         it.kind === "sep" ? (
-          <div key={i} className="h-px bg-[#333C3F] my-1" />
+          <div key={i} className="h-px bg-line-strong my-1" />
         ) : (
           <button
             key={i}
@@ -83,15 +83,15 @@ export default function ContextMenu({
               it.run();
               onClose();
             }}
-            className={`flex w-full items-center gap-3 px-3 py-1.5 text-[12.5px] hover:bg-[#2E3739] ${
-              it.danger ? "text-[#E2685C]" : "text-[#EAEFEF]"
+            className={`flex w-full items-center gap-3 px-3 py-1.5 text-[12.5px] hover:bg-hover ${
+              it.danger ? "text-drop" : "text-fg"
             }`}
           >
             <span className="flex-1 text-left whitespace-nowrap">
               {it.label}
             </span>
             {it.hint && (
-              <span className="text-[10.5px] font-mono text-[#5F6C6E]">
+              <span className="text-[10.5px] font-mono text-fg-mute">
                 {it.hint}
               </span>
             )}

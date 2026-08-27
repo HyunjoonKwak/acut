@@ -32,7 +32,9 @@ export default function SmartPanel({
   const [name, setName] = useState("");
 
   const reload = useCallback(() => {
-    invoke<SmartAlbum[]>("smart_list").then(setItems).catch(() => setItems([]));
+    invoke<SmartAlbum[]>("smart_list")
+      .then(setItems)
+      .catch(() => setItems([]));
   }, []);
   useEffect(reload, [reload]);
 
@@ -67,10 +69,15 @@ export default function SmartPanel({
       )}
 
       {items.length === 0 ? (
-        <div className="px-3 py-2 text-[12px] text-fg-mute">저장한 것이 없습니다</div>
+        <div className="px-3 py-2 text-[12px] text-fg-mute">
+          저장한 것이 없습니다
+        </div>
       ) : (
         items.map((a) => (
-          <div key={a.id} className="group flex items-center pr-1 hover:bg-raised">
+          <div
+            key={a.id}
+            className="group flex items-center pr-1 hover:bg-raised"
+          >
             <button
               onClick={() => onApply(a.filter, a.sort)}
               className="flex-1 min-w-0 text-left px-3 py-1.5 text-[12.5px] text-fg-dim hover:text-fg truncate"

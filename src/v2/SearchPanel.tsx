@@ -26,9 +26,7 @@ function Chip({
     <button
       onClick={onClick}
       className={`h-control px-2 rounded-md text-[12px] ${
-        on
-          ? "bg-accent text-accent-fg"
-          : "bg-raised text-fg-dim hover:text-fg"
+        on ? "bg-accent text-accent-fg" : "bg-raised text-fg-dim hover:text-fg"
       }`}
     >
       {children}

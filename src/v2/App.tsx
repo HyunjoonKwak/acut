@@ -17,6 +17,7 @@ import ContextMenu, {
   type MenuItem as CtxItem,
 } from "./ContextMenu";
 import Rail from "./Rail";
+import { visible } from "./folderTree";
 import { sourceTitle, type Source } from "./railItems";
 import TagPanel from "./TagPanel";
 import SmartPanel from "./SmartPanel";
@@ -24,7 +25,17 @@ import SearchPanel from "./SearchPanel";
 import SettingsPanel from "./SettingsPanel";
 import Breadcrumb from "./Breadcrumb";
 import StatusBar from "./StatusBar";
-import { Btn, IconBtn, Kbd, Label, Menu, MenuItem, MenuSep, Sep } from "./ui";
+import {
+  Btn,
+  IconBtn,
+  Kbd,
+  Label,
+  Menu,
+  MenuItem,
+  MenuSep,
+  QuickRow,
+  Sep,
+} from "./ui";
 import FacetList from "./FacetList";
 import Calendar from "./Calendar";
 import {
@@ -108,6 +119,8 @@ type Bucket = { year: number; month: number; count: number; top: number };
 /** 사이드바 트리 한 줄. 중간 마디는 DB 행이 없어 id가 null이다. */
 type FolderRow = {
   id: number | null;
+  /** 이 줄이 속한 라이브러리 */
+  library_id: number;
   /** 라이브러리 루트 기준 — 접기의 열쇠 */
   path: string;
   /** 볼륨 기준 — 필터로 보낸다 */
@@ -116,6 +129,8 @@ type FolderRow = {
   depth: number;
   file_count: number;
   has_children: boolean;
+  /** 라이브러리 자신인가 (트리의 뿌리) */
+  is_library: boolean;
 };
 
 const PAGE = 300;
@@ -136,7 +151,13 @@ export default function App() {
   /// 고른 폴더. `path`는 트리 표시용(라이브러리 기준), `rel`은 필터용(볼륨 기준).
   /// 둘을 함께 들고 있어야 한다 — 폴더 목록에서 되찾으려 하면 목록이
   /// 필터에 얽혀 무한 루프가 된다.
-  const [sel, setSel] = useState<{ path: string; rel: string } | null>(null);
+  /// 사이드바에서 고른 폴더. `libId`는 그 폴더가 든 라이브러리다 —
+  /// 두 라이브러리에 같은 rel_path가 있을 수 있어 짝으로 들고 있어야 한다.
+  const [sel, setSel] = useState<{
+    libId: number;
+    path: string;
+    rel: string;
+  } | null>(null);
   /// 펼쳐 둔 마디들 (라이브러리 기준 경로)
   const [open, setOpen] = useState<Set<string>>(new Set());
   /// 찾기 줄에서 고른 것들
@@ -210,7 +231,8 @@ export default function App() {
     () => ({
       ...picks,
       sort,
-      library_id: libId,
+      // 폴더를 고르면 그 폴더가 든 라이브러리로 좁힌다
+      library_id: sel ? sel.libId : libId,
       folder_path: viewTrash ? null : (sel?.rel ?? null),
       trashed: viewTrash,
     }),
@@ -230,7 +252,11 @@ export default function App() {
     setPicks(picksFrom(f));
     setLibId(v.library_id ?? null);
     // 폴더는 경로만 되살린다 — 트리에서 고른 것과 같은 모양이면 충분하다.
-    setSel(v.folder_path ? { path: v.folder_path, rel: v.folder_path } : null);
+    setSel(
+      v.folder_path && v.library_id != null
+        ? { libId: v.library_id, path: v.folder_path, rel: v.folder_path }
+        : null,
+    );
     setViewTrash(v.trashed ?? false);
     if (srt) setSort(srt as Sort);
   }, []);
@@ -309,13 +335,25 @@ export default function App() {
     }
   }, [filter, libId]);
 
-  /// 폴더 트리는 라이브러리에만 달려 있다. 필터가 바뀔 때마다 다시 읽으면
-  /// 목록이 필터를 바꾸고 필터가 목록을 다시 읽는 고리가 생긴다.
+  /// 폴더 트리는 **등록된 라이브러리 전부**를 한 번에 읽는다. 라이브러리가
+  /// 트리의 뿌리라 고르기 전에도 하위 폴더가 보인다.
+  ///
+  /// `libId`에 매달지 않는 게 중요하다 — 폴더를 누르면 그 라이브러리로
+  /// 옮겨가는데, 그때 트리를 다시 읽으면 방금 누른 줄이 눈앞에서 사라진다.
   useEffect(() => {
-    invoke<FolderRow[]>("folders_list", { libraryId: libId })
-      .then(setFolders)
+    invoke<FolderRow[]>("folders_list", { libraryId: null })
+      .then((f) => {
+        setFolders(f);
+        // 라이브러리 마디는 펴 둔다. 접힌 채로 시작하면 등록한 이름만
+        // 덩그러니 있고 폴더는 하나도 안 보인다.
+        setOpen((prev) => {
+          const next = new Set(prev);
+          for (const n of f) if (n.depth === 0) next.add(n.path);
+          return next;
+        });
+      })
       .catch(() => setFolders([]));
-  }, [libId]);
+  }, [libs]);
 
   /// 캐시 용량은 디스크의 파일 12만 개를 훑는다. 폴더를 누를 때마다 하면
   /// 앱이 멈춘 것처럼 보인다 — 시작할 때와 썸네일이 끝났을 때만 센다.
@@ -635,24 +673,8 @@ export default function App() {
     if (viewerAt !== null && viewerAt >= rows.length - 5) loadMore();
   }, [viewerAt, rows.length, loadMore]);
 
-  /// 접힌 마디의 자식은 그리지 않는다. 3,161줄을 통째로 그리면 사이드바가
-  /// 느려지고 스크롤 막대가 실오라기가 된다.
-  const visibleFolders = useMemo(
-    () =>
-      folders.filter((f) => {
-        if (f.depth === 0) return true;
-        const parent = f.path.slice(0, f.path.lastIndexOf("/"));
-        // 조상이 전부 펼쳐져 있어야 보인다
-        let p = parent;
-        while (p) {
-          if (!open.has(p)) return false;
-          const i = p.lastIndexOf("/");
-          p = i < 0 ? "" : p.slice(0, i);
-        }
-        return true;
-      }),
-    [folders, open],
-  );
+  /// 접힌 마디의 자식은 그리지 않는다. 셈은 folderTree.ts에 있다.
+  const visibleFolders = useMemo(() => visible(folders, open), [folders, open]);
 
   const toggleOpen = useCallback((path: string) => {
     setOpen((prev) => {
@@ -1141,146 +1163,182 @@ export default function App() {
             <Label>{sourceTitle(source)}</Label>
             {source === "all" && (
               <>
-                <button
+                <QuickRow
+                  label="모든 사진"
+                  count={libs.reduce((a, l) => a + l.file_count, 0)}
+                  on={libId === null && sel === null && isEmptyPicks(picks)}
                   onClick={() => {
                     setLibId(null);
                     setSel(null);
-                    setOpen(new Set());
+                    setPicks(EMPTY_PICKS);
                     setViewTrash(false);
                   }}
-                  className={`w-full text-left px-3 py-1.5 ${
-                    libId === null ? "bg-raised text-white" : "text-fg-dim"
-                  }`}
-                >
-                  전체{" "}
-                  <span className="text-fg-mute tabular-nums float-right">
-                    {libs
-                      .reduce((a, l) => a + l.file_count, 0)
-                      .toLocaleString()}
-                  </span>
-                </button>
-                {libs.map((l) => (
-                  <div key={l.id} className="group relative">
-                    <button
-                      onClick={() => {
-                        setLibId(l.id);
-                        setSel(null);
-                        setOpen(new Set());
-                        setViewTrash(false);
-                      }}
-                      title={
-                        l.dir ?? `${l.volume_name}/${l.rel_path} (연결 안 됨)`
-                      }
-                      className={`w-full text-left px-3 py-1.5 truncate ${
-                        libId === l.id ? "bg-raised text-white" : "text-fg-dim"
-                      } ${l.online ? "" : "opacity-50"}`}
-                    >
-                      <span
-                        className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle"
-                        style={{
-                          background: l.online
-                            ? "var(--color-accent)"
-                            : "var(--color-fg-faint)",
-                        }}
-                      />
-                      {l.name}{" "}
-                      <span className="text-fg-mute tabular-nums float-right">
-                        {l.file_count.toLocaleString()}
-                      </span>
-                    </button>
-                    {/* ⟳ 옆에 지우기를 두지 않는다 — 실제로 잘못 눌려 라이브러리가
-                    통째로 날아갔다. 지우기는 「⋯」 안으로 숨기고 확인도 받는다. */}
-                    <div className="absolute right-1 top-1.5 hidden group-hover:flex bg-chrome">
-                      <button
-                        onClick={() => rescan([l.id])}
-                        disabled={!l.online}
-                        title="이 라이브러리 다시 스캔"
-                        className="px-1.5 text-fg-mute hover:text-accent disabled:opacity-30"
-                      >
-                        ⟳
-                      </button>
-                      <button
-                        onClick={() =>
-                          setMenuFor(menuFor === l.id ? null : l.id)
-                        }
-                        title="더 보기"
-                        className="px-1.5 text-fg-mute hover:text-white"
-                      >
-                        ⋯
-                      </button>
-                    </div>
-                    {menuFor === l.id && (
-                      <div className="absolute right-1 top-8 z-20 bg-raised rounded-md ring-1 ring-line-strong shadow-lg py-1">
-                        <button
-                          onClick={() => {
-                            setMenuFor(null);
-                            dropLibrary(l);
-                          }}
-                          className="block w-full text-left px-3 py-1.5 text-[12px] text-drop hover:bg-hover whitespace-nowrap"
-                        >
-                          목록에서 빼기
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                />
+                <QuickRow
+                  label="♥ 즐겨찾기"
+                  on={picks.favorite_only}
+                  onClick={() =>
+                    setPicks({
+                      ...EMPTY_PICKS,
+                      favorite_only: !picks.favorite_only,
+                    })
+                  }
+                />
+                <QuickRow
+                  label="영상"
+                  on={picks.kind === 1}
+                  onClick={() =>
+                    setPicks({
+                      ...EMPTY_PICKS,
+                      kind: picks.kind === 1 ? null : 1,
+                    })
+                  }
+                />
+                <QuickRow
+                  label="RAW"
+                  on={picks.kind === 2}
+                  onClick={() =>
+                    setPicks({
+                      ...EMPTY_PICKS,
+                      kind: picks.kind === 2 ? null : 2,
+                    })
+                  }
+                />
+                <QuickRow
+                  label="★ 4개 이상"
+                  on={picks.min_rating === 4}
+                  onClick={() =>
+                    setPicks({
+                      ...EMPTY_PICKS,
+                      min_rating: picks.min_rating === 4 ? null : 4,
+                    })
+                  }
+                />
               </>
             )}
-
-            {source === "album" && folders.length === 0 && (
-              <div className="px-3 py-2 text-[12px] text-fg-mute leading-relaxed">
-                폴더가 없습니다.
-                <br />
-                「모든」에서 라이브러리를 고르세요.
-              </div>
-            )}
-            {source === "album" && folders.length > 0 && (
-              <div>
-                <button
-                  onClick={() => setSel(null)}
-                  className={`w-full text-left px-3 py-1 ${
-                    sel === null ? "bg-raised text-white" : "text-fg-dim"
-                  }`}
-                >
-                  전체{" "}
-                  <span className="text-fg-mute tabular-nums float-right">
-                    {stats?.files.toLocaleString() ?? "—"}
-                  </span>
-                </button>
-                {visibleFolders.map((f) => (
-                  <div
-                    key={f.path}
-                    className={`flex items-center pr-2 ${
-                      sel?.path === f.path ? "bg-raised" : ""
-                    }`}
-                    style={{ paddingLeft: 6 + f.depth * 11 }}
-                  >
-                    {/* 펼침 삼각형 — 자식이 없으면 자리만 차지한다 */}
-                    <button
-                      onClick={() => f.has_children && toggleOpen(f.path)}
-                      className={`w-4 shrink-0 text-[9px] ${
-                        f.has_children
-                          ? "text-fg-mute hover:text-white"
-                          : "text-transparent"
-                      }`}
-                    >
-                      {open.has(f.path) ? "▼" : "▶"}
-                    </button>
-                    <button
-                      onClick={() => setSel({ path: f.path, rel: f.rel_path })}
-                      title={f.path}
-                      className={`flex-1 min-w-0 text-left py-1 truncate ${
-                        sel?.path === f.path ? "text-white" : "text-fg-dim"
-                      }`}
-                    >
-                      {f.name}
-                    </button>
-                    <span className="text-fg-mute tabular-nums text-[11px] shrink-0 pl-1.5">
-                      {f.file_count.toLocaleString()}
-                    </span>
+            {source === "album" && (
+              <>
+                {folders.length === 0 ? (
+                  <div className="px-3 py-2 text-[12px] text-fg-mute leading-relaxed">
+                    등록된 라이브러리가 없습니다.
+                    <br />
+                    아래 「라이브러리 추가」를 누르세요.
                   </div>
-                ))}
-              </div>
+                ) : (
+                  visibleFolders.map((f) => {
+                    const root = f.is_library;
+                    const on = root
+                      ? sel === null && libId === f.library_id
+                      : sel?.path === f.path;
+                    const lib = root
+                      ? libs.find((l) => l.id === f.library_id)
+                      : undefined;
+                    return (
+                      <div
+                        key={f.path}
+                        className={`group relative flex items-center pr-1 ${
+                          on ? "bg-raised" : "hover:bg-chrome"
+                        }`}
+                        style={{ paddingLeft: 4 + f.depth * 11 }}
+                      >
+                        {/* 펼침 삼각형 — 자식이 없으면 자리만 차지한다 */}
+                        <button
+                          onClick={() => f.has_children && toggleOpen(f.path)}
+                          className={`w-4 shrink-0 text-[9px] ${
+                            f.has_children
+                              ? "text-fg-mute hover:text-fg"
+                              : "text-transparent"
+                          }`}
+                        >
+                          {open.has(f.path) ? "▼" : "▶"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setLibId(f.library_id);
+                            // 라이브러리 마디를 누르면 그 라이브러리 전체
+                            setSel(
+                              root
+                                ? null
+                                : {
+                                    libId: f.library_id,
+                                    path: f.path,
+                                    rel: f.rel_path,
+                                  },
+                            );
+                            setViewTrash(false);
+                          }}
+                          title={f.rel_path || f.name}
+                          className={`flex-1 min-w-0 text-left py-1 truncate ${
+                            root ? "font-semibold" : ""
+                          } ${on ? "text-fg" : "text-fg-dim"} ${
+                            lib && !lib.online ? "opacity-50" : ""
+                          }`}
+                        >
+                          {root && (
+                            <span
+                              className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle"
+                              style={{
+                                background: lib?.online
+                                  ? "var(--color-accent)"
+                                  : "var(--color-fg-faint)",
+                              }}
+                            />
+                          )}
+                          {f.name}
+                        </button>
+                        <span
+                          className={`text-fg-mute tabular-nums text-[11px] shrink-0 pl-1.5 ${
+                            root ? "group-hover:invisible" : ""
+                          }`}
+                        >
+                          {f.file_count.toLocaleString()}
+                        </span>
+
+                        {/* 라이브러리 줄에만 붙는 조작.
+                            ⟳ 옆에 지우기를 두지 않는다 — 실제로 잘못 눌려
+                            라이브러리가 통째로 날아갔다. */}
+                        {root && lib && (
+                          <div className="absolute right-1 hidden group-hover:flex bg-raised rounded">
+                            <button
+                              onClick={() => rescan([lib.id])}
+                              disabled={!lib.online}
+                              title="이 라이브러리 다시 스캔"
+                              className="px-1.5 text-fg-mute hover:text-accent disabled:opacity-30"
+                            >
+                              ⟳
+                            </button>
+                            <button
+                              onClick={() =>
+                                setMenuFor(menuFor === lib.id ? null : lib.id)
+                              }
+                              title="더 보기"
+                              className="px-1.5 text-fg-mute hover:text-fg"
+                            >
+                              ⋯
+                            </button>
+                          </div>
+                        )}
+                        {root && lib && menuFor === lib.id && (
+                          <div className="absolute right-1 top-7 z-20 bg-raised rounded-md ring-1 ring-line-strong shadow-lg py-1">
+                            <button
+                              onClick={() => {
+                                setMenuFor(null);
+                                dropLibrary(lib);
+                              }}
+                              className="block w-full text-left px-3 py-1.5 text-[12px] text-drop hover:bg-hover whitespace-nowrap"
+                            >
+                              목록에서 빼기
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+                <div className="px-2 pt-2">
+                  <Btn onClick={addLibrary}>＋ 라이브러리 추가…</Btn>
+                </div>
+              </>
             )}
             {source === "calendar" && (
               <Calendar

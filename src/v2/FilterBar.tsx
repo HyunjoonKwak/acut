@@ -34,7 +34,8 @@ export default function FilterButton({
   // 한 글자마다 14만 행을 훑지 않게 타이핑이 멎기를 기다린다
   const [text, setText] = useDebouncedText(value.name_like ?? "", 250, (t) => {
     const next = t.trim() || null;
-    if (next !== (value.name_like ?? null)) onChange({ ...value, name_like: next });
+    if (next !== (value.name_like ?? null))
+      onChange({ ...value, name_like: next });
   });
 
   useEffect(() => {

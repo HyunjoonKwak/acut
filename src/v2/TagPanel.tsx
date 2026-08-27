@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Btn } from "./ui";
 
-export type Tag = { id: number; name: string; color: string | null; count: number };
+export type Tag = {
+  id: number;
+  name: string;
+  color: string | null;
+  count: number;
+};
 
 /**
  * 태그 갈래 — 폴더로는 표현 못 하는 묶음.
@@ -26,7 +31,9 @@ export default function TagPanel({
   const [adding, setAdding] = useState("");
 
   const reload = useCallback(() => {
-    invoke<Tag[]>("tags_list").then(setTags).catch(() => setTags([]));
+    invoke<Tag[]>("tags_list")
+      .then(setTags)
+      .catch(() => setTags([]));
   }, []);
   useEffect(reload, [reload]);
 
@@ -91,7 +98,11 @@ export default function TagPanel({
               </span>
               <button
                 onClick={async () => {
-                  if (!window.confirm(`태그 「${t.name}」을 지웁니다.\n사진은 지워지지 않습니다.`))
+                  if (
+                    !window.confirm(
+                      `태그 「${t.name}」을 지웁니다.\n사진은 지워지지 않습니다.`,
+                    )
+                  )
                     return;
                   await invoke("tag_delete", { tagId: t.id });
                   if (selected === t.id) onPick(null);

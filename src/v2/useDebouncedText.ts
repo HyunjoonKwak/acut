@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 /**
  * 타이핑이 멎은 뒤에야 값을 흘려보낸다.

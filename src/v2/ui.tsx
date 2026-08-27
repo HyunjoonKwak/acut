@@ -180,3 +180,36 @@ export function MenuItem({
 export function MenuSep() {
   return <div className="h-px bg-line my-1" />;
 }
+
+/**
+ * 사이드바의 한 줄 — 이름과 (있으면) 장수.
+ *
+ * 「모든」 갈래처럼 목록이 아니라 손에 익은 몇 가지를 늘어놓는 자리에 쓴다.
+ */
+export function QuickRow({
+  label,
+  count,
+  on,
+  onClick,
+}: {
+  label: string;
+  count?: number;
+  on: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12.5px] ${
+        on ? "bg-raised text-fg" : "text-fg-dim hover:text-fg hover:bg-chrome"
+      }`}
+    >
+      <span className="flex-1 text-left truncate">{label}</span>
+      {count !== undefined && (
+        <span className="text-fg-mute tabular-nums text-[11px]">
+          {count.toLocaleString()}
+        </span>
+      )}
+    </button>
+  );
+}

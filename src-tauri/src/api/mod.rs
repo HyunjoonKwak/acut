@@ -323,35 +323,46 @@ pub fn folders_list(
     state: State<'_, AppState>,
     library_id: Option<i64>,
 ) -> Result<Vec<tree::Node>, String> {
-    // 라이브러리를 고르지 않았으면 폴더를 주지 않는다. 두 라이브러리의 트리를
-    // 한 줄로 늘어놓으면 4,476개가 되어 읽을 수도 없고 느리다.
-    let Some(library_id) = library_id else {
-        return Ok(Vec::new());
-    };
-    let library_rel: String = state
-        .db
-        .read(|c| {
-            c.query_row("SELECT rel_path FROM libraries WHERE id = ?1", [library_id], |r| {
-                r.get(0)
-            })
-        })
-        .map_err(err)?;
+    let libs = crate::db::libraries::list(&state.db).map_err(err)?;
 
-    let leaves: Vec<tree::Leaf> = state
+    // 라이브러리를 고르면 그 트리만 준다. 안 고르면 라이브러리마다 머리
+    // 마디를 얹어 하나로 잇는다 — 예전에는 여기서 빈 목록을 돌려주는 바람에
+    // 「앨범」을 열어도 하위 폴더가 아무것도 안 보였다.
+    //
+    // 4,476줄이 한꺼번에 쏟아지지 않는 건 접혀 있기 때문이다. 프론트는
+    // 펼친 마디의 자식만 그린다.
+    let mut out = Vec::new();
+    for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
+        let nodes = tree::build(leaves_of(state.inner(), l.id, &l.rel_path)?, &l.rel_path, l.id);
+        if library_id.is_some() {
+            out.extend(nodes);
+        } else {
+            out.extend(tree::under_root(nodes, l.id, &l.name, l.file_count));
+        }
+    }
+    Ok(out)
+}
+
+/// 한 라이브러리의 "사진이 든 폴더"들. 중간 마디는 트리가 만들어 낸다.
+fn leaves_of(state: &AppState, library_id: i64, library_rel: &str) -> Result<Vec<tree::Leaf>, String> {
+    // rel_path는 **볼륨** 기준이라 라이브러리 루트만큼 앞이 길다. 그대로 쓰면
+    // 들여쓰기가 통째로 밀린다. 여기서 잘라 낸다.
+    //
+    // 자르는 길이는 SQL의 `length()`로 센다. Rust의 `len()`은 **바이트**라
+    // 「사진통합작업」 같은 한글 경로에서 세 배로 잘라 낸다.
+    state
         .db
         .read(|c| {
-            // rel_path는 **볼륨** 기준이라 라이브러리 루트만큼 앞이 길다.
-            // 그대로 쓰면 들여쓰기가 통째로 밀린다. 여기서 잘라 낸다.
             let mut st = c.prepare(
-                "SELECT fo.id,
-                        CASE WHEN l.rel_path = '' THEN fo.rel_path
-                             ELSE substr(fo.rel_path, length(l.rel_path) + 2) END,
-                        fo.rel_path, fo.file_count
-                 FROM folders fo JOIN libraries l ON l.id = fo.library_id
-                 WHERE fo.library_id = ?1 AND fo.file_count > 0
-                 ORDER BY fo.rel_path",
+                "SELECT id,
+                        CASE WHEN ?2 = '' THEN rel_path
+                             ELSE substr(rel_path, length(?2) + 2) END,
+                        rel_path, file_count
+                 FROM folders
+                 WHERE library_id = ?1 AND file_count > 0
+                 ORDER BY rel_path",
             )?;
-            let it = st.query_map([library_id], |r| {
+            let it = st.query_map(rusqlite::params![library_id, library_rel], |r| {
                 Ok(tree::Leaf {
                     id: r.get(0)?,
                     path: r.get(1)?,
@@ -361,9 +372,7 @@ pub fn folders_list(
             })?;
             it.collect::<rusqlite::Result<Vec<_>>>()
         })
-        .map_err(err)?;
-
-    Ok(tree::build(leaves, &library_rel))
+        .map_err(err)
 }
 
 // ── 상태 ───────────────────────────────────────────────────────────────

@@ -33,20 +33,27 @@ export default function ScrollBar({
   pageSize: number;
   onSeek: (index: number) => void;
 }) {
-  const colRef = useRef<HTMLDivElement>(null);
   const [h, setH] = useState(0);
   const [hoverY, setHoverY] = useState<number | null>(null);
   /// 끄는 동안에는 응답을 기다리지 않고 바로 따라 움직인다
   const [dragAt, setDragAt] = useState<number | null>(null);
   const dragging = useRef<"thumb" | "marks" | null>(null);
 
-  useEffect(() => {
-    const el = colRef.current;
-    if (!el) return;
+  /// 눈금 열의 높이. **콜백 ref**로 잰다 — useEffect + useRef로 하면
+  /// 첫 렌더에 눈금이 없어 열이 아직 안 그려진 상태에서 효과가 한 번 돌고
+  /// 끝나 버린다. 나중에 눈금이 와도 높이는 0으로 남아 눈금도 손잡이도
+  /// 안 보이고 끌리지도 않는다. (실제로 그렇게 죽어 있었다)
+  const obs = useRef<ResizeObserver | null>(null);
+  const colRef = useCallback((el: HTMLDivElement | null) => {
+    obs.current?.disconnect();
+    if (!el) {
+      obs.current = null;
+      return;
+    }
     const ro = new ResizeObserver(() => setH(el.clientHeight));
     ro.observe(el);
+    obs.current = ro;
     setH(el.clientHeight);
-    return () => ro.disconnect();
   }, []);
 
   const { items, total } = useMemo(() => cumulative(buckets), [buckets]);
@@ -116,11 +123,13 @@ export default function ScrollBar({
     [items, h, total, onSeek],
   );
 
-  if (total === 0) return null;
-
+  // 눈금이 없어도 자리는 지킨다. 사라졌다 나타나면 사진이 통째로 밀린다.
+  const empty = total === 0;
   const hoverBucket =
-    hoverY === null ? null : bucketAt(items, yToIndex(hoverY, h, total));
-  const curY = (Math.min(at, total - 1) / total) * h;
+    hoverY === null || empty
+      ? null
+      : bucketAt(items, yToIndex(hoverY, h, total));
+  const curY = empty ? 0 : (Math.min(at, total - 1) / total) * h;
 
   return (
     <div className="w-[58px] shrink-0 flex relative bg-rail border-l border-line select-none">
@@ -172,15 +181,17 @@ export default function ScrollBar({
         ))}
 
         {/* 지금 보고 있는 자리 */}
-        <div
-          className="absolute left-0 right-0 pointer-events-none"
-          style={{
-            top: curY - 1,
-            height: 2,
-            background: "var(--color-accent)",
-            opacity: 0.9,
-          }}
-        />
+        {!empty && (
+          <div
+            className="absolute left-0 right-0 pointer-events-none"
+            style={{
+              top: curY - 1,
+              height: 2,
+              background: "var(--color-accent)",
+              opacity: 0.9,
+            }}
+          />
+        )}
 
         {/* 마우스가 가리키는 자리 */}
         {hoverY !== null && (
@@ -198,24 +209,28 @@ export default function ScrollBar({
       {/* 트랙 */}
       <div
         className="w-2.5 relative mr-1 rounded-full bg-raised touch-none"
-        onPointerDown={onTrackDown}
+        onPointerDown={empty ? undefined : onTrackDown}
       >
-        <div
-          className="absolute inset-x-0 rounded-full hover:bg-fg-mute"
-          style={{
-            top: thumb.top,
-            height: thumb.height,
-            background:
-              dragging.current === "thumb"
-                ? "var(--color-accent)"
-                : "var(--color-fg-faint)",
-            cursor: "grab",
-          }}
-          onPointerDown={onThumbDown}
-          onPointerMove={onThumbMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-        />
+        {!empty && (
+          <div
+            className="absolute inset-x-0 rounded-full hover:bg-fg-mute"
+            style={{
+              top: thumb.top,
+              height: thumb.height,
+              // 끄는 중인지는 state로 본다. ref를 그리기에 쓰면 값이 바뀌어도
+              // 다시 그릴 이유가 없어 색이 그대로 남는다.
+              background:
+                dragAt !== null
+                  ? "var(--color-accent)"
+                  : "var(--color-fg-faint)",
+              cursor: "grab",
+            }}
+            onPointerDown={onThumbDown}
+            onPointerMove={onThumbMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+          />
+        )}
       </div>
 
       {/* 말풍선 */}

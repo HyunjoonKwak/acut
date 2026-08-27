@@ -30,7 +30,9 @@ export default function SettingsPanel({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    getVersion().then(setVer).catch(() => setVer(""));
+    getVersion()
+      .then(setVer)
+      .catch(() => setVer(""));
   }, []);
 
   return (

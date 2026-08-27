@@ -34,7 +34,10 @@ pub struct Cursor {
     pub id: i64,
 }
 
+/// `#[serde(default)]`가 중요하다. 프론트는 필요한 필드만 보낸다 —
+/// 없는 필드에서 역직렬화가 실패하면 커맨드 전체가 거부된다.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
 pub struct Filter {
     /// 이 폴더와 하위 폴더. None이면 전체.
     pub folder_id: Option<i64>,
@@ -225,6 +228,21 @@ mod tests {
         })
         .unwrap();
         (dir, db)
+    }
+
+    #[test]
+    fn partial_filter_json_deserializes() {
+        // 프론트는 { folder_id: 1 }처럼 일부만 보낸다.
+        // serde(default)가 없으면 "missing field favorite_only"로 커맨드가 거부된다.
+        let f: Filter = serde_json::from_str(r#"{"folder_id":1}"#).expect("일부 필드만");
+        assert_eq!(f.folder_id, Some(1));
+        assert!(!f.favorite_only);
+        let empty: Filter = serde_json::from_str("{}").expect("빈 객체");
+        assert!(empty.folder_id.is_none());
+        // null도 받아들여야 한다
+        let nulls: Filter =
+            serde_json::from_str(r#"{"folder_id":null,"kind":null}"#).expect("null");
+        assert!(nulls.folder_id.is_none());
     }
 
     #[test]

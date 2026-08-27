@@ -83,6 +83,12 @@ export default function App() {
   const [selected, setSelected] = useState<number | null>(null);
   const [culling, setCulling] = useState(false);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
+  /// 드래그 중 표시할 눈금 (없으면 드래그 중이 아니다)
+  const [scrubAt, setScrubAt] = useState<number | null>(null);
+  const scrubRef = useRef<HTMLDivElement>(null);
+  const scrubbing = useRef(false);
+  /// 같은 달로 두 번 요청하지 않게
+  const lastBucket = useRef(-1);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // 요청이 겹치지 않게 — 스크롤이 빠르면 같은 페이지를 두 번 부를 수 있다
@@ -232,6 +238,40 @@ export default function App() {
     [filter],
   );
 
+  /// 마우스 Y 위치를 눈금 인덱스로 바꿔 그 달로 이동한다.
+  /// 눈금은 균등 높이라 위치 계산이 단순하다.
+  const scrubToY = useCallback(
+    (clientY: number) => {
+      const el = scrubRef.current;
+      if (!el || buckets.length === 0) return;
+      const rect = el.getBoundingClientRect();
+      const ratio = (clientY - rect.top) / rect.height;
+      const i = Math.max(0, Math.min(buckets.length - 1, Math.floor(ratio * buckets.length)));
+      setScrubAt(i);
+      // 같은 달을 두 번 부르지 않는다 — 빠르게 끌면 요청이 쌓인다
+      if (i !== lastBucket.current) {
+        lastBucket.current = i;
+        jumpTo(buckets[i].top);
+      }
+    },
+    [buckets, jumpTo],
+  );
+
+  const endScrub = useCallback(() => {
+    scrubbing.current = false;
+    lastBucket.current = -1;
+    setScrubAt(null);
+  }, []);
+
+  // 스크러버 밖에서 손을 떼도 드래그가 끝나야 한다
+  useEffect(() => {
+    const up = () => {
+      if (scrubbing.current) endScrub();
+    };
+    window.addEventListener("pointerup", up);
+    return () => window.removeEventListener("pointerup", up);
+  }, [endScrub]);
+
   const thumbUrl = (r: FileRow) =>
     r.thumb ? `thumb://localhost/${r.thumb.split("/").map(encodeURIComponent).join("/")}` : null;
 
@@ -380,40 +420,74 @@ export default function App() {
           {loading && <div className="py-4 text-center text-[#6D7B7E]">불러오는 중…</div>}
         </main>
 
-        {/* 타임라인 스크러버 — 클릭하면 그 달로 바로 간다 */}
+        {/* 타임라인 스크러버 — 클릭도 되고, 잡고 위아래로 끌어도 따라온다 */}
         {buckets.length > 0 && (
-          <div className="w-14 shrink-0 border-l border-[#242C2E] bg-[#181D1F] overflow-y-auto py-2 select-none">
+          <div
+            ref={scrubRef}
+            onPointerDown={(e) => {
+              scrubbing.current = true;
+              (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+              scrubToY(e.clientY);
+            }}
+            onPointerMove={(e) => {
+              if (scrubbing.current) scrubToY(e.clientY);
+            }}
+            onPointerUp={endScrub}
+            onPointerCancel={endScrub}
+            onPointerLeave={() => {
+              if (!scrubbing.current) setScrubAt(null);
+            }}
+            className="w-16 shrink-0 border-l border-[#242C2E] bg-[#181D1F] select-none relative cursor-ns-resize touch-none"
+            style={{ display: "flex", flexDirection: "column", padding: "6px 0" }}
+          >
             {buckets.map((b, i) => {
               const newYear = i === 0 || buckets[i - 1].year !== b.year;
+              const active = scrubAt === i;
               return (
-                <div key={`${b.year}-${b.month}`}>
-                  {newYear && (
-                    <button
-                      onClick={() => jumpTo(b.top)}
-                      className="w-full text-right pr-2.5 pt-2 pb-0.5 font-mono text-[11px] font-bold text-[#8D9A9C] hover:text-[#49B8B4]"
-                    >
-                      {b.year}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => jumpTo(b.top)}
-                    title={`${b.year}년 ${b.month}월 · ${b.count.toLocaleString()}장`}
-                    className="w-full flex items-center justify-end gap-1 pr-2.5 py-[1px] font-mono text-[9.5px] text-[#5F6C6E] hover:text-[#49B8B4]"
+                <div
+                  key={`${b.year}-${b.month}`}
+                  className="flex items-center justify-end gap-1.5 pr-2.5 pointer-events-none"
+                  style={{ flex: 1, minHeight: 0 }}
+                >
+                  <span
+                    className="inline-block rounded-sm"
+                    style={{
+                      height: 3,
+                      width: Math.max(2, Math.min(18, Math.round(Math.sqrt(b.count) * 1.2))),
+                      background: active ? "#49B8B4" : "#3A4547",
+                    }}
+                  />
+                  <span
+                    className="font-mono tabular-nums"
+                    style={{
+                      fontSize: newYear ? 10 : 9,
+                      fontWeight: newYear ? 700 : 400,
+                      color: active ? "#49B8B4" : newYear ? "#8D9A9C" : "#5A6668",
+                      minWidth: 26,
+                      textAlign: "right",
+                    }}
                   >
-                    <span
-                      className="inline-block h-[3px] rounded-sm bg-[#3A4547]"
-                      style={{
-                        width: Math.max(
-                          2,
-                          Math.min(16, Math.round(Math.sqrt(b.count) * 1.2)),
-                        ),
-                      }}
-                    />
-                    {String(b.month).padStart(2, "0")}
-                  </button>
+                    {newYear ? b.year : String(b.month).padStart(2, "0")}
+                  </span>
                 </div>
               );
             })}
+
+            {/* 드래그 중 말풍선 */}
+            {scrubAt !== null && buckets[scrubAt] && (
+              <div
+                className="absolute right-[68px] px-2 py-1 rounded-md bg-[#2C3436] text-[#EAEFEF] text-[11.5px] whitespace-nowrap shadow-lg pointer-events-none"
+                style={{
+                  top: `${((scrubAt + 0.5) / buckets.length) * 100}%`,
+                  transform: "translateY(-50%)",
+                }}
+              >
+                {buckets[scrubAt].year}년 {buckets[scrubAt].month}월{" "}
+                <span className="text-[#7C8A8D] tabular-nums">
+                  {buckets[scrubAt].count.toLocaleString()}장
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>

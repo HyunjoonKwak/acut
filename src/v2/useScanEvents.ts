@@ -5,6 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useData } from "./dataStore";
 import { useJob } from "./jobStore";
 import { usePrefs } from "./prefs";
+import { toast } from "./toastStore";
 import { useView } from "./viewStore";
 import type { Library } from "./types";
 
@@ -90,6 +91,23 @@ export function useScanEvents(cb: {
       }
     });
     on<string>("scan-error", (m) => data().setScanMsg(`스캔 실패: ${m}`));
+    // 폴더 감시 — 파인더로 넣거나 지운 것이 반영됐다
+    on<{
+      library_id: number;
+      inserted: number;
+      updated: number;
+      removed: number;
+    }>("library-changed", (c) => {
+      ref.current.reload();
+      ref.current.refreshMeta();
+      data().refreshLibs();
+      data().loadFolders();
+      const parts = [
+        c.inserted > 0 ? `${c.inserted.toLocaleString()}장 들어옴` : "",
+        c.removed > 0 ? `${c.removed.toLocaleString()}장 사라짐` : "",
+      ].filter(Boolean);
+      if (parts.length) toast(`폴더가 바뀌었습니다 — ${parts.join(" · ")}`);
+    });
 
     return () => {
       alive = false;

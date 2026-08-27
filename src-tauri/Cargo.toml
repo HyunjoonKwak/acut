@@ -57,6 +57,8 @@ reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 
 # File system
 walkdir = "2.5"
+# 폴더 감시 — 파인더로 넣은 사진이 앱에 나타난다 (2단계)
+notify = "7.0"
 
 # Platform (macOS)
 libc = "0.2"

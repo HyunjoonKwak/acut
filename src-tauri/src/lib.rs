@@ -92,6 +92,7 @@ pub fn run() {
             api::db_restore,
             api::db_backups_reveal,
             api::open_in_default_app,
+            api::watch_set,
             api::cache_usage,
             api::cache_clear,
             api::cache_migrate,

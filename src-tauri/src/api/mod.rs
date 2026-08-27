@@ -42,6 +42,8 @@ pub struct AppState {
     /// 스캔·가져오기가 도는 중인가. 둘이 겹치면 같은 DB·캐시에 동시에 쓰고
     /// 진행 숫자가 두 줄기로 뒤섞인다.
     pub running: Arc<AtomicBool>,
+    /// 폴더 감시 — 파인더로 넣은 사진이 저절로 나타난다
+    pub watch: Arc<scan::watch::Watchers>,
     /// 라이브러리 id → 실제 폴더.
     ///
     /// `thumb://`는 **썸네일 한 장마다** 이걸 부른다. 한 화면에 200장이면
@@ -57,6 +59,7 @@ impl AppState {
             cache_base,
             cancel: Arc::new(AtomicBool::new(false)),
             running: Arc::new(AtomicBool::new(false)),
+            watch: Arc::new(scan::watch::Watchers::default()),
             dirs: Mutex::new(HashMap::new()),
         }
     }
@@ -855,4 +858,46 @@ pub fn open_in_default_app(state: State<'_, AppState>, id: i64) -> Result<(), St
     }
     std::process::Command::new("open").arg(&path).spawn().map_err(err)?;
     Ok(())
+}
+
+// ── 폴더 감시 ───────────────────────────────────────────────────────────
+
+/// 켜면 연결된 라이브러리 전부를 감시하고, 끄면 다 멈춘다.
+///
+/// 라이브러리를 더하거나 뺀 뒤에도 이걸 다시 부른다 — 지금 목록에 맞춘다.
+#[tauri::command]
+pub fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String> {
+    let state = app.state::<AppState>();
+    let w = Arc::clone(&state.watch);
+    if !enabled {
+        w.stop_all();
+        return Ok(Vec::new());
+    }
+    // 처리 스레드 — 한 번만 뜬다. 달라진 것을 프론트에 알린다.
+    {
+        let handle = app.clone();
+        w.run(
+            Arc::clone(&state.db),
+            state.cache_base.clone(),
+            Arc::clone(&state.running),
+            move |c| {
+                let _ = handle.emit("library-changed", c);
+            },
+        );
+    }
+    let libs = crate::db::libraries::list(&state.db).map_err(err)?;
+    let want: Vec<i64> = libs.iter().filter(|l| l.dir.is_some()).map(|l| l.id).collect();
+    for id in w.watching() {
+        if !want.contains(&id) {
+            w.stop(id);
+        }
+    }
+    for l in libs.iter().filter(|l| l.dir.is_some()) {
+        if let Some(dir) = l.dir.as_deref() {
+            if let Err(e) = w.start(l.id, std::path::Path::new(dir)) {
+                log::warn!("감시 시작 실패 {}: {e}", l.name);
+            }
+        }
+    }
+    Ok(w.watching())
 }

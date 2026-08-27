@@ -43,6 +43,7 @@ export default function App() {
   const [scaling] = usePref("scaling");
   const [caption] = usePref("caption");
   const [filmstrip] = usePref("filmstrip");
+  const [watch] = usePref("watch");
 
   const filter = useFilter();
   const facetFilter = useMemo(() => facetOf(filter), [filter]);
@@ -79,6 +80,11 @@ export default function App() {
   useEffect(() => {
     useData.getState().loadFolders();
   }, [libs]);
+  // 폴더 감시 — 라이브러리 목록이나 설정이 바뀔 때 지금 목록에 맞춘다
+  useEffect(() => {
+    if (libs.length === 0) return;
+    invoke("watch_set", { enabled: watch }).catch(() => {});
+  }, [libs, watch]);
 
   // ── 목록·치수 ────────────────────────────────────────────────────
   // 목록은 스크롤을 되돌릴 함수가 필요하고, 치수는 목록이 필요하다.

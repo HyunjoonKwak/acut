@@ -16,6 +16,7 @@ use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
 pub mod kinds;
+pub mod watch;
 pub mod thumbs;
 
 pub use kinds::Kind;
@@ -261,6 +262,51 @@ pub fn scan_folder(
     Ok(out)
 }
 
+/// 한 폴더 안에서 **디스크에 없어진** 파일의 행을 지운다. 지운 수를 돌려준다.
+///
+/// 스캔은 있는 것만 넣는다. 파인더에서 지운 것은 여기서 뺀다. 휴지통에 든
+/// 것(`trashed_at`)은 원래 자리에 없는 게 정상이라 건드리지 않는다.
+/// 썸네일 파일은 두고 행만 지운다 — 같은 파일이 돌아오면 캐시 키가 같아 그대로 쓴다.
+pub fn prune_missing(
+    db: &Db,
+    mount: &Path,
+    library_id: i64,
+    rel_dir: &str,
+) -> Result<usize> {
+    let rows: Vec<(i64, String)> = db.read(|c| {
+        let mut st = c.prepare(
+            "SELECT fi.id, fo.rel_path || CASE WHEN fo.rel_path = '' THEN '' ELSE '/' END || fi.name
+               FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+              WHERE fo.library_id = ?1 AND fo.rel_path = ?2 AND fi.trashed_at IS NULL",
+        )?;
+        let it = st.query_map(rusqlite::params![library_id, rel_dir], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })?;
+    let gone: Vec<i64> = rows
+        .into_iter()
+        .filter(|(_, rel)| !mount.join(rel).exists())
+        .map(|(id, _)| id)
+        .collect();
+    if gone.is_empty() {
+        return Ok(0);
+    }
+    db.transaction(|tx| {
+        let mut del = tx.prepare("DELETE FROM files WHERE id = ?1")?;
+        for id in &gone {
+            del.execute([id])?;
+        }
+        tx.execute(
+            "UPDATE folders SET file_count =
+               (SELECT COUNT(*) FROM files
+                 WHERE files.folder_id = folders.id AND files.trashed_at IS NULL)
+             WHERE library_id = ?1",
+            [library_id],
+        )?;
+        Ok(())
+    })?;
+    Ok(gone.len())
+}
+
 /// 시험용 — 폴더를 라이브러리로 등록하고 곧바로 스캔한다.
 ///
 /// 실제 흐름에서는 등록(`library_add`)과 스캔(`scan_start`)이 나뉘어 있지만,
@@ -495,6 +541,52 @@ mod tests {
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
         let p = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         assert_eq!(p.inserted, 1, "시스템 폴더는 건너뛴다");
+    }
+
+    /// 파인더에서 지운 것은 스캔이 못 본다 — prune이 뺀다. 휴지통 것은 둔다.
+    #[test]
+    fn prune_removes_rows_whose_files_are_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib_dir = dir.path().join("lib");
+        let sub = lib_dir.join("2024");
+        std::fs::create_dir_all(&sub).unwrap();
+        for n in ["a.jpg", "b.jpg", "c.jpg"] {
+            std::fs::write(sub.join(n), b"x").unwrap();
+        }
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        let p = scan_test(&db, &lib_dir, 1, |_| {}).unwrap();
+        assert_eq!(p.inserted, 3);
+        let lib: i64 = db
+            .read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0)))
+            .unwrap();
+        let mount = crate::db::volumes::describe(&lib_dir).unwrap().mount_path;
+        let rel_dir: String = db
+            .read(|c| c.query_row("SELECT rel_path FROM folders WHERE name='2024'", [], |r| r.get(0)))
+            .unwrap();
+
+        // c는 휴지통에 든 것처럼 — 원래 자리에 없어도 정상
+        std::fs::remove_file(sub.join("b.jpg")).unwrap();
+        std::fs::remove_file(sub.join("c.jpg")).unwrap();
+        db.write(|c| c.execute("UPDATE files SET trashed_at = 1 WHERE name = 'c.jpg'", []))
+            .unwrap();
+
+        let n = prune_missing(&db, &mount, lib, &rel_dir).unwrap();
+        assert_eq!(n, 1, "b만 지운다");
+        let names: Vec<String> = db
+            .read(|c| {
+                let mut st = c.prepare("SELECT name FROM files ORDER BY name")?;
+                let it = st.query_map([], |r| r.get(0))?;
+                it.collect()
+            })
+            .unwrap();
+        assert_eq!(names, vec!["a.jpg", "c.jpg"]);
+        let cnt: i64 = db
+            .read(|c| c.query_row("SELECT file_count FROM folders WHERE name='2024'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(cnt, 1, "폴더 장수도 맞춘다 (휴지통 것은 안 센다)");
+
+        // 아무것도 안 사라졌으면 0
+        assert_eq!(prune_missing(&db, &mount, lib, &rel_dir).unwrap(), 0);
     }
 
     #[test]

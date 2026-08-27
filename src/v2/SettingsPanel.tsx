@@ -5,6 +5,7 @@ import { Btn } from "./ui";
 import { fmtBytes, fmtDateTime } from "./format";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
+import { usePref } from "./prefs";
 
 type Backup = { path: string; name: string; bytes: number; made_at: number };
 
@@ -31,6 +32,7 @@ export default function SettingsPanel({
   onRefresh: () => void;
 }) {
   const ask = useConfirm();
+  const [watch, setWatch] = usePref("watch");
   const [ver, setVer] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -121,6 +123,23 @@ export default function SettingsPanel({
           비우기
         </Btn>
       </div>
+
+      <Head>폴더 감시</Head>
+      <label className="px-3 flex items-start gap-2 text-[12px] text-fg-dim cursor-pointer">
+        <input
+          type="checkbox"
+          checked={watch}
+          onChange={(e) => setWatch(e.target.checked)}
+          className="mt-0.5 accent-accent"
+        />
+        <span>
+          파인더로 넣거나 지운 사진이 저절로 반영됩니다.
+          <br />
+          <span className="text-fg-mute">
+            복사가 멎고 1.5초 뒤에 그 폴더만 다시 봅니다.
+          </span>
+        </span>
+      </label>
 
       <Head>DB 백업</Head>
       <div className="px-3 text-[11.5px] text-fg-mute leading-relaxed">

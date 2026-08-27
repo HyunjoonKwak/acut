@@ -33,6 +33,8 @@ export type Prefs = {
   group: GroupBy;
   /** 마지막에 보던 라이브러리. 없어졌으면 목록이 비어 알 수 있다. */
   libId: number | null;
+  /** 폴더 감시 — 파인더로 넣은 사진이 저절로 나타난다 */
+  watch: boolean;
 };
 
 export const DEFAULT_PREFS: Prefs = {
@@ -47,6 +49,7 @@ export const DEFAULT_PREFS: Prefs = {
   sort: DEFAULT_SORT,
   group: "none",
   libId: null,
+  watch: true,
 };
 
 type Store = Prefs & {

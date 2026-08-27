@@ -40,7 +40,7 @@ export default function FilterButton({
 
   useEffect(() => {
     if (value.name_like === null) setText((t) => (t.trim() === "" ? t : ""));
-  }, [value.name_like]);
+  }, [value.name_like, setText]);
 
   const on = !isEmpty(value);
 

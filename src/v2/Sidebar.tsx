@@ -1,0 +1,235 @@
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import AlbumTree from "./AlbumTree";
+import Calendar from "./Calendar";
+import FacetList from "./FacetList";
+import Rail from "./Rail";
+import SearchPanel from "./SearchPanel";
+import SettingsPanel from "./SettingsPanel";
+import SmartPanel from "./SmartPanel";
+import TagPanel from "./TagPanel";
+import { useData } from "./dataStore";
+import { fmtBytes } from "./format";
+import { EMPTY, isEmpty } from "./picks";
+import { usePref } from "./prefs";
+import { sourceTitle } from "./railItems";
+import { useSelection } from "./selectionStore";
+import { Label, QuickRow } from "./ui";
+import { useView, type Filter } from "./viewStore";
+import type { Bucket, Library } from "./types";
+
+/**
+ * 왼쪽 — 레일과 그 갈래의 패널, 그리고 폭 조절 손잡이.
+ */
+export default function Sidebar({
+  filter,
+  facetFilter,
+  reload,
+  rescan,
+  addLibrary,
+  dropLibrary,
+}: {
+  filter: Filter;
+  facetFilter: Filter;
+  /** 태그를 붙이거나 뗐을 때 목록을 다시 읽는다 */
+  reload: () => void;
+  rescan: (ids: number[]) => void;
+  addLibrary: () => void;
+  dropLibrary: (l: Library) => void;
+}) {
+  const [source, setSource] = usePref("source");
+  const [panelOpen, setPanelOpen] = usePref("panelOpen");
+  const [panelW, setPanelW] = usePref("panelW");
+  const [libId] = usePref("libId");
+  const [sort] = usePref("sort");
+  const dragPanel = useRef(false);
+
+  const libs = useData((s) => s.libs);
+  const trash = useData((s) => s.trash);
+  const cache = useData((s) => s.cache);
+  const refreshCache = useData((s) => s.refreshCache);
+  const refreshTags = useData((s) => s.refreshTags);
+  const sel = useView((s) => s.sel);
+  const picks = useView((s) => s.picks);
+  const setPicks = useView((s) => s.setPicks);
+  const patchPicks = useView((s) => s.patchPicks);
+  const setViewTrash = useView((s) => s.setViewTrash);
+  const applySmart = useView((s) => s.applySmart);
+  const showAll = useView((s) => s.showAll);
+  const picked = useSelection((s) => s.picked);
+
+  /// 달력이 쓸 눈금 — **날짜 조건을 뺀** 필터로 읽는다. 그리드용 buckets를
+  /// 그대로 쓰면 2024년을 고른 순간 목록에 2024년만 남아 다른 해로 갈 수 없다.
+  const [calBuckets, setCalBuckets] = useState<Bucket[]>([]);
+  useEffect(() => {
+    if (source !== "calendar") return;
+    let live = true;
+    invoke<Bucket[]>("files_timeline", { filter: facetFilter })
+      .then((b) => live && setCalBuckets(b))
+      .catch(() => live && setCalBuckets([]));
+    return () => {
+      live = false;
+    };
+  }, [source, facetFilter]);
+
+  return (
+    <>
+      <Rail
+        value={source}
+        open={panelOpen}
+        trashCount={trash?.files ?? 0}
+        onPick={(s) => {
+          // 같은 갈래를 다시 누르면 접힌다 — 사진을 넓게 보고 싶을 때
+          if (s === source && panelOpen) {
+            setPanelOpen(false);
+            return;
+          }
+          setSource(s);
+          setPanelOpen(true);
+          setViewTrash(s === "trash");
+        }}
+      />
+
+      {panelOpen && (
+        <aside
+          className="shrink-0 bg-chrome border-r border-line overflow-y-auto py-2"
+          style={{ width: panelW }}
+        >
+          <Label>{sourceTitle(source)}</Label>
+
+          {source === "all" && (
+            <>
+              <QuickRow
+                label="모든 사진"
+                count={libs.reduce((a, l) => a + l.file_count, 0)}
+                on={libId === null && sel === null && isEmpty(picks)}
+                onClick={showAll}
+              />
+              <QuickRow
+                label="♥ 즐겨찾기"
+                on={picks.favorite_only}
+                onClick={() =>
+                  setPicks({ ...EMPTY, favorite_only: !picks.favorite_only })
+                }
+              />
+              <QuickRow
+                label="영상"
+                on={picks.kind === 1}
+                onClick={() =>
+                  setPicks({ ...EMPTY, kind: picks.kind === 1 ? null : 1 })
+                }
+              />
+              <QuickRow
+                label="RAW"
+                on={picks.kind === 2}
+                onClick={() =>
+                  setPicks({ ...EMPTY, kind: picks.kind === 2 ? null : 2 })
+                }
+              />
+              <QuickRow
+                label="★ 4개 이상"
+                on={picks.min_rating === 4}
+                onClick={() =>
+                  setPicks({
+                    ...EMPTY,
+                    min_rating: picks.min_rating === 4 ? null : 4,
+                  })
+                }
+              />
+            </>
+          )}
+
+          {source === "album" && (
+            <AlbumTree
+              rescan={rescan}
+              addLibrary={addLibrary}
+              dropLibrary={dropLibrary}
+            />
+          )}
+
+          {source === "calendar" && (
+            <Calendar
+              buckets={calBuckets}
+              year={picks.year}
+              month={picks.month}
+              onPick={(y, m) => patchPicks({ year: y, month: m })}
+            />
+          )}
+          {source === "camera" && (
+            <FacetList
+              kind="camera"
+              filter={facetFilter}
+              selected={picks.camera ?? null}
+              onPick={(v) => patchPicks({ camera: v })}
+            />
+          )}
+          {source === "location" && (
+            <FacetList
+              kind="place"
+              filter={facetFilter}
+              selected={picks.place}
+              onPick={(v) => patchPicks({ place: v })}
+            />
+          )}
+          {source === "tag" && (
+            <TagPanel
+              selected={picks.tag_id}
+              onPick={(v) => patchPicks({ tag_id: v })}
+              pickedIds={[...picked]}
+              onChanged={() => {
+                reload();
+                refreshTags();
+              }}
+            />
+          )}
+          {source === "smart" && (
+            <SmartPanel
+              current={filter}
+              currentSort={sort}
+              hasFilter={!isEmpty(picks)}
+              onApply={applySmart}
+            />
+          )}
+          {source === "search" && (
+            <SearchPanel
+              value={picks}
+              onChange={setPicks}
+              facetFilter={facetFilter}
+            />
+          )}
+          {source === "settings" && (
+            <SettingsPanel
+              thumbBytes={cache?.bytes ?? null}
+              onRefresh={refreshCache}
+            />
+          )}
+          {source === "trash" && (
+            <div className="px-3 py-2 text-[12px] text-fg-dim">
+              버린 사진 {(trash?.files ?? 0).toLocaleString()}장
+              <br />
+              <span className="text-fg-mute">
+                {fmtBytes(trash?.bytes ?? 0)}
+              </span>
+            </div>
+          )}
+        </aside>
+      )}
+
+      {/* 폭 조절 — 잡고 끌면 사이드바가 넓어진다 */}
+      {panelOpen && (
+        <div
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            dragPanel.current = true;
+          }}
+          onPointerMove={(e) => {
+            if (!dragPanel.current) return;
+            setPanelW(Math.max(160, Math.min(480, e.clientX - 48)));
+          }}
+          onPointerUp={() => (dragPanel.current = false)}
+          className="w-1 shrink-0 cursor-col-resize hover:bg-accent"
+        />
+      )}
+    </>
+  );
+}

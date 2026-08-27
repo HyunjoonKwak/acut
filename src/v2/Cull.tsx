@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Viewer from "./Viewer";
@@ -102,7 +102,10 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       live = false;
     };
   }, [current]);
-  const members = current && got?.groupId === current.id ? got.list : [];
+  const members = useMemo(
+    () => (current && got?.groupId === current.id ? got.list : []),
+    [current, got],
+  );
   const viewerAt = current && viewer?.groupId === current.id ? viewer.at : null;
   const setViewerAt = useCallback(
     (at: number | null) =>

@@ -154,7 +154,15 @@ export default function Viewer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [step, onClose, zoom, mark, detail?.favorite, onToggleFullScreen]);
+  }, [
+    step,
+    onClose,
+    zoom,
+    setZoom,
+    mark,
+    detail?.favorite,
+    onToggleFullScreen,
+  ]);
 
   if (id == null) return null;
   const src = `photo://localhost/${id}`;

@@ -6,10 +6,10 @@ import {
   type StateStorage,
 } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
-import type { GridStyle, Scaling } from "./gridStyle";
-import type { GroupBy } from "./GroupMenu";
-import type { Source } from "./railItems";
-import { DEFAULT_SORT, type Sort } from "./sortItems";
+import type { GridStyle, Scaling } from "./gridStyle.ts";
+import type { GroupBy } from "./groupItems.ts";
+import type { Source } from "./railItems.ts";
+import { DEFAULT_SORT, type Sort } from "./sortItems.ts";
 
 /**
  * 켰다 꺼도 남는 것들 — 보기 방식·크기·정렬·사이드바.
@@ -53,11 +53,34 @@ type Store = Prefs & {
   set: <K extends keyof Prefs>(key: K, value: Prefs[K]) => void;
 };
 
-/** settings 테이블을 저장소로. 한 열쇠에 통째로 든다. */
+/**
+ * settings 테이블을 저장소로. 한 열쇠에 통째로 든다.
+ *
+ * Tauri가 없는 곳(node 테스트, 브라우저 미리보기)에서는 조용히 기본값으로
+ * 간다 — 여기서 던지면 스토어를 import한 테스트가 통째로 죽는다.
+ */
 const tauriStorage: StateStorage = {
-  getItem: (name) => invoke<string | null>("settings_get", { key: name }),
-  setItem: (name, value) => invoke("settings_set", { key: name, value }),
-  removeItem: (name) => invoke("settings_remove", { key: name }),
+  getItem: async (name) => {
+    try {
+      return await invoke<string | null>("settings_get", { key: name });
+    } catch {
+      return null;
+    }
+  },
+  setItem: async (name, value) => {
+    try {
+      await invoke("settings_set", { key: name, value });
+    } catch {
+      /* Tauri 밖 */
+    }
+  },
+  removeItem: async (name) => {
+    try {
+      await invoke("settings_remove", { key: name });
+    } catch {
+      /* Tauri 밖 */
+    }
+  },
 };
 
 export const usePrefs = create<Store>()(

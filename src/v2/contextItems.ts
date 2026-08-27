@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { MenuItem } from "./ContextMenu";
-import { useData } from "./dataStore";
 import { useSelection } from "./selectionStore";
 import { useUi } from "./uiStore";
+import { toast } from "./toastStore";
 import type { FileRow, Mark } from "./types";
 
 /**
@@ -92,7 +92,7 @@ export function contextItems(
       label: "Finder에서 보기",
       run: () => {
         invoke("reveal_in_finder", { id: ids[0] }).catch((e) =>
-          useData.getState().setBusy(String(e)),
+          toast(String(e), "drop"),
         );
       },
     },

@@ -12,6 +12,7 @@ import Shortcuts from "./Shortcuts";
 import Sidebar from "./Sidebar";
 import StatusActions from "./StatusActions";
 import StatusBar from "./StatusBar";
+import Toasts from "./Toasts";
 import Toolbar from "./Toolbar";
 import Viewer from "./Viewer";
 import { contextItems } from "./contextItems";
@@ -19,6 +20,7 @@ import { useData } from "./dataStore";
 import { usePref } from "./prefs";
 import { useSelection } from "./selectionStore";
 import { thumbUrl, type Mark } from "./types";
+import { toast } from "./toastStore";
 import { useUi } from "./uiStore";
 import { useGridKeys } from "./useGridKeys";
 import { useGridLayout } from "./useGridLayout";
@@ -243,13 +245,12 @@ export default function App() {
               ids={pickedIds}
               libraryId={libId}
               onDone={async (o) => {
-                useData
-                  .getState()
-                  .setBusy(
-                    o.failed > 0
-                      ? `${o.moved}장 옮김 · ${o.failed}장 실패 — ${o.first_error ?? ""}`
-                      : `${o.moved}장 옮겼습니다`,
+                if (o.failed > 0)
+                  toast(
+                    `${o.moved}장 옮김 · ${o.failed}장 실패 — ${o.first_error ?? ""}`,
+                    "drop",
                   );
+                else toast(`${o.moved.toLocaleString()}장 옮겼습니다`, "ok");
                 useSelection.getState().clearPicked();
                 await ops.after();
               }}
@@ -278,6 +279,7 @@ export default function App() {
         items={ctxItems}
         onClose={() => ui.set({ ctxAt: null })}
       />
+      <Toasts />
       {ui.helping && <Shortcuts onClose={() => ui.set({ helping: false })} />}
       {ui.importing && (
         <Import

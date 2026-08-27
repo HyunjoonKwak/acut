@@ -113,6 +113,23 @@ impl Db {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// 사본의 내용으로 **이 DB를 통째로 바꾼다.** 되돌릴 수 없다 — 부르는 쪽이
+    /// 먼저 지금 상태를 한 벌 떠 둬야 한다.
+    ///
+    /// 파일을 바꿔치기하지 않는다. 열린 연결이 다섯이라 파일을 갈아 끼우면
+    /// 옛 파일을 계속 보는 연결이 생긴다. SQLite의 online backup API로 쓰기
+    /// 연결에 페이지를 부어 넣는다 — 다른 연결은 다음 읽기부터 새 내용을 본다.
+    pub fn restore_from(&self, src: &Path) -> Result<()> {
+        let from = Connection::open_with_flags(
+            src,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let mut c = self.write.lock().unwrap_or_else(|e| e.into_inner());
+        let b = rusqlite::backup::Backup::new(&from, &mut c)?;
+        b.run_to_completion(256, std::time::Duration::from_millis(5), None)?;
+        Ok(())
+    }
 }
 
 /// 연결마다 적용해야 하는 설정.

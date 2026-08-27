@@ -27,6 +27,13 @@ fn stamp(now: i64) -> String {
     t.format("%Y%m%d-%H%M%S").to_string()
 }
 
+/// `acut-20240827-140322.db` → 유닉스 초. 모양이 다르면 None.
+fn parse_stamp(name: &str) -> Option<i64> {
+    let core = name.strip_prefix("acut-")?.strip_suffix(".db")?;
+    let t = chrono::NaiveDateTime::parse_from_str(core, "%Y%m%d-%H%M%S").ok()?;
+    Some(t.and_utc().timestamp())
+}
+
 /// 백업 한 벌을 만든다. 돌아오는 값은 만든 파일.
 pub fn make(db: &Db, dir: &Path, now: i64) -> Result<Backup> {
     std::fs::create_dir_all(dir)?;
@@ -42,6 +49,34 @@ pub fn make(db: &Db, dir: &Path, now: i64) -> Result<Backup> {
     Ok(Backup { path, name, bytes, made_at: now })
 }
 
+/// 앱을 켤 때 부른다 — 마지막 사본이 이보다 오래됐으면 한 벌 더 뜬다.
+pub const AUTO_EVERY_SECS: i64 = 24 * 3600;
+
+/// 오래됐으면 한 벌 뜬다. 안 떴으면 None.
+pub fn make_if_stale(db: &Db, dir: &Path, now: i64) -> Result<Option<Backup>> {
+    let newest = list(dir)?.into_iter().next();
+    if let Some(b) = newest {
+        if now - b.made_at < AUTO_EVERY_SECS {
+            return Ok(None);
+        }
+    }
+    make(db, dir, now).map(Some)
+}
+
+/// 사본으로 되돌린다. **되돌리기 전 지금 상태를 먼저 한 벌 뜬다** — 잘못
+/// 고른 사본이었을 때 돌아올 길이다.
+pub fn restore(db: &Db, dir: &Path, from: &Path, now: i64) -> Result<Backup> {
+    if !from.is_file() {
+        return Err(crate::db::conn::DbError::Invalid(format!(
+            "사본이 없습니다: {}",
+            from.display()
+        )));
+    }
+    let safety = make(db, dir, now)?;
+    db.restore_from(from)?;
+    Ok(safety)
+}
+
 /// 있는 백업들 — 최신 것부터.
 pub fn list(dir: &Path) -> Result<Vec<Backup>> {
     let mut out = Vec::new();
@@ -52,12 +87,8 @@ pub fn list(dir: &Path) -> Result<Vec<Backup>> {
             continue;
         }
         let Ok(md) = e.metadata() else { continue };
-        let made_at = md
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        // 만든 시각은 이름에서 읽는다. 파일 mtime은 복사·동기화로 바뀐다.
+        let made_at = parse_stamp(&name).unwrap_or(0);
         out.push(Backup { path: e.path(), name, bytes: md.len(), made_at });
     }
     // 이름에 시각이 있어 이름 내림차순이 곧 최신순이다
@@ -132,6 +163,58 @@ mod tests {
     fn a_missing_folder_lists_nothing() {
         let d = tempfile::tempdir().unwrap();
         assert!(list(&d.path().join("없음")).unwrap().is_empty());
+    }
+
+    /// 사본으로 되돌리면 그 사본의 내용이 되고, 되돌리기 직전 상태도 한 벌 남는다.
+    #[test]
+    fn restore_replaces_contents_and_keeps_a_safety_copy() {
+        let (d, db) = seeded(); // tags: 여행
+        let dir = d.path().join("backups");
+        let snap = make(&db, &dir, 1_724_716_800).unwrap();
+
+        // 그 뒤에 바꾼다
+        db.write(|c| c.execute("INSERT INTO tags(name) VALUES('가족')", []))
+            .unwrap();
+        let n = |db: &Db| -> i64 {
+            db.read(|c| c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)))
+                .unwrap()
+        };
+        assert_eq!(n(&db), 2);
+
+        let safety = restore(&db, &dir, &snap.path, 1_724_716_900).unwrap();
+        assert_eq!(n(&db), 1, "사본 시점(여행만)으로 돌아간다");
+        assert!(safety.path.is_file());
+        // 안전 사본에는 되돌리기 직전(둘)이 들어 있다
+        let c = rusqlite::Connection::open(&safety.path).unwrap();
+        let m: i64 = c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
+        assert_eq!(m, 2);
+        // 되돌린 뒤에도 계속 쓸 수 있다
+        db.write(|c| c.execute("INSERT INTO tags(name) VALUES('생일')", []))
+            .unwrap();
+        assert_eq!(n(&db), 2);
+    }
+
+    #[test]
+    fn restore_from_a_missing_file_is_refused() {
+        let (d, db) = seeded();
+        let r = restore(&db, &d.path().join("b"), &d.path().join("없음.db"), 0);
+        assert!(r.is_err());
+    }
+
+    /// 하루 안에 뜬 사본이 있으면 또 뜨지 않는다 — 켤 때마다 한 벌씩 쌓이면
+    /// 사흘치가 세 시간치가 된다.
+    #[test]
+    fn auto_backup_only_when_the_last_one_is_old() {
+        let (d, db) = seeded();
+        let dir = d.path().join("backups");
+        let t = 1_724_716_800;
+        assert!(make_if_stale(&db, &dir, t).unwrap().is_some(), "처음엔 뜬다");
+        assert!(make_if_stale(&db, &dir, t + 3600).unwrap().is_none(), "한 시간 뒤엔 안 뜬다");
+        assert!(
+            make_if_stale(&db, &dir, t + AUTO_EVERY_SECS + 1).unwrap().is_some(),
+            "하루 지나면 뜬다"
+        );
+        assert_eq!(list(&dir).unwrap().len(), 2);
     }
 
     /// 백업 폴더에 다른 파일이 있어도 건드리지 않는다.

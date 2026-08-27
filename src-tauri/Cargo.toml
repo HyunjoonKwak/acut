@@ -30,7 +30,7 @@ serde_json = "1.0"
 log = "0.4"
 
 # Database
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 
 # Image processing
 image = "0.25"

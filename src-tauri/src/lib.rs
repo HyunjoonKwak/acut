@@ -55,6 +55,25 @@ pub fn run() {
                 .expect("데이터베이스를 열 수 없습니다");
             app.manage(api::AppState::new(v2, app_data_dir.clone()));
 
+            // 하루에 한 벌 — 판정·평점·태그가 든 파일이 하나뿐이라 잃으면 끝이다.
+            // 별도 스레드에서. 8만 장 DB라도 몇 초지만 첫 화면을 막을 이유가 없다.
+            {
+                let state = app.state::<api::AppState>();
+                let db = std::sync::Arc::clone(&state.db);
+                let dir = app_data_dir.join("backups");
+                std::thread::spawn(move || {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    match db::backup::make_if_stale(&db, &dir, now) {
+                        Ok(Some(b)) => log::info!("자동 백업 {}", b.name),
+                        Ok(None) => {}
+                        Err(e) => log::warn!("자동 백업 실패: {e}"),
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -70,6 +89,7 @@ pub fn run() {
             api::settings_remove,
             api::db_backup,
             api::db_backups,
+            api::db_restore,
             api::db_backups_reveal,
             api::open_in_default_app,
             api::cache_usage,

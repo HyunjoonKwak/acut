@@ -802,6 +802,25 @@ pub fn db_backups(state: State<'_, AppState>) -> Result<Vec<crate::db::backup::B
     crate::db::backup::list(&backup_dir(&state)).map_err(err)
 }
 
+/// 사본으로 되돌린다. 먼저 지금 상태를 한 벌 떠 두고, 되돌린 뒤 프론트가
+/// 화면을 다시 읽는다 (설정까지 바뀌므로 통째로 새로고침).
+#[tauri::command]
+pub fn db_restore(state: State<'_, AppState>, path: String) -> Result<crate::db::backup::Backup, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let dir = backup_dir(&state);
+    // 백업 폴더 안의 파일만 받는다 — 아무 경로나 부어 넣게 두지 않는다
+    let p = PathBuf::from(&path);
+    if p.parent() != Some(dir.as_path()) {
+        return Err("백업 폴더 안의 사본만 되돌릴 수 있습니다".into());
+    }
+    let r = crate::db::backup::restore(&state.db, &dir, &p, now).map_err(err)?;
+    state.forget_dirs();
+    Ok(r)
+}
+
 /// 백업 폴더를 Finder에서 연다.
 #[tauri::command]
 pub fn db_backups_reveal(state: State<'_, AppState>) -> Result<(), String> {

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useConfirm } from "./confirmContext";
 import { useData } from "./dataStore";
 import { fmtBytes } from "./format";
+import { toast } from "./toastStore";
 import { usePrefs } from "./prefs";
 import type { Library, Outcome } from "./types";
 import { useView } from "./viewStore";
@@ -36,15 +37,19 @@ export function useOps(cb: {
       setBusy(doing);
       try {
         const r = await invoke<Outcome>(cmd, args);
-        setBusy(
-          r.failed > 0
-            ? `${r.moved}장 처리 · ${r.failed}장 실패 — ${r.first_error ?? ""}`
-            : "",
-        );
+        setBusy("");
+        if (r.failed > 0)
+          toast(
+            `${r.moved}장 처리 · ${r.failed}장 실패 — ${r.first_error ?? ""}`,
+            "drop",
+          );
+        else if (r.moved > 0)
+          toast(`${r.moved.toLocaleString()}장 처리했습니다`);
         await after();
         useData.getState().refreshTrash(usePrefs.getState().libId);
       } catch (e) {
-        setBusy(String(e));
+        setBusy("");
+        toast(String(e), "drop");
       }
     },
     [after],

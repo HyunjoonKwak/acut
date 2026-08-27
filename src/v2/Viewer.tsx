@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fmtBytes, fmtDateTime, fmtDuration } from "./format";
 import TagEditor from "./TagEditor";
+import Histogram from "./Histogram";
 
 type Detail = {
   name: string;
@@ -342,6 +343,14 @@ export default function Viewer({
                 제외 <span className="font-mono text-[10px]">X</span>
               </button>
             </div>
+
+            {/* 영상은 대표 프레임 한 장이라 분포가 큰 뜻이 없다 */}
+            {!isVideo && !failed && (
+              <>
+                <Sep />
+                <Histogram src={src} />
+              </>
+            )}
 
             <Sep />
             <TagEditor id={id} />

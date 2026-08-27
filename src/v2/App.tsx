@@ -5,6 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Cull from "./Cull";
 import Viewer from "./Viewer";
+import Compare from "./Compare";
 import ScrollBar from "./ScrollBar";
 import Filmstrip from "./Filmstrip";
 import Organize from "./Organize";
@@ -197,6 +198,8 @@ export default function App() {
   /// 여러 장 고르기. 정리는 이 묶음을 옮긴다.
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [organizing, setOrganizing] = useState(false);
+  /// 나란히 보기 — 골라 둔 것 중 앞의 넷. null이면 닫힌 상태
+  const [comparing, setComparing] = useState<number[] | null>(null);
   /// 「⋯」를 연 라이브러리. 지우기는 이 안에 숨겨 둔다.
   const [menuFor, setMenuFor] = useState<number | null>(null);
   /// 사이드바가 무엇을 보여줄지, 펴져 있는지, 얼마나 넓은지
@@ -653,6 +656,17 @@ export default function App() {
   /// 정리 패널의 제안 요청이 끝없이 다시 돈다.
   const pickedIds = useMemo(() => [...picked], [picked]);
 
+  /// 나란히 놓을 것 — 고른 것 중 **목록에 놓인 순서대로** 앞의 넷.
+  /// Set은 누른 차례를 기억해서 그대로 쓰면 화면과 순서가 어긋난다.
+  const compareIds = useMemo(
+    () =>
+      rows
+        .filter((r) => picked.has(r.id))
+        .slice(0, 4)
+        .map((r) => r.id),
+    [rows, picked],
+  );
+
   /// 뷰어가 훑고 다닐 목록 — 지금 화면에 올라온 순서 그대로
   const ids = useMemo(() => rows.map((r) => r.id), [rows]);
 
@@ -928,6 +942,15 @@ export default function App() {
           if (i >= 0) setViewerAt(i);
         },
       },
+      ...(ctxIds.length >= 2
+        ? ([
+            {
+              kind: "item",
+              label: `나란히 보기 (${Math.min(ctxIds.length, 4)}장)`,
+              run: () => setComparing(ctxIds.slice(0, 4)),
+            },
+          ] as CtxItem[])
+        : []),
       { kind: "sep" },
       {
         kind: "item",
@@ -1675,6 +1698,14 @@ export default function App() {
 
       <ContextMenu at={ctxAt} items={ctxItems} onClose={() => setCtxAt(null)} />
 
+      {comparing && (
+        <Compare
+          ids={comparing}
+          onMark={markOne}
+          onClose={() => setComparing(null)}
+        />
+      )}
+
       {culling && libs.length > 0 && (
         <Cull
           onClose={() => {
@@ -1698,6 +1729,11 @@ export default function App() {
             )}
           </span>
           <Sep />
+          {picked.size >= 2 && (
+            <PanelBtn onClick={() => setComparing(compareIds)}>
+              나란히 보기
+            </PanelBtn>
+          )}
           <PanelBtn onClick={() => markPicked({ cullingFlag: 1 })} hint="P">
             남김
           </PanelBtn>

@@ -100,6 +100,9 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
                 .header("Content-Type", "image/jpeg")
                 // 키에 원본의 크기·수정시각이 들어 있어 내용이 바뀌면 이름이 바뀐다
                 .header("Cache-Control", "public, max-age=31536000, immutable")
+                // 웹뷰(tauri://localhost)와 다른 오리진이라 이게 없으면 canvas가
+                // 오염돼 픽셀을 못 읽는다 — 히스토그램이 그 픽셀로 그려진다.
+                .header("Access-Control-Allow-Origin", "*")
                 .body(bytes)
                 .unwrap(),
         ),

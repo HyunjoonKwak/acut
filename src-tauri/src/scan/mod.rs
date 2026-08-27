@@ -513,7 +513,10 @@ mod real {
     #[test]
     #[ignore = "실제 라이브러리 전체를 스캔한다"]
     fn scan_the_whole_library() {
-        let root = Path::new("/Volumes/MAIN SSD/MERGE/사진통합작업");
+        // 어느 라이브러리를 잴지는 ACUT_BENCH_ROOT로 준다. 없으면 옛 자리.
+        let root_s = std::env::var("ACUT_BENCH_ROOT")
+            .unwrap_or_else(|_| "/Volumes/MAIN SSD/MERGE/사진통합작업".into());
+        let root = Path::new(&root_s);
         if !root.is_dir() {
             eprintln!("라이브러리가 없다 — 건너뜀");
             return;
@@ -582,7 +585,10 @@ mod real {
     #[test]
     #[ignore = "실제 라이브러리 전체 · 수 분 걸린다"]
     fn full_pipeline() {
-        let root = Path::new("/Volumes/MAIN SSD/MERGE/사진통합작업");
+        // 어느 라이브러리를 잴지는 ACUT_BENCH_ROOT로 준다. 없으면 옛 자리.
+        let root_s = std::env::var("ACUT_BENCH_ROOT")
+            .unwrap_or_else(|_| "/Volumes/MAIN SSD/MERGE/사진통합작업".into());
+        let root = Path::new(&root_s);
         if !root.is_dir() {
             eprintln!("라이브러리 없음 — 건너뜀");
             return;

@@ -6,6 +6,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import Cull from "./Cull";
 import Viewer from "./Viewer";
 import ScrollBar from "./ScrollBar";
+import Filmstrip from "./Filmstrip";
 import Organize from "./Organize";
 import Tile from "./Tile";
 import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
@@ -1011,6 +1012,22 @@ export default function App() {
     );
   }, [rows]);
 
+  /// 초점이 화면 밖으로 나가면 그 줄까지 그리드를 옮긴다.
+  ///
+  /// 필름스트립에서 고른 사진이 그리드에 안 보이면 아래위가 따로 노는 꼴이
+  /// 된다. `align: "auto"`라 이미 보이는 것은 건드리지 않는다 — 누를 때마다
+  /// 가운데로 끌어오면 눈이 어지럽다.
+  useEffect(() => {
+    if (selected === null) return;
+    const at = grid.findIndex(
+      (r) => r.kind === "photos" && r.items.some((i) => i.id === selected),
+    );
+    if (at >= 0) virt.scrollToIndex(at, { align: "auto" });
+    // grid는 목록이 바뀔 때마다 새로 만들어진다. 초점이 그대로면 굳이
+    // 다시 맞출 이유가 없어 의존성에서 뺀다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
   /// 상태바에 띄울 지금 사진의 카메라·설정. 상세는 따로 읽는다.
   const [focusExif, setFocusExif] = useState<{
     camModel: string | null;
@@ -1470,140 +1487,151 @@ export default function App() {
           />
         )}
 
-        {/* 콘텐츠 영역 — 뷰어는 이 안만 덮는다. 왼쪽 폴더 목록은 계속 보인다. */}
-        <div className="flex-1 flex min-w-0 relative">
-          {/* 그리드 */}
-          <main
-            ref={scrollRef}
-            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-            className="flex-1 overflow-y-auto p-2.5"
-          >
-            {libs.length === 0 && (
-              <div className="h-full flex items-center justify-center text-fg-mute">
-                「라이브러리 추가」로 사진 폴더를 등록하세요
-              </div>
-            )}
-            <div style={{ height: virt.getTotalSize(), position: "relative" }}>
-              {virt.getVirtualItems().map((v) => {
-                const row = grid[v.index];
-                if (!row) return null;
-                const box = {
-                  position: "absolute" as const,
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${v.start}px)`,
-                };
-                if (row.kind === "header") {
+        {/* 콘텐츠 영역 — 뷰어는 이 안만 덮는다. 왼쪽 폴더 목록은 계속 보인다.
+            세로로 나눈다: 위는 그리드와 타임라인, 아래는 필름스트립.
+            겹쳐 놓으면 스트립이 사진 두 줄을 가린다. */}
+        <div className="flex-1 flex flex-col min-w-0 relative">
+          <div className="flex-1 flex min-h-0 min-w-0 relative">
+            {/* 그리드 */}
+            <main
+              ref={scrollRef}
+              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+              className="flex-1 overflow-y-auto p-2.5"
+            >
+              {libs.length === 0 && (
+                <div className="h-full flex items-center justify-center text-fg-mute">
+                  「라이브러리 추가」로 사진 폴더를 등록하세요
+                </div>
+              )}
+              <div
+                style={{ height: virt.getTotalSize(), position: "relative" }}
+              >
+                {virt.getVirtualItems().map((v) => {
+                  const row = grid[v.index];
+                  if (!row) return null;
+                  const box = {
+                    position: "absolute" as const,
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${v.start}px)`,
+                  };
+                  if (row.kind === "header") {
+                    return (
+                      <div
+                        key={v.key}
+                        style={{ ...box, height: HEADER_H }}
+                        className="flex items-baseline gap-2 px-0.5"
+                      >
+                        <span className="text-[13px] font-semibold text-fg">
+                          {headerLabel(row.label, group)}
+                        </span>
+                        <span className="text-[11.5px] text-fg-mute tabular-nums">
+                          {row.count.toLocaleString()}장
+                        </span>
+                        <div className="flex-1 h-px bg-line" />
+                      </div>
+                    );
+                  }
+                  const jrows = justified?.get(v.index);
+                  if (jrows) {
+                    // 양쪽 맞춤 — 한 「줄」 안에 여러 소줄이 들어간다
+                    let n = row.start;
+                    return (
+                      <div key={v.key} style={box}>
+                        {jrows.map((jr, ri) => (
+                          <div
+                            key={ri}
+                            className="flex"
+                            style={{ gap: GAP, marginBottom: GAP }}
+                          >
+                            {jr.items.map(({ file, width }) => {
+                              const at = n++;
+                              return (
+                                <Tile
+                                  key={file.id}
+                                  file={file}
+                                  url={thumbUrl(file)}
+                                  picked={picked.has(file.id)}
+                                  focused={selected === file.id}
+                                  onClick={(e: React.MouseEvent) =>
+                                    pick(file.id, e)
+                                  }
+                                  onDoubleClick={() => setViewerAt(at)}
+                                  onContextMenu={(e: React.MouseEvent) =>
+                                    openContext(file.id, e)
+                                  }
+                                  caption={caption}
+                                  style="justified"
+                                  scaling={scaling}
+                                  aspect={{ width, height: jr.height }}
+                                />
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
                   return (
                     <div
                       key={v.key}
-                      style={{ ...box, height: HEADER_H }}
-                      className="flex items-baseline gap-2 px-0.5"
+                      style={{
+                        ...box,
+                        height: rowH,
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`,
+                        gap: GAP,
+                      }}
                     >
-                      <span className="text-[13px] font-semibold text-fg">
-                        {headerLabel(row.label, group)}
-                      </span>
-                      <span className="text-[11.5px] text-fg-mute tabular-nums">
-                        {row.count.toLocaleString()}장
-                      </span>
-                      <div className="flex-1 h-px bg-line" />
-                    </div>
-                  );
-                }
-                const jrows = justified?.get(v.index);
-                if (jrows) {
-                  // 양쪽 맞춤 — 한 「줄」 안에 여러 소줄이 들어간다
-                  let n = row.start;
-                  return (
-                    <div key={v.key} style={box}>
-                      {jrows.map((jr, ri) => (
-                        <div
-                          key={ri}
-                          className="flex"
-                          style={{ gap: GAP, marginBottom: GAP }}
-                        >
-                          {jr.items.map(({ file, width }) => {
-                            const at = n++;
-                            return (
-                              <Tile
-                                key={file.id}
-                                file={file}
-                                url={thumbUrl(file)}
-                                picked={picked.has(file.id)}
-                                focused={selected === file.id}
-                                onClick={(e: React.MouseEvent) =>
-                                  pick(file.id, e)
-                                }
-                                onDoubleClick={() => setViewerAt(at)}
-                                onContextMenu={(e: React.MouseEvent) =>
-                                  openContext(file.id, e)
-                                }
-                                caption={caption}
-                                style="justified"
-                                scaling={scaling}
-                                aspect={{ width, height: jr.height }}
-                              />
-                            );
-                          })}
-                        </div>
+                      {row.items.map((r, ci) => (
+                        <Tile
+                          key={r.id}
+                          file={r}
+                          url={thumbUrl(r)}
+                          picked={picked.has(r.id)}
+                          focused={selected === r.id}
+                          onClick={(e: React.MouseEvent) => pick(r.id, e)}
+                          onDoubleClick={() => setViewerAt(row.start + ci)}
+                          onContextMenu={(e: React.MouseEvent) =>
+                            openContext(r.id, e)
+                          }
+                          caption={caption}
+                          style={gridStyle}
+                          scaling={scaling}
+                        />
                       ))}
                     </div>
                   );
-                }
-                return (
-                  <div
-                    key={v.key}
-                    style={{
-                      ...box,
-                      height: rowH,
-                      display: "grid",
-                      gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`,
-                      gap: GAP,
-                    }}
-                  >
-                    {row.items.map((r, ci) => (
-                      <Tile
-                        key={r.id}
-                        file={r}
-                        url={thumbUrl(r)}
-                        picked={picked.has(r.id)}
-                        focused={selected === r.id}
-                        onClick={(e: React.MouseEvent) => pick(r.id, e)}
-                        onDoubleClick={() => setViewerAt(row.start + ci)}
-                        onContextMenu={(e: React.MouseEvent) =>
-                          openContext(r.id, e)
-                        }
-                        caption={caption}
-                        style={gridStyle}
-                        scaling={scaling}
-                      />
-                    ))}
-                  </div>
-                );
-              })}
-            </div>
-            {loading && (
-              <div className="py-4 text-center text-fg-mute">불러오는 중…</div>
-            )}
-          </main>
+                })}
+              </div>
+              {loading && (
+                <div className="py-4 text-center text-fg-mute">
+                  불러오는 중…
+                </div>
+              )}
+            </main>
 
-          {/* 필름스트립 자리 — 아직 비어 있다 */}
-          {filmstrip && selected !== null && (
-            <div className="absolute bottom-0 inset-x-0 h-1/3 bg-canvas border-t border-line flex items-center justify-center">
-              <span className="text-[12.5px] text-fg-mute">
-                필름스트립은 아직 준비 중입니다 — 두 번 눌러 크게 보세요
-              </span>
-            </div>
+            {/* 타임라인 스크롤바 */}
+            <ScrollBar
+              buckets={buckets}
+              offset={offset}
+              pageSize={pageSize}
+              onSeek={seekTo}
+            />
+          </div>
+
+          {/* 필름스트립 — 지금 보는 곳 둘레의 사진들 */}
+          {filmstrip && (
+            <Filmstrip
+              files={rows}
+              thumbUrl={thumbUrl}
+              selectedId={selected}
+              onPick={pick}
+              onOpen={setViewerAt}
+              onNearEnd={loadMore}
+            />
           )}
-
-          {/* 타임라인 스크롤바 */}
-          <ScrollBar
-            buckets={buckets}
-            offset={offset}
-            pageSize={pageSize}
-            onSeek={seekTo}
-          />
 
           {organizing && libId !== null && (
             <Organize

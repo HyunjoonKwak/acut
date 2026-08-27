@@ -153,6 +153,12 @@ CREATE INDEX IF NOT EXISTS idx_files_kind      ON files(kind, taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_files_gps       ON files(gps_lat, gps_lon) WHERE gps_lat IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_camera    ON files(cam_model) WHERE cam_model IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_inode     ON files(inode);
+-- 정렬 기준마다 인덱스가 있어야 페이지마다 14만 행을 다시 줄 세우지 않는다.
+-- 모두 (값, id) 쌍이다 — id가 없으면 같은 값에서 커서가 흔들린다.
+CREATE INDEX IF NOT EXISTS idx_files_name      ON files(name, id);
+CREATE INDEX IF NOT EXISTS idx_files_size_id   ON files(size, id);
+CREATE INDEX IF NOT EXISTS idx_files_created   ON files(created_at, id);
+CREATE INDEX IF NOT EXISTS idx_files_modified  ON files(modified_at, id);
 -- idx_files_trashed는 db/upgrade.rs가 만든다. 여기 두면 구버전 DB에서
 -- 컬럼이 아직 없는 채로 이 배치가 돌아 앱이 뜨지 않는다.
 

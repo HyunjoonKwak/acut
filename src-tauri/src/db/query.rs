@@ -26,6 +26,9 @@ pub struct FileRow {
     pub favorite: bool,
     /// 영상 길이. 타일의 ▶ 배지에 쓴다.
     pub duration_ms: Option<i64>,
+    /// 정렬 커서를 만들 때 쓴다 (생성일·수정일 기준 정렬)
+    pub created_at: Option<i64>,
+    pub modified_at: Option<i64>,
     /// 어느 라이브러리 소속인가. 썸네일 캐시가 라이브러리마다 따로 있어서
     /// 프론트가 `thumb://` 주소를 만들 때 필요하다.
     pub library_id: Option<i64>,
@@ -33,11 +36,71 @@ pub struct FileRow {
     pub thumb: Option<String>,
 }
 
-/// 다음 페이지를 가리키는 커서.
+/// 무엇으로 정렬할까. Lap의 정렬 목록과 같다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortBy {
+    #[default]
+    TakenAt,
+    CreatedAt,
+    ModifiedAt,
+    Name,
+    Size,
+    Pixels,
+    Duration,
+}
+
+impl SortBy {
+    /// 정렬에 쓸 식. NULL은 맨 뒤로 몰리게 COALESCE로 채운다 — 안 그러면
+    /// 커서 비교에서 NULL이 끼어 페이지가 끊긴다.
+    fn expr(self) -> &'static str {
+        match self {
+            SortBy::TakenAt => "fi.taken_at",
+            SortBy::CreatedAt => "COALESCE(fi.created_at, 0)",
+            SortBy::ModifiedAt => "COALESCE(fi.modified_at, 0)",
+            SortBy::Name => "fi.name",
+            SortBy::Size => "fi.size",
+            SortBy::Pixels => "COALESCE(fi.width,0) * COALESCE(fi.height,0)",
+            SortBy::Duration => "COALESCE(fi.duration_ms, 0)",
+        }
+    }
+    fn is_text(self) -> bool {
+        matches!(self, SortBy::Name)
+    }
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Sort {
+    pub by: SortBy,
+    /// 큰 것부터. 촬영일은 최신순이 기본이다.
+    pub desc: bool,
+}
+
+impl Default for Sort {
+    fn default() -> Self {
+        Self { by: SortBy::TakenAt, desc: true }
+    }
+}
+
+/// 다음 페이지를 가리키는 커서.
+///
+/// 정렬 기준 값과 id를 함께 들고 다닌다. id가 없으면 같은 값이 여럿일 때
+/// 경계에서 사진이 빠지거나 겹친다.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Cursor {
-    pub taken_at: i64,
+    /// 숫자 기준일 때의 값
+    pub num: Option<i64>,
+    /// 이름 기준일 때의 값
+    pub text: Option<String>,
     pub id: i64,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Self { num: None, text: None, id: 0 }
+    }
 }
 
 /// `#[serde(default)]`가 중요하다. 프론트는 필요한 필드만 보낸다 —
@@ -67,6 +130,8 @@ pub struct Filter {
     pub name_like: Option<String>,
     /// true면 **휴지통에 든 것만** 본다. 기본은 살아 있는 것만.
     pub trashed: bool,
+    /// 무엇으로 어떤 방향으로 늘어놓을까.
+    pub sort: Sort,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -151,11 +216,21 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         w.push("fi.name LIKE ? ESCAPE '\\'".into());
         p.push(Box::new(format!("%{}%", escape_like(q))));
     }
-    // 커서 — 정렬과 같은 방향이어야 한다 (taken_at DESC, id DESC)
+    // 커서 — 정렬과 **같은 방향**이어야 한다. 방향이 어긋나면 페이지가
+    // 겹치거나 통째로 건너뛴다.
     if let Some(c) = cursor {
-        w.push("(fi.taken_at < ? OR (fi.taken_at = ? AND fi.id < ?))".into());
-        p.push(Box::new(c.taken_at));
-        p.push(Box::new(c.taken_at));
+        let col = f.sort.by.expr();
+        let cmp = if f.sort.desc { "<" } else { ">" };
+        w.push(format!("({col} {cmp} ? OR ({col} = ? AND fi.id {cmp} ?))"));
+        if f.sort.by.is_text() {
+            let v = c.text.clone().unwrap_or_default();
+            p.push(Box::new(v.clone()));
+            p.push(Box::new(v));
+        } else {
+            let v = c.num.unwrap_or(0);
+            p.push(Box::new(v));
+            p.push(Box::new(v));
+        }
         p.push(Box::new(c.id));
     }
 
@@ -170,16 +245,18 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
 /// 최신순 한 페이지. 커서가 None이면 첫 페이지.
 pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result<Page> {
     let (where_sql, params) = build_where(f, cursor);
+    let dir = if f.sort.desc { "DESC" } else { "ASC" };
+    let order = format!("{} {dir}, fi.id {dir}", f.sort.by.expr());
     // limit + 1을 읽어 다음 페이지가 있는지 알아낸다
     let sql = format!(
         "SELECT fi.id, fi.name, fi.taken_at, fi.taken_at_source, fi.kind, fi.size,
                 fi.width, fi.height, fi.rating, fi.culling_flag, fi.favorite,
-                fi.duration_ms, fo.library_id, t.rel_path
+                fi.duration_ms, fi.created_at, fi.modified_at, fo.library_id, t.rel_path
          FROM files fi
          JOIN folders fo ON fo.id = fi.folder_id
          LEFT JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
          {where_sql}
-         ORDER BY fi.taken_at DESC, fi.id DESC
+         ORDER BY {order}
          LIMIT {}",
         limit + 1
     );
@@ -201,8 +278,10 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
                 culling_flag: r.get(9)?,
                 favorite: r.get::<_, i32>(10)? != 0,
                 duration_ms: r.get(11)?,
-                library_id: r.get(12)?,
-                thumb: r.get(13)?,
+                created_at: r.get(12)?,
+                modified_at: r.get(13)?,
+                library_id: r.get(14)?,
+                thumb: r.get(15)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -210,11 +289,28 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
 
     let next = if rows.len() > limit {
         rows.truncate(limit);
-        rows.last().map(|r| Cursor { taken_at: r.taken_at, id: r.id })
+        rows.last().map(|r| cursor_of(r, f.sort.by))
     } else {
         None
     };
     Ok(Page { rows, next })
+}
+
+/// 마지막 행에서 다음 커서를 만든다. 정렬 기준에 따라 어느 값을 담을지 갈린다.
+fn cursor_of(r: &FileRow, by: SortBy) -> Cursor {
+    let mut c = Cursor { num: None, text: None, id: r.id };
+    match by {
+        SortBy::Name => c.text = Some(r.name.clone()),
+        SortBy::TakenAt => c.num = Some(r.taken_at),
+        SortBy::CreatedAt => c.num = Some(r.created_at.unwrap_or(0)),
+        SortBy::ModifiedAt => c.num = Some(r.modified_at.unwrap_or(0)),
+        SortBy::Size => c.num = Some(r.size),
+        SortBy::Pixels => {
+            c.num = Some(r.width.unwrap_or(0) * r.height.unwrap_or(0));
+        }
+        SortBy::Duration => c.num = Some(r.duration_ms.unwrap_or(0)),
+    }
+    c
 }
 
 /// 타임라인 눈금 하나 — 한 달치.
@@ -281,26 +377,30 @@ pub fn cursor_at(db: &Db, f: &Filter, index: i64) -> Result<Option<Cursor>> {
         return Ok(None);
     }
     let (where_sql, mut params) = build_where(f, None);
-    // index번째 행 **바로 앞** 행이 커서다. page()는 커서 다음부터 돌려준다.
     params.push(Box::new(index - 1));
-    // OFFSET은 건너뛰는 행마다 조인을 한 번씩 한다. `fo`를 실제로 보는 필터가
-    // 없으면 조인을 뺀다. 실측(14만 행, OFFSET 143,000): 40ms -> 3ms.
     let join = if needs_folder_join(f) {
         "JOIN folders fo ON fo.id = fi.folder_id"
     } else {
         ""
     };
+    let dir = if f.sort.desc { "DESC" } else { "ASC" };
+    let col = f.sort.by.expr();
     let sql = format!(
-        "SELECT fi.taken_at, fi.id FROM files fi
+        "SELECT {col}, fi.id FROM files fi
          {join}
          {where_sql}
-         ORDER BY fi.taken_at DESC, fi.id DESC
+         ORDER BY {col} {dir}, fi.id {dir}
          LIMIT 1 OFFSET ?"
     );
+    let text = f.sort.by.is_text();
     db.read(|c| {
         let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
         c.query_row(&sql, refs.as_slice(), |r| {
-            Ok(Cursor { taken_at: r.get(0)?, id: r.get(1)? })
+            Ok(if text {
+                Cursor { num: None, text: Some(r.get(0)?), id: r.get(1)? }
+            } else {
+                Cursor { num: Some(r.get(0)?), text: None, id: r.get(1)? }
+            })
         })
         .optional()
     })
@@ -448,6 +548,66 @@ mod tests {
         // 휴지통 보기에서는 그것만 나온다
         let t = Filter { trashed: true, ..Default::default() };
         assert_eq!(page(&db, &t, None, 500).unwrap().rows.len(), 3);
+    }
+
+    /// 정렬 기준을 바꿔도 페이지가 끊기거나 겹치지 않아야 한다.
+    /// 커서 방향이 정렬 방향과 어긋나면 딱 그 증상이 난다.
+    #[test]
+    fn every_sort_pages_without_gaps_or_overlaps() {
+        let (_d, db) = seeded();
+        for by in [
+            SortBy::TakenAt,
+            SortBy::CreatedAt,
+            SortBy::ModifiedAt,
+            SortBy::Name,
+            SortBy::Size,
+            SortBy::Pixels,
+            SortBy::Duration,
+        ] {
+            for desc in [true, false] {
+                let f = Filter { sort: Sort { by, desc }, ..Default::default() };
+                // 한 번에 다 읽은 것과 7장씩 넘겨 읽은 것이 같아야 한다
+                let all: Vec<i64> =
+                    page(&db, &f, None, 500).unwrap().rows.iter().map(|r| r.id).collect();
+                let mut paged = Vec::new();
+                let mut cur = None;
+                loop {
+                    let p = page(&db, &f, cur, 7).unwrap();
+                    paged.extend(p.rows.iter().map(|r| r.id));
+                    match p.next {
+                        Some(c) => cur = Some(c),
+                        None => break,
+                    }
+                }
+                assert_eq!(all, paged, "{by:?} desc={desc}");
+                assert_eq!(all.len(), 50, "{by:?} desc={desc} — 빠진 것이 없어야 한다");
+            }
+        }
+    }
+
+    #[test]
+    fn ascending_and_descending_are_mirror_images() {
+        let (_d, db) = seeded();
+        let asc = Filter { sort: Sort { by: SortBy::Size, desc: false }, ..Default::default() };
+        let desc = Filter { sort: Sort { by: SortBy::Size, desc: true }, ..Default::default() };
+        let a: Vec<i64> = page(&db, &asc, None, 500).unwrap().rows.iter().map(|r| r.id).collect();
+        let mut d: Vec<i64> =
+            page(&db, &desc, None, 500).unwrap().rows.iter().map(|r| r.id).collect();
+        d.reverse();
+        assert_eq!(a, d);
+    }
+
+    /// 스크롤바가 준 순번은 **지금 정렬 기준**의 순번이어야 한다.
+    #[test]
+    fn cursor_at_follows_the_current_sort() {
+        let (_d, db) = seeded();
+        let f = Filter { sort: Sort { by: SortBy::Name, desc: false }, ..Default::default() };
+        let all = page(&db, &f, None, 500).unwrap().rows;
+        for i in [0usize, 5, 30, 49] {
+            let c = cursor_at(&db, &f, i as i64).unwrap();
+            let got = page(&db, &f, c, 3).unwrap().rows;
+            assert_eq!(got[0].id, all[i].id, "{i}번째");
+        }
     }
 
     #[test]
@@ -642,7 +802,7 @@ mod tests {
         assert_eq!(b.iter().map(|x| x.count).sum::<i64>(), 50);
         // top으로 그 지점부터 읽을 수 있어야 한다
         let first = &b[0];
-        let p = page(&db, &Filter::default(), Some(Cursor { taken_at: first.top + 1, id: i64::MAX }), 5)
+        let p = page(&db, &Filter::default(), Some(Cursor { num: Some(first.top + 1), text: None, id: i64::MAX }), 5)
             .unwrap();
         assert!(!p.rows.is_empty(), "점프 지점부터 읽힌다");
     }

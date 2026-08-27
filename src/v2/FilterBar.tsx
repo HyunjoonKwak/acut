@@ -47,9 +47,12 @@ const FLAGS = [
 export default function FilterBar({
   value,
   onChange,
+  children,
 }: {
   value: Picks;
   onChange: (p: Picks) => void;
+  /** 정렬·그룹 같은 이웃 도구. 같은 줄에 놓는다. */
+  children?: React.ReactNode;
 }) {
   const [text, setText] = useState(value.name_like ?? "");
   const set = (patch: Partial<Picks>) => onChange({ ...value, ...patch });
@@ -151,6 +154,12 @@ export default function FilterBar({
         ♥
       </button>
 
+      {children && (
+        <>
+          <div className="flex-1" />
+          {children}
+        </>
+      )}
       {!isEmpty(value) && (
         <>
           <Sep />

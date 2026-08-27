@@ -8,6 +8,7 @@ import Viewer from "./Viewer";
 import ScrollBar from "./ScrollBar";
 import Organize from "./Organize";
 import Tile from "./Tile";
+import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
 import { useCountUp } from "./useCountUp";
 import FilterBar, {
   EMPTY as EMPTY_PICKS,
@@ -34,7 +35,7 @@ type FileRow = {
   /** 캐시 루트 기준 상대경로. null이면 아직 생성 전 */
   thumb: string | null;
 };
-type Cursor = { taken_at: number; id: number };
+type Cursor = { num: number | null; text: string | null; id: number };
 type Page = { rows: FileRow[]; next: Cursor | null };
 /** 등록한 사진 폴더. 여러 개, 서로 다른 디스크에 있어도 된다 */
 type Library = {
@@ -128,6 +129,7 @@ export default function App() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   /// 찾기 줄에서 고른 것들
   const [picks, setPicks] = useState<Picks>(EMPTY_PICKS);
+  const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   /// 휴지통을 보고 있는가
   const [viewTrash, setViewTrash] = useState(false);
   /// 휴지통에 든 것 / 제외 판정만 하고 아직 안 치운 것
@@ -179,11 +181,12 @@ export default function App() {
   const filter = useMemo(
     () => ({
       ...picks,
+      sort,
       library_id: libId,
       folder_path: viewTrash ? null : (sel?.rel ?? null),
       trashed: viewTrash,
     }),
-    [picks, libId, sel, viewTrash],
+    [picks, sort, libId, sel, viewTrash],
   );
 
   const loadFirst = useCallback(async () => {
@@ -300,7 +303,7 @@ export default function App() {
     setDone(false);
     loadFirst();
     refreshMeta();
-  }, [libs.length, libId, sel, picks, viewTrash, loadFirst, refreshMeta]);
+  }, [libs.length, libId, sel, picks, sort, viewTrash, loadFirst, refreshMeta]);
 
   // 스캔·썸네일 진행 상황
   useEffect(() => {
@@ -840,7 +843,11 @@ export default function App() {
         />
       </div>
 
-      {libs.length > 0 && <FilterBar value={picks} onChange={setPicks} />}
+      {libs.length > 0 && (
+        <FilterBar value={picks} onChange={setPicks}>
+          <SortMenu value={sort} onChange={setSort} />
+        </FilterBar>
+      )}
 
       {/* 치우기 줄 — 판정이 실제 정리로 이어지는 곳 */}
       {(viewTrash || (toClean?.files ?? 0) > 0 || busy) && (

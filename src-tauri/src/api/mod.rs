@@ -263,10 +263,11 @@ pub fn files_page(
     filter: Filter,
     cursor: Option<Cursor>,
     limit: usize,
+    group: Option<query::GroupBy>,
 ) -> Result<Page, String> {
     // 한 번에 너무 많이 요청하면 IPC가 막힌다.
     let limit = limit.clamp(1, 500);
-    query::page(&state.db, &filter, cursor, limit).map_err(err)
+    query::page(&state.db, &filter, cursor, limit, group.unwrap_or_default()).map_err(err)
 }
 
 #[derive(Debug, Serialize)]

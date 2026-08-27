@@ -29,6 +29,8 @@ pub struct FileRow {
     /// 정렬 커서를 만들 때 쓴다 (생성일·수정일 기준 정렬)
     pub created_at: Option<i64>,
     pub modified_at: Option<i64>,
+    /// 그룹 머리글에 쓸 값. 묶기를 끄면 비어 있다.
+    pub group: Option<String>,
     /// 어느 라이브러리 소속인가. 썸네일 캐시가 라이브러리마다 따로 있어서
     /// 프론트가 `thumb://` 주소를 만들 때 필요하다.
     pub library_id: Option<i64>,
@@ -132,6 +134,23 @@ pub struct Filter {
     pub trashed: bool,
     /// 무엇으로 어떤 방향으로 늘어놓을까.
     pub sort: Sort,
+}
+
+/// 그리드에 머리글을 넣어 묶는 기준. Lap의 GROUP과 같다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupBy {
+    #[default]
+    None,
+    Folder,
+    Day,
+    Month,
+    Year,
+    Rating,
+    Camera,
+    Lens,
+    FileType,
+    Culling,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -243,15 +262,23 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
 }
 
 /// 최신순 한 페이지. 커서가 None이면 첫 페이지.
-pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result<Page> {
+pub fn page(
+    db: &Db,
+    f: &Filter,
+    cursor: Option<Cursor>,
+    limit: usize,
+    group: GroupBy,
+) -> Result<Page> {
     let (where_sql, params) = build_where(f, cursor);
     let dir = if f.sort.desc { "DESC" } else { "ASC" };
     let order = format!("{} {dir}, fi.id {dir}", f.sort.by.expr());
+    let group_expr = group_expr(group);
     // limit + 1을 읽어 다음 페이지가 있는지 알아낸다
     let sql = format!(
         "SELECT fi.id, fi.name, fi.taken_at, fi.taken_at_source, fi.kind, fi.size,
                 fi.width, fi.height, fi.rating, fi.culling_flag, fi.favorite,
-                fi.duration_ms, fi.created_at, fi.modified_at, fo.library_id, t.rel_path
+                fi.duration_ms, fi.created_at, fi.modified_at, fo.library_id, t.rel_path,
+                {group_expr}
          FROM files fi
          JOIN folders fo ON fo.id = fi.folder_id
          LEFT JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
@@ -282,6 +309,7 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
                 modified_at: r.get(13)?,
                 library_id: r.get(14)?,
                 thumb: r.get(15)?,
+                group: r.get(16)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -294,6 +322,30 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
         None
     };
     Ok(Page { rows, next })
+}
+
+/// 그룹 머리글에 쓸 값을 SQL로 뽑는다. 프론트는 값이 바뀌는 자리에 줄을 넣는다.
+///
+/// 서버에서 계산하는 이유: 이어 읽는 페이지의 첫 줄이 앞 페이지의 마지막과
+/// 같은 그룹인지 알아야 머리글이 중복되지 않는다. 값이 행에 붙어 있으면
+/// 그 비교가 저절로 된다.
+fn group_expr(g: GroupBy) -> String {
+    match g {
+        GroupBy::None => "NULL".into(),
+        GroupBy::Folder => "fo.rel_path".into(),
+        GroupBy::Day => "date(fi.taken_at,'unixepoch','localtime')".into(),
+        GroupBy::Month => "strftime('%Y-%m', fi.taken_at,'unixepoch','localtime')".into(),
+        GroupBy::Year => "strftime('%Y', fi.taken_at,'unixepoch','localtime')".into(),
+        GroupBy::Rating => "CAST(fi.rating AS TEXT)".into(),
+        GroupBy::Camera => "COALESCE(NULLIF(fi.cam_model,''),'(카메라 정보 없음)')".into(),
+        GroupBy::Lens => "COALESCE(NULLIF(fi.lens,''),'(렌즈 정보 없음)')".into(),
+        GroupBy::FileType => {
+            "CASE fi.kind WHEN 0 THEN '사진' WHEN 1 THEN '영상' ELSE 'RAW' END".into()
+        }
+        GroupBy::Culling => {
+            "CASE fi.culling_flag WHEN 1 THEN '남김' WHEN 2 THEN '제외' ELSE '미판정' END".into()
+        }
+    }
 }
 
 /// 마지막 행에서 다음 커서를 만든다. 정렬 기준에 따라 어느 값을 담을지 갈린다.
@@ -477,12 +529,12 @@ mod tests {
     fn cursor_at_lands_on_the_same_row_as_a_full_read() {
         let (_d, db) = seeded();
         let f = Filter::default();
-        let all = page(&db, &f, None, 500).unwrap().rows;
+        let all = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         assert_eq!(all.len(), 50);
 
         for index in [0usize, 1, 7, 23, 49] {
             let c = cursor_at(&db, &f, index as i64).unwrap();
-            let got = page(&db, &f, c, 3).unwrap().rows;
+            let got = page(&db, &f, c, 3, GroupBy::None).unwrap().rows;
             assert_eq!(
                 got[0].id, all[index].id,
                 "{index}번째에서 시작해야 한다"
@@ -495,10 +547,10 @@ mod tests {
         let (_d, db) = seeded();
         // 영상만 — 10개마다 하나라 5장이다
         let f = Filter { kind: Some(1), ..Default::default() };
-        let all = page(&db, &f, None, 500).unwrap().rows;
+        let all = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         assert_eq!(all.len(), 5);
         let c = cursor_at(&db, &f, 3).unwrap();
-        let got = page(&db, &f, c, 5).unwrap().rows;
+        let got = page(&db, &f, c, 5, GroupBy::None).unwrap().rows;
         assert_eq!(got[0].id, all[3].id);
         assert_eq!(got.len(), 2, "3번째부터 끝까지");
     }
@@ -508,10 +560,10 @@ mod tests {
     fn cursor_at_keeps_the_join_for_area() {
         let (_d, db) = seeded();
         let f = Filter { area: Some(2), ..Default::default() };
-        let all = page(&db, &f, None, 500).unwrap().rows;
+        let all = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         assert_eq!(all.len(), 10, "폴더 3(area=2)에 41~50번 10장");
         let c = cursor_at(&db, &f, 4).unwrap();
-        let got = page(&db, &f, c, 10).unwrap().rows;
+        let got = page(&db, &f, c, 10, GroupBy::None).unwrap().rows;
         assert_eq!(got[0].id, all[4].id);
         assert_eq!(got.len(), 6);
     }
@@ -532,13 +584,13 @@ mod tests {
     #[test]
     fn trashed_files_disappear_from_the_default_view() {
         let (_d, db) = seeded();
-        let all = page(&db, &Filter::default(), None, 500).unwrap().rows.len();
+        let all = page(&db, &Filter::default(), None, 500, GroupBy::None).unwrap().rows.len();
         db.write(|c| {
             c.execute("UPDATE files SET trashed_at=1 WHERE id IN (1,2,3)", [])
         })
         .unwrap();
 
-        assert_eq!(page(&db, &Filter::default(), None, 500).unwrap().rows.len(), all - 3);
+        assert_eq!(page(&db, &Filter::default(), None, 500, GroupBy::None).unwrap().rows.len(), all - 3);
         assert_eq!(summary(&db, &Filter::default()).unwrap().0, all as i64 - 3);
         assert_eq!(
             timeline(&db, &Filter::default()).unwrap().iter().map(|b| b.count).sum::<i64>(),
@@ -547,7 +599,7 @@ mod tests {
 
         // 휴지통 보기에서는 그것만 나온다
         let t = Filter { trashed: true, ..Default::default() };
-        assert_eq!(page(&db, &t, None, 500).unwrap().rows.len(), 3);
+        assert_eq!(page(&db, &t, None, 500, GroupBy::None).unwrap().rows.len(), 3);
     }
 
     /// 정렬 기준을 바꿔도 페이지가 끊기거나 겹치지 않아야 한다.
@@ -568,11 +620,11 @@ mod tests {
                 let f = Filter { sort: Sort { by, desc }, ..Default::default() };
                 // 한 번에 다 읽은 것과 7장씩 넘겨 읽은 것이 같아야 한다
                 let all: Vec<i64> =
-                    page(&db, &f, None, 500).unwrap().rows.iter().map(|r| r.id).collect();
+                    page(&db, &f, None, 500, GroupBy::None).unwrap().rows.iter().map(|r| r.id).collect();
                 let mut paged = Vec::new();
                 let mut cur = None;
                 loop {
-                    let p = page(&db, &f, cur, 7).unwrap();
+                    let p = page(&db, &f, cur, 7, GroupBy::None).unwrap();
                     paged.extend(p.rows.iter().map(|r| r.id));
                     match p.next {
                         Some(c) => cur = Some(c),
@@ -585,14 +637,81 @@ mod tests {
         }
     }
 
+    /// 그룹 값은 **행에 붙어** 온다. 이어 읽은 페이지의 첫 줄이 앞 페이지
+    /// 마지막과 같은 그룹이면 머리글을 또 넣으면 안 되는데, 값이 붙어 있으면
+    /// 그 비교가 저절로 된다.
+    #[test]
+    fn group_values_ride_along_with_each_row() {
+        let (_d, db) = seeded();
+        let f = Filter::default();
+
+        let none = page(&db, &f, None, 5, GroupBy::None).unwrap().rows;
+        assert!(none.iter().all(|r| r.group.is_none()), "안 묶으면 비어 있다");
+
+        for g in [
+            GroupBy::Folder,
+            GroupBy::Day,
+            GroupBy::Month,
+            GroupBy::Year,
+            GroupBy::Rating,
+            GroupBy::FileType,
+            GroupBy::Culling,
+            GroupBy::Camera,
+            GroupBy::Lens,
+        ] {
+            let rows = page(&db, &f, None, 50, g).unwrap().rows;
+            assert!(
+                rows.iter().all(|r| r.group.is_some()),
+                "{g:?} — 모든 행에 값이 있어야 한다"
+            );
+        }
+    }
+
+    /// 페이지를 넘어가도 그룹 값이 이어져야 한다.
+    #[test]
+    fn group_values_survive_paging() {
+        let (_d, db) = seeded();
+        let f = Filter::default();
+        let all: Vec<Option<String>> = page(&db, &f, None, 500, GroupBy::Day)
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| r.group.clone())
+            .collect();
+
+        let mut paged = Vec::new();
+        let mut cur = None;
+        loop {
+            let p = page(&db, &f, cur, 6, GroupBy::Day).unwrap();
+            paged.extend(p.rows.iter().map(|r| r.group.clone()));
+            match p.next {
+                Some(c) => cur = Some(c),
+                None => break,
+            }
+        }
+        assert_eq!(all, paged);
+    }
+
+    #[test]
+    fn file_type_group_is_readable() {
+        let (_d, db) = seeded();
+        let rows = page(&db, &Filter::default(), None, 50, GroupBy::FileType)
+            .unwrap()
+            .rows;
+        let names: std::collections::HashSet<String> =
+            rows.iter().filter_map(|r| r.group.clone()).collect();
+        assert!(names.contains("사진"), "{names:?}");
+        assert!(names.contains("영상"), "{names:?}");
+    }
+
     #[test]
     fn ascending_and_descending_are_mirror_images() {
         let (_d, db) = seeded();
         let asc = Filter { sort: Sort { by: SortBy::Size, desc: false }, ..Default::default() };
         let desc = Filter { sort: Sort { by: SortBy::Size, desc: true }, ..Default::default() };
-        let a: Vec<i64> = page(&db, &asc, None, 500).unwrap().rows.iter().map(|r| r.id).collect();
+        let a: Vec<i64> = page(&db, &asc, None, 500, GroupBy::None).unwrap().rows.iter().map(|r| r.id).collect();
         let mut d: Vec<i64> =
-            page(&db, &desc, None, 500).unwrap().rows.iter().map(|r| r.id).collect();
+            page(&db, &desc, None, 500, GroupBy::None).unwrap().rows.iter().map(|r| r.id).collect();
         d.reverse();
         assert_eq!(a, d);
     }
@@ -602,10 +721,10 @@ mod tests {
     fn cursor_at_follows_the_current_sort() {
         let (_d, db) = seeded();
         let f = Filter { sort: Sort { by: SortBy::Name, desc: false }, ..Default::default() };
-        let all = page(&db, &f, None, 500).unwrap().rows;
+        let all = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         for i in [0usize, 5, 30, 49] {
             let c = cursor_at(&db, &f, i as i64).unwrap();
-            let got = page(&db, &f, c, 3).unwrap().rows;
+            let got = page(&db, &f, c, 3, GroupBy::None).unwrap().rows;
             assert_eq!(got[0].id, all[i].id, "{i}번째");
         }
     }
@@ -615,15 +734,15 @@ mod tests {
         let (_d, db) = seeded();
         // 폴더 1 = 'a', 폴더 2 = 'a/b', 폴더 3 = 'z'
         let f = Filter { folder_path: Some("a".into()), ..Default::default() };
-        let n = page(&db, &f, None, 500).unwrap().rows.len();
+        let n = page(&db, &f, None, 500, GroupBy::None).unwrap().rows.len();
         assert_eq!(n, 40, "a(30) + a/b(10)");
 
         let only_b = Filter { folder_path: Some("a/b".into()), ..Default::default() };
-        assert_eq!(page(&db, &only_b, None, 500).unwrap().rows.len(), 10);
+        assert_eq!(page(&db, &only_b, None, 500, GroupBy::None).unwrap().rows.len(), 10);
 
         // 이름이 겹치는 형제를 잡아먹으면 안 된다
         let none = Filter { folder_path: Some("a/bb".into()), ..Default::default() };
-        assert_eq!(page(&db, &none, None, 500).unwrap().rows.len(), 0);
+        assert_eq!(page(&db, &none, None, 500, GroupBy::None).unwrap().rows.len(), 0);
     }
 
     /// LIKE의 `_`는 아무 글자나 매치한다. 실제 라이브러리에 `#0_사진백업…`
@@ -647,7 +766,7 @@ mod tests {
         .unwrap();
 
         let f = Filter { folder_path: Some("p_q".into()), ..Default::default() };
-        let rows = page(&db, &f, None, 500).unwrap().rows;
+        let rows = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         assert_eq!(rows.len(), 1, "pXq까지 잡히면 안 된다");
         assert_eq!(rows[0].name, "a.jpg");
     }
@@ -670,7 +789,7 @@ mod tests {
     #[test]
     fn first_page_is_newest_first() {
         let (_d, db) = seeded();
-        let p = page(&db, &Filter::default(), None, 10).unwrap();
+        let p = page(&db, &Filter::default(), None, 10, GroupBy::None).unwrap();
         assert_eq!(p.rows.len(), 10);
         assert!(p.next.is_some());
         // 내림차순인지
@@ -688,7 +807,7 @@ mod tests {
         let mut seen = Vec::new();
         let mut cursor = None;
         loop {
-            let p = page(&db, &Filter::default(), cursor, 7).unwrap();
+            let p = page(&db, &Filter::default(), cursor, 7, GroupBy::None).unwrap();
             seen.extend(p.rows.iter().map(|r| r.id));
             match p.next {
                 Some(c) => cursor = Some(c),
@@ -726,11 +845,11 @@ mod tests {
         let high = Filter { min_rating: Some(4), ..Default::default() };
         let (n, _) = summary(&db, &high).unwrap();
         assert!(n > 0 && n < 50);
-        for r in page(&db, &high, None, 100).unwrap().rows {
+        for r in page(&db, &high, None, 100, GroupBy::None).unwrap().rows {
             assert!(r.rating >= 4);
         }
         let rejected = Filter { culling_flag: Some(2), ..Default::default() };
-        for r in page(&db, &rejected, None, 100).unwrap().rows {
+        for r in page(&db, &rejected, None, 100, GroupBy::None).unwrap().rows {
             assert_eq!(r.culling_flag, 2);
         }
     }
@@ -740,19 +859,19 @@ mod tests {
         let (_d, db) = seeded();
         // "IMG_0001"의 밑줄이 와일드카드로 동작하면 안 된다
         let f = Filter { name_like: Some("IMG_0001".into()), ..Default::default() };
-        let p = page(&db, &f, None, 100).unwrap();
+        let p = page(&db, &f, None, 100, GroupBy::None).unwrap();
         assert_eq!(p.rows.len(), 1, "정확히 하나만");
         assert_eq!(p.rows[0].name, "IMG_0001.jpg");
 
         // 밑줄이 와일드카드였다면 "IMGX0001"도 걸렸을 것이다
         let f2 = Filter { name_like: Some("IMG".into()), ..Default::default() };
-        assert_eq!(page(&db, &f2, None, 100).unwrap().rows.len(), 50);
+        assert_eq!(page(&db, &f2, None, 100, GroupBy::None).unwrap().rows.len(), 50);
     }
 
     #[test]
     fn thumb_is_none_until_generated() {
         let (_d, db) = seeded();
-        let p = page(&db, &Filter::default(), None, 5).unwrap();
+        let p = page(&db, &Filter::default(), None, 5, GroupBy::None).unwrap();
         assert!(p.rows.iter().all(|r| r.thumb.is_none()));
 
         db.write(|c| {
@@ -763,7 +882,7 @@ mod tests {
             )
         })
         .unwrap();
-        let p2 = page(&db, &Filter::default(), None, 5).unwrap();
+        let p2 = page(&db, &Filter::default(), None, 5, GroupBy::None).unwrap();
         assert_eq!(
             p2.rows.iter().filter(|r| r.thumb.is_some()).count(),
             1,
@@ -782,7 +901,7 @@ mod tests {
             )
         })
         .unwrap();
-        let p = page(&db, &Filter::default(), None, 5).unwrap();
+        let p = page(&db, &Filter::default(), None, 5, GroupBy::None).unwrap();
         assert!(
             p.rows.iter().all(|r| r.thumb.is_none()),
             "실패한 썸네일은 내보내지 않는다"
@@ -802,7 +921,7 @@ mod tests {
         assert_eq!(b.iter().map(|x| x.count).sum::<i64>(), 50);
         // top으로 그 지점부터 읽을 수 있어야 한다
         let first = &b[0];
-        let p = page(&db, &Filter::default(), Some(Cursor { num: Some(first.top + 1), text: None, id: i64::MAX }), 5)
+        let p = page(&db, &Filter::default(), Some(Cursor { num: Some(first.top + 1), text: None, id: i64::MAX }), 5, GroupBy::None)
             .unwrap();
         assert!(!p.rows.is_empty(), "점프 지점부터 읽힌다");
     }

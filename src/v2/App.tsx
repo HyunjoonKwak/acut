@@ -9,6 +9,8 @@ import ScrollBar from "./ScrollBar";
 import Organize from "./Organize";
 import Tile from "./Tile";
 import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
+import GroupMenu, { type GroupBy } from "./GroupMenu";
+import { layout, headerLabel, HEADER_H } from "./gridLayout";
 import { useCountUp } from "./useCountUp";
 import FilterBar, {
   EMPTY as EMPTY_PICKS,
@@ -30,6 +32,8 @@ type FileRow = {
   culling_flag: number;
   favorite: boolean;
   duration_ms: number | null;
+  /** 묶기를 켰을 때의 그룹 값. 서버가 행마다 붙여 준다. */
+  group: string | null;
   /** 어느 라이브러리 소속인가. 썸네일 주소를 만들 때 쓴다 */
   library_id: number | null;
   /** 캐시 루트 기준 상대경로. null이면 아직 생성 전 */
@@ -130,6 +134,7 @@ export default function App() {
   /// 찾기 줄에서 고른 것들
   const [picks, setPicks] = useState<Picks>(EMPTY_PICKS);
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
+  const [group, setGroup] = useState<GroupBy>("none");
   /// 휴지통을 보고 있는가
   const [viewTrash, setViewTrash] = useState(false);
   /// 휴지통에 든 것 / 제외 판정만 하고 아직 안 치운 것
@@ -198,6 +203,7 @@ export default function App() {
         filter,
         cursor: null,
         limit: PAGE,
+        group,
       });
       setRows(p.rows);
       setCursor(p.next);
@@ -207,7 +213,7 @@ export default function App() {
       setLoading(false);
       release();
     }
-  }, [filter, release]);
+  }, [filter, group, release]);
 
   const loadMore = useCallback(async () => {
     if (inflight.current || done || !cursor) return;
@@ -217,6 +223,7 @@ export default function App() {
         filter,
         cursor,
         limit: PAGE,
+        group,
       });
       setRows((prev) => [...prev, ...p.rows]);
       setCursor(p.next);
@@ -224,7 +231,7 @@ export default function App() {
     } finally {
       release();
     }
-  }, [filter, cursor, done, release]);
+  }, [filter, group, cursor, done, release]);
 
   const refreshLibs = useCallback(async () => {
     setLibs(await invoke<Library[]>("libraries_list"));
@@ -303,7 +310,17 @@ export default function App() {
     setDone(false);
     loadFirst();
     refreshMeta();
-  }, [libs.length, libId, sel, picks, sort, viewTrash, loadFirst, refreshMeta]);
+  }, [
+    libs.length,
+    libId,
+    sel,
+    picks,
+    sort,
+    group,
+    viewTrash,
+    loadFirst,
+    refreshMeta,
+  ]);
 
   // 스캔·썸네일 진행 상황
   useEffect(() => {
@@ -379,12 +396,14 @@ export default function App() {
     return () => ro.disconnect();
   }, [thumbSize]);
 
-  const rowCount = Math.ceil(rows.length / cols);
   const rowH = thumbSize + 26;
+  /// 머리글과 사진 줄을 한 목록으로 편다. 묶기를 끄면 사진 줄만 나온다.
+  const grid = useMemo(() => layout(rows, (r) => r.group, cols), [rows, cols]);
   const virt = useVirtualizer({
-    count: rowCount,
+    count: grid.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => rowH,
+    // 머리글과 사진 줄은 높이가 다르다
+    estimateSize: (i) => (grid[i]?.kind === "header" ? HEADER_H : rowH),
     overscan: 4,
   });
 
@@ -392,8 +411,8 @@ export default function App() {
   useEffect(() => {
     const items = virt.getVirtualItems();
     const last = items[items.length - 1];
-    if (last && last.index >= rowCount - 3) loadMore();
-  }, [virt.getVirtualItems(), rowCount, loadMore]);
+    if (last && last.index >= grid.length - 3) loadMore();
+  }, [virt.getVirtualItems(), grid.length, loadMore]);
 
   const addLibrary = async () => {
     const picked = await openDialog({ directory: true, multiple: false });
@@ -846,6 +865,7 @@ export default function App() {
       {libs.length > 0 && (
         <FilterBar value={picks} onChange={setPicks}>
           <SortMenu value={sort} onChange={setSort} />
+          <GroupMenu value={group} onChange={setGroup} />
         </FilterBar>
       )}
 
@@ -1069,24 +1089,44 @@ export default function App() {
             )}
             <div style={{ height: virt.getTotalSize(), position: "relative" }}>
               {virt.getVirtualItems().map((v) => {
-                const start = v.index * cols;
-                const slice = rows.slice(start, start + cols);
+                const row = grid[v.index];
+                if (!row) return null;
+                const box = {
+                  position: "absolute" as const,
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${v.start}px)`,
+                };
+                if (row.kind === "header") {
+                  return (
+                    <div
+                      key={v.key}
+                      style={{ ...box, height: HEADER_H }}
+                      className="flex items-baseline gap-2 px-0.5"
+                    >
+                      <span className="text-[13px] font-semibold text-[#EAEFEF]">
+                        {headerLabel(row.label, group)}
+                      </span>
+                      <span className="text-[11.5px] text-[#6D7B7E] tabular-nums">
+                        {row.count.toLocaleString()}장
+                      </span>
+                      <div className="flex-1 h-px bg-[#242C2E]" />
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={v.key}
                     style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
+                      ...box,
                       height: rowH,
-                      transform: `translateY(${v.start}px)`,
                       display: "grid",
                       gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`,
                       gap: GAP,
                     }}
                   >
-                    {slice.map((r, ci) => (
+                    {row.items.map((r, ci) => (
                       <Tile
                         key={r.id}
                         file={r}
@@ -1094,7 +1134,7 @@ export default function App() {
                         picked={picked.has(r.id)}
                         focused={selected === r.id}
                         onClick={(e: React.MouseEvent) => pick(r.id, e)}
-                        onDoubleClick={() => setViewerAt(start + ci)}
+                        onDoubleClick={() => setViewerAt(row.start + ci)}
                         label={fmtDate(r.taken_at)}
                       />
                     ))}

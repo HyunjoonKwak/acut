@@ -22,6 +22,30 @@ pub struct ThumbProgress {
 }
 
 /// 썸네일이 필요한 파일 하나.
+/// 1차에서 작게 나온 썸네일을 원본에서 다시 뽑는다 (2차).
+///
+/// 1차는 박힌 미리보기를 그대로 받아 몇 분에 끝난다. 대신 평균 243px이라
+/// 그리드를 크게 놓으면 흐리다. 그래서 뒤에서 다시 키운다 — 이때는 원본을
+/// 읽으므로 느리지만, 그 사이에도 앱은 쓸 수 있다.
+pub fn upgrade(
+    db: &Db,
+    library_id: i64,
+    volume_mount: &Path,
+    cache_root: &Path,
+    cancel: Arc<AtomicBool>,
+    on_progress: impl Fn(&ThumbProgress) + Sync + Send,
+) -> Result<ThumbProgress, super::ScanError> {
+    generate_with(
+        db,
+        library_id,
+        volume_mount,
+        cache_root,
+        cache::THUMB_PX,
+        cancel,
+        on_progress,
+    )
+}
+
 /// DB에 쓸 한 줄: (파일 id, 캐시 상대경로, 원본 크기, 원본 수정시각, 폭, 높이, 상태, 오류)
 type Row = (i64, Option<String>, i64, i64, Option<u32>, Option<u32>, i32, Option<String>);
 
@@ -69,6 +93,29 @@ pub fn generate(
     cancel: Arc<AtomicBool>,
     on_progress: impl Fn(&ThumbProgress) + Sync + Send,
 ) -> Result<ThumbProgress, super::ScanError> {
+    generate_with(
+        db,
+        library_id,
+        volume_mount,
+        cache_root,
+        cache::FAST_ACCEPT_PX,
+        cancel,
+        on_progress,
+    )
+}
+
+/// `accept_px`는 박힌 미리보기를 받아들이는 최소 크기.
+/// 1차 스캔은 [`cache::FAST_ACCEPT_PX`], 화질을 올리는 2차는 `THUMB_PX`를 쓴다.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_with(
+    db: &Db,
+    library_id: i64,
+    volume_mount: &Path,
+    cache_root: &Path,
+    accept_px: u32,
+    cancel: Arc<AtomicBool>,
+    on_progress: impl Fn(&ThumbProgress) + Sync + Send,
+) -> Result<ThumbProgress, super::ScanError> {
     let root = cache_root.to_path_buf();
 
     // 썸네일이 없거나, 있어도 원본의 크기·수정시각이 달라진 것들.
@@ -83,9 +130,17 @@ pub fn generate(
                AND (t.file_id IS NULL
                     OR t.state <> 1
                     OR t.src_size <> fi.size
-                    OR t.src_mtime <> COALESCE(fi.modified_at, 0))",
+                    OR t.src_mtime <> COALESCE(fi.modified_at, 0)
+                    -- 2차: 작게 나온 것을 다시 키운다. 원본이 더 클 때만.
+                    OR (?2 = 1
+                        AND MAX(COALESCE(t.width,0), COALESCE(t.height,0)) < ?3
+                        AND MAX(COALESCE(fi.width,0), COALESCE(fi.height,0))
+                            > MAX(COALESCE(t.width,0), COALESCE(t.height,0))))",
         )?;
-        let rows = st.query_map([library_id], |r| {
+        let upgrading = (accept_px >= cache::THUMB_PX) as i64;
+        let rows = st.query_map(
+            rusqlite::params![library_id, upgrading, cache::UPGRADE_BELOW],
+            |r| {
             let rel_dir: String = r.get(1)?;
             let name: String = r.get(2)?;
             let rel_path = cache::rel_path(&rel_dir, &name);
@@ -97,7 +152,8 @@ pub fn generate(
                 mtime: r.get(4)?,
                 video: r.get::<_, i32>(5)? == 1,
             })
-        })?;
+            },
+        )?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
     })?;
 
@@ -139,7 +195,8 @@ pub fn generate(
                 let out = cache::thumb_path(&root, &key);
 
                 // 이미 파일이 있으면 다시 만들지 않는다. DB만 새로 만든 경우가 여기 해당한다.
-                if out.is_file() {
+                // 다만 2차(화질 올리기)에서는 그 파일이 바로 키워야 할 대상이므로 건너뛴다.
+                if out.is_file() && accept_px < cache::THUMB_PX {
                     let mut p = progress.lock().unwrap();
                     p.reused += 1;
                     p.done += 1;
@@ -164,7 +221,13 @@ pub fn generate(
                         cache::THUMB_QUALITY,
                     )
                 } else {
-                    thumbnail::make(&j.full_path, &out, cache::THUMB_PX, cache::THUMB_QUALITY)
+                    thumbnail::make_with(
+                        &j.full_path,
+                        &out,
+                        cache::THUMB_PX,
+                        cache::THUMB_QUALITY,
+                        accept_px,
+                    )
                 };
                 let n = counter.fetch_add(1, Ordering::Relaxed);
                 let row = match r {
@@ -293,6 +356,44 @@ mod tests {
             cache.path().join(&rel).is_file(),
             "실제 파일이 있어야 한다: {rel}"
         );
+    }
+
+    /// 1차는 박힌 미리보기를 그대로 받아 빠르고, 2차가 그걸 다시 키운다.
+    /// 이 두 단계가 맞물리지 않으면 화질이 영영 작은 채로 남는다.
+    #[test]
+    fn the_second_pass_enlarges_what_the_first_left_small() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = cache_dir();
+        let Some(_) = seed_real_jpeg(dir.path()) else { return };
+        let db = Db::open(dir.path().join("db.sqlite")).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        let vol = crate::db::volumes::describe(dir.path()).unwrap();
+        let no = || Arc::new(AtomicBool::new(false));
+
+        generate(&db, lib_id(&db), &vol.mount_path, cache.path(), no(), |_| {}).unwrap();
+        let first: i64 = db
+            .read(|c| {
+                c.query_row("SELECT MAX(width, height) FROM thumbs", [], |r| r.get(0))
+            })
+            .unwrap();
+
+        let up = upgrade(&db, lib_id(&db), &vol.mount_path, cache.path(), no(), |_| {}).unwrap();
+        let second: i64 = db
+            .read(|c| {
+                c.query_row("SELECT MAX(width, height) FROM thumbs", [], |r| r.get(0))
+            })
+            .unwrap();
+
+        if first < cache::UPGRADE_BELOW as i64 {
+            assert_eq!(up.total, 1, "작게 나온 것은 2차 대상이어야 한다");
+            assert!(second >= first, "2차가 화질을 낮추면 안 된다: {first} -> {second}");
+        } else {
+            assert_eq!(up.total, 0, "이미 충분히 크면 2차는 건드리지 않는다");
+        }
+
+        // 2차를 또 돌려도 할 일이 없어야 한다
+        let again = upgrade(&db, lib_id(&db), &vol.mount_path, cache.path(), no(), |_| {}).unwrap();
+        assert_eq!(again.total, 0, "두 번째 2차는 비어야 한다");
     }
 
     #[test]

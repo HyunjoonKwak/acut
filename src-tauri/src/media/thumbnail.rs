@@ -142,6 +142,31 @@ pub fn make(
     max_px: u32,
     quality: f64,
 ) -> Result<ThumbSize> {
+    // 기본은 엄격하게 — 요청한 크기가 안 나오면 원본에서 뽑는다.
+    make_with(src, out, max_px, quality, max_px)
+}
+
+/// 박힌 미리보기를 **얼마나 작아도 받아들일지**를 정해서 만든다.
+///
+/// 이 한 숫자가 속도를 가른다. 실측(라이브러리 사진 80장씩, 목표 640px):
+///
+/// | 수용 기준 | 속도 | 평균 긴변 | 원본 디코딩 |
+/// |---:|---:|---:|---:|
+/// | 640 | 7.7장/초 | 625 | 70/80 |
+/// | 320 | 10.7장/초 | 608 | 57/80 |
+/// | 256 | 12.2장/초 | 556 | 44/80 |
+/// | 160 | **177.7장/초** | 243 | **0/80** |
+///
+/// 160에서 23배가 뛰는 이유: 거의 모든 JPEG이 그 정도 미리보기를 품고 있어
+/// **원본을 한 번도 안 읽는다**. 7만 8천 장이 몇 분에 끝난다.
+/// 대신 나오는 썸네일이 작다. 그리드를 채우는 1차용이다.
+pub fn make_with(
+    src: impl AsRef<Path>,
+    out: impl AsRef<Path>,
+    max_px: u32,
+    quality: f64,
+    min_accept: u32,
+) -> Result<ThumbSize> {
     let src = src.as_ref();
     let out = out.as_ref();
     if let Some(dir) = out.parent() {
@@ -229,7 +254,7 @@ pub fn make(
     };
 
     let mut image = make_image(false);
-    if image.is_null() || long_edge(image) < max_px {
+    if image.is_null() || long_edge(image) < min_accept {
         // 박힌 미리보기가 없거나 작았다. 원본에서 다시 뽑는다.
         // 원본이 애초에 작으면 같은 크기가 다시 나오는데, 그건 손해가 아니다.
         let full = make_image(true);

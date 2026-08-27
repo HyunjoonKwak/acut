@@ -308,9 +308,23 @@ export default function App() {
     }).then((f) => un.push(f));
     listen<{ done: number; total: number }>("thumb-progress", (e) => {
       const p = e.payload;
-      setScanMsg(`썸네일 ${p.done}/${p.total}`);
+      setScanMsg(`썸네일 ${p.done.toLocaleString()}/${p.total.toLocaleString()}`);
+    }).then((f) => un.push(f));
+    // 2차 — 작게 나온 것을 원본에서 다시 뽑는다. 그 사이에도 앱은 쓸 수 있다.
+    listen<{ done: number; total: number }>("upgrade-progress", (e) => {
+      const p = e.payload;
+      setScanMsg(
+        `화질 올리는 중 ${p.done.toLocaleString()}/${p.total.toLocaleString()} — 그냥 쓰셔도 됩니다`,
+      );
+    }).then((f) => un.push(f));
+    listen("upgrade-done", () => {
+      setScanMsg("");
+      loadFirst();
+      refreshMeta();
+      refreshCache();
     }).then((f) => un.push(f));
     listen("thumb-done", () => {
+      setScanMsg("썸네일 완료 — 화질을 올리는 중입니다");
       loadFirst();
       refreshMeta();
       refreshLibs();

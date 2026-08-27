@@ -1,18 +1,30 @@
 /**
- * 그리드 보기 방식 — Lap의 style/scaling과 같은 갈래.
+ * 그리드 보기 방식 — Lap의 네 가지와 같다.
  *
- * 카드·타일은 칸이 격자로 고정되고, 양쪽 맞춤은 **줄마다 높이가 달라진다** —
- * 사진의 가로세로비를 지키면서 줄의 오른쪽 끝을 맞추기 때문이다.
+ *   카드      정사각형 상자에 사진 전체, 아래 이름줄
+ *   타일      폭은 칸, 높이는 썸네일 크기로 고정, 채워서 자른다
+ *   양쪽 맞춤 줄 높이가 같고 폭이 비율대로 — 오른쪽 끝이 맞는다
+ *   메이슨리  칸 폭이 같고 높이가 비율대로 — 짧은 열에 다음 장이 간다
+ *
+ * «담는 방식»(전체·채우기·늘리기)은 없앴다. 카드는 전체, 나머지는 채우기가
+ * 맞고 고를 이유가 없었다.
  */
 
-export type GridStyle = "card" | "tile" | "justified";
-export type Scaling = "contain" | "cover" | "fill";
+export type GridStyle = "card" | "tile" | "justified" | "masonry";
 
 export const STYLES: { v: GridStyle; label: string }[] = [
-  { v: "card", label: "카드 보기" },
-  { v: "tile", label: "타일 보기" },
+  { v: "card", label: "카드" },
+  { v: "tile", label: "타일" },
   { v: "justified", label: "양쪽 맞춤" },
+  { v: "masonry", label: "메이슨리" },
 ];
+
+/** 사진을 상자에 어떻게 담나 — 카드만 전체, 나머지는 채운다 */
+export const fitOf = (s: GridStyle): "object-contain" | "object-cover" =>
+  s === "card" ? "object-contain" : "object-cover";
+
+/** 이름줄이 붙는 보기 — 카드뿐 (Lap과 같다) */
+export const hasCaption = (s: GridStyle): boolean => s === "card";
 
 /**
  * 사진 아래 이름·정보가 차지하는 높이 (px).
@@ -60,23 +72,11 @@ export function metrics(
   // cols·thumb + (cols−1)·GAP ≤ contentW 를 만족하는 가장 큰 cols
   const cols = Math.max(1, Math.floor((contentW + GAP) / (thumb + GAP)));
   const cellW = Math.max(0, (contentW - (cols - 1) * GAP) / cols);
-  const imageH = style === "tile" ? (cellW * 3) / 4 : cellW;
+  // 타일은 높이가 썸네일 크기로 고정이다 (Lap: height = size). 나머지 격자는 정사각형.
+  const imageH = style === "tile" ? thumb : cellW;
   const rowH = imageH + (caption ? CAPTION_H : 0) + GAP;
   return { contentW, cols, cellW, imageH, rowH };
 }
-
-export const SCALINGS: { v: Scaling; label: string }[] = [
-  { v: "cover", label: "채우기" },
-  { v: "contain", label: "사진 전체" },
-  { v: "fill", label: "늘리기" },
-];
-
-export const objectFit = (s: Scaling) =>
-  s === "cover"
-    ? "object-cover"
-    : s === "contain"
-      ? "object-contain"
-      : "object-fill";
 
 /** 사진 한 장의 가로세로비. 모르면 정사각형으로 친다. */
 export function ratio(w: number | null, h: number | null): number {
@@ -132,4 +132,83 @@ export function justify<T>(
   }
   flush(false);
   return out;
+}
+
+// ── 메이슨리 ────────────────────────────────────────────────────────────
+
+export type MasonryBox<T> = {
+  file: T;
+  /** rows 안 위치 — 뷰어를 열 때 쓴다 */
+  index: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+export type MasonryHeader = { label: string; count: number; y: number };
+export type MasonryLayout<T> = {
+  boxes: MasonryBox<T>[];
+  headers: MasonryHeader[];
+  /** 전체 높이 */
+  height: number;
+};
+
+/**
+ * 메이슨리 — 열 폭은 같고 높이는 사진 비율대로. 다음 장은 가장 짧은 열로.
+ *
+ * 묶기가 켜져 있으면(그룹 값이 null이 아니면) 묶음마다 머리글을 놓고 열을
+ * 새로 시작한다 — 안 그러면 한 묶음의 마지막 장과 다음 묶음의 첫 장이
+ * 옆 열에서 위아래로 섞인다. (Lap이 그룹마다 따로 layout을 도는 이유)
+ */
+export function masonry<T>(
+  files: T[],
+  groupOf: (f: T) => string | null,
+  ratioOf: (f: T) => number,
+  contentW: number,
+  cols: number,
+  gap: number,
+  headerH: number,
+): MasonryLayout<T> {
+  const boxes: MasonryBox<T>[] = [];
+  const headers: MasonryHeader[] = [];
+  if (files.length === 0 || contentW <= 0 || cols <= 0)
+    return { boxes, headers, height: 0 };
+  const w = (contentW - (cols - 1) * gap) / cols;
+  const grouped = groupOf(files[0]) !== null;
+
+  let y0 = 0; // 지금 묶음이 시작하는 높이
+  let heights = new Array<number>(cols).fill(0);
+  let i = 0;
+  while (i < files.length) {
+    // 묶음의 끝
+    const key = groupOf(files[i]);
+    let end = i + 1;
+    if (grouped)
+      while (end < files.length && groupOf(files[end]) === key) end++;
+    else end = files.length;
+
+    if (grouped) {
+      headers.push({ label: key ?? "", count: end - i, y: y0 });
+      y0 += headerH;
+      heights = new Array<number>(cols).fill(y0);
+    }
+    for (let k = i; k < end; k++) {
+      let c = 0;
+      for (let j = 1; j < cols; j++) if (heights[j] < heights[c]) c = j;
+      const h = w / ratioOf(files[k]);
+      boxes.push({
+        file: files[k],
+        index: k,
+        x: c * (w + gap),
+        y: heights[c],
+        w,
+        h,
+      });
+      heights[c] += h + gap;
+    }
+    y0 = Math.max(...heights);
+    i = end;
+  }
+  const height = boxes.length ? Math.max(...heights) - gap : y0;
+  return { boxes, headers, height: Math.max(0, height) };
 }

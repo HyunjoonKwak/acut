@@ -156,34 +156,13 @@ export const IconFilmstrip = (p: P) => (
   </S>
 );
 
-// ── 사진을 칸에 담는 방식 ────────────────────────────────────────────
-
-/**
- * 채우기 — 사진이 칸보다 커서 위아래가 잘린다.
- *
- * 화살표로는 「늘리기」와 헷갈렸다. 테두리를 뚫고 나가는 네모가 «잘린다»는
- * 말을 그대로 한다.
- */
-export const IconFill = (p: P) => (
+/** 메이슨리 — 열 폭은 같고 높이가 제각각, 벽돌 쌓듯 */
+export const IconMasonry = (p: P) => (
   <S {...p}>
-    <rect x="3.5" y="6" width="17" height="12" rx="1.4" />
-    <rect x="8" y="2.5" width="8" height="19" rx="1.2" opacity="0.55" />
-  </S>
-);
-
-/** 사진 전체 — 비를 지켜 안에 다 들어오고 둘레가 남는다 */
-export const IconContain = (p: P) => (
-  <S {...p}>
-    <rect x="3.5" y="6" width="17" height="12" rx="1.4" />
-    <rect x="6.5" y="8.5" width="11" height="7" rx="1" opacity="0.55" />
-  </S>
-);
-
-/** 늘리기 — 비를 무시하고 칸에 맞춘다 */
-export const IconStretch = (p: P) => (
-  <S {...p}>
-    <rect x="3.5" y="6" width="17" height="12" rx="1.4" />
-    <path d="M7 12h10M7 12l2.5-2.5M7 12l2.5 2.5M17 12l-2.5-2.5M17 12l-2.5 2.5" />
+    <rect x="3.5" y="3.5" width="7.5" height="9" rx="1.2" />
+    <rect x="13" y="3.5" width="7.5" height="5.5" rx="1.2" />
+    <rect x="3.5" y="14.5" width="7.5" height="6" rx="1.2" />
+    <rect x="13" y="11" width="7.5" height="9.5" rx="1.2" />
   </S>
 );
 

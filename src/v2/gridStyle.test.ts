@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   justify,
   ratio,
-  objectFit,
+  fitOf,
+  hasCaption,
+  masonry,
   metrics,
   GAP,
   PAD,
@@ -64,10 +66,13 @@ test("빈 목록과 잘못된 폭", () => {
   assert.deepEqual(justify([1.5], r, 0, 200, 10), []);
 });
 
-test("채우기 방식이 클래스로 매핑된다", () => {
-  assert.equal(objectFit("cover"), "object-cover");
-  assert.equal(objectFit("contain"), "object-contain");
-  assert.equal(objectFit("fill"), "object-fill");
+test("카드만 사진 전체, 나머지는 채운다 — 이름줄도 카드뿐", () => {
+  assert.equal(fitOf("card"), "object-contain");
+  assert.equal(fitOf("tile"), "object-cover");
+  assert.equal(fitOf("justified"), "object-cover");
+  assert.equal(fitOf("masonry"), "object-cover");
+  assert.equal(hasCaption("card"), true);
+  assert.equal(hasCaption("tile"), false);
 });
 
 /** 줄이 겹쳐 이름이 묻히고 그림이 붙던 버그. 줄 높이는 반드시 그림+이름+틈이다. */
@@ -113,11 +118,12 @@ test("바깥 여백을 뺀 폭으로 센다", () => {
   assert.equal(under.cols, 5, "1px 모자라면 한 칸 줄어야 한다");
 });
 
-test("타일은 4:3이라 줄이 낮다", () => {
-  const card = metrics(1000, 180, "card", false);
-  const tile = metrics(1000, 180, "tile", false);
-  assert.ok(tile.rowH < card.rowH);
-  assert.ok(Math.abs(tile.imageH - (tile.cellW * 3) / 4) < 1e-6);
+test("타일은 높이가 썸네일 크기로 고정이다 — 칸이 넓어져도", () => {
+  const a = metrics(1000, 180, "tile", false);
+  const b = metrics(1900, 180, "tile", false);
+  assert.equal(a.imageH, 180);
+  assert.equal(b.imageH, 180);
+  assert.ok(b.cellW > a.cellW, "폭만 달라진다");
 });
 
 test("이름줄을 끄면 그만큼 낮아진다", () => {
@@ -133,4 +139,79 @@ test("폭이 0이거나 너무 좁아도 터지지 않는다", () => {
   const n = metrics(50, 180, "card", true);
   assert.equal(n.cols, 1);
   assert.equal(n.cellW, 30, "한 칸이 안쪽 폭 전부를 갖는다");
+});
+
+// ── 메이슨리 ────────────────────────────────────────────────────────────
+type M = { id: number; r: number; g: string | null };
+const m = (id: number, r: number, g: string | null = null): M => ({ id, r, g });
+const lay = (files: M[], cols = 3) =>
+  masonry(
+    files,
+    (f) => f.g,
+    (f) => f.r,
+    3 * 100 + 2 * 10,
+    cols,
+    10,
+    30,
+  );
+
+test("메이슨리 — 열 폭은 같고 높이는 비율대로", () => {
+  const L = lay([m(1, 2), m(2, 0.5), m(3, 1)]);
+  assert.equal(L.boxes.length, 3);
+  for (const b of L.boxes) assert.equal(b.w, 100);
+  assert.equal(L.boxes[0].h, 50, "2:1은 절반 높이");
+  assert.equal(L.boxes[1].h, 200, "1:2는 두 배");
+  assert.equal(L.boxes[2].h, 100);
+  // 첫 셋은 각자 열 하나씩
+  assert.deepEqual(
+    L.boxes.map((b) => b.x),
+    [0, 110, 220],
+  );
+  assert.deepEqual(
+    L.boxes.map((b) => b.y),
+    [0, 0, 0],
+  );
+});
+
+test("다음 장은 가장 짧은 열로 간다", () => {
+  const L = lay([m(1, 2), m(2, 0.5), m(3, 1), m(4, 1)]);
+  // 열 높이: 50, 200, 100 → 넷째는 첫 열(50+10) 아래로
+  assert.equal(L.boxes[3].x, 0);
+  assert.equal(L.boxes[3].y, 60);
+  assert.equal(L.height, 200, "가장 긴 열");
+});
+
+test("묶기가 켜져 있으면 묶음마다 머리글을 놓고 열을 새로 시작한다", () => {
+  const L = lay([m(1, 1, "A"), m(2, 0.5, "A"), m(3, 1, "B")]);
+  assert.equal(L.headers.length, 2);
+  assert.equal(L.headers[0].y, 0);
+  assert.equal(L.boxes[0].y, 30, "머리글 아래");
+  // A의 가장 긴 열은 1:2(200) → 30+200 = 230. B 머리글은 그 뒤 (gap 포함)
+  assert.equal(L.headers[1].y, 30 + 200 + 10);
+  assert.equal(L.boxes[2].x, 0, "B의 첫 장은 첫 열부터");
+  assert.equal(L.boxes[2].y, L.headers[1].y + 30);
+});
+
+test("메이슨리 — rows 안 위치를 안다", () => {
+  const L = lay([m(7, 1), m(8, 1)]);
+  assert.deepEqual(
+    L.boxes.map((b) => b.index),
+    [0, 1],
+  );
+});
+
+test("메이슨리 — 빈 목록·폭 0", () => {
+  assert.equal(lay([]).boxes.length, 0);
+  assert.equal(
+    masonry(
+      [m(1, 1)],
+      () => null,
+      () => 1,
+      0,
+      3,
+      10,
+      30,
+    ).boxes.length,
+    0,
+  );
 });

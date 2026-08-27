@@ -2,23 +2,20 @@ import { useState } from "react";
 import {
   IconCaption,
   IconCard,
-  IconContain,
-  IconFill,
   IconFilmstrip,
   IconJustified,
-  IconStretch,
+  IconMasonry,
   IconTile,
 } from "./icons";
-import type { GridStyle, Scaling } from "./gridStyle";
+import { hasCaption, type GridStyle } from "./gridStyle";
 import { next } from "./cycle";
 
 /**
- * 보기 방식 — 툴바의 버튼 넷.
+ * 보기 방식 — 툴바의 버튼 셋.
  *
- * 격자 모양과 담는 방식은 **누를 때마다 다음 것으로** 바뀐다. 셋을 나란히
- * 늘어놓으니 툴바가 아이콘 여덟 개가 되어 읽히지 않았다. 버튼에 지금 상태의
- * 그림과 이름을 함께 써서 무엇인지 열어 보지 않아도 안다.
- * 이름·크기와 필름스트립은 켜고 끄는 것이라 그대로.
+ * 격자 모양은 **누를 때마다 다음 것으로** 바뀐다(카드 → 타일 → 양쪽 맞춤 →
+ * 메이슨리). 버튼에 지금 상태의 그림과 이름을 함께 써서 열어 보지 않아도
+ * 안다. 이름·크기는 카드에서만 뜨므로 카드일 때만 버튼이 보인다.
  */
 
 type IconOf = (p: { className?: string }) => React.ReactElement;
@@ -27,12 +24,7 @@ const STYLES: { v: GridStyle; label: string; Icon: IconOf }[] = [
   { v: "card", label: "카드", Icon: IconCard },
   { v: "tile", label: "타일", Icon: IconTile },
   { v: "justified", label: "양쪽 맞춤", Icon: IconJustified },
-];
-
-const SCALINGS: { v: Scaling; label: string; Icon: IconOf }[] = [
-  { v: "cover", label: "채우기", Icon: IconFill },
-  { v: "contain", label: "전체", Icon: IconContain },
-  { v: "fill", label: "늘리기", Icon: IconStretch },
+  { v: "masonry", label: "메이슨리", Icon: IconMasonry },
 ];
 
 function Tip({ children }: { children: React.ReactNode }) {
@@ -57,7 +49,7 @@ function Cycle<T extends { v: string; label: string; Icon: IconOf }>({
   items: T[];
   value: string;
   onChange: (v: T["v"]) => void;
-  /** 이름표 앞에 붙는 말 — «보기 방식» */
+  /** 이름표 앞에 붙는 말 — «보기» */
   what: string;
 }) {
   const [hover, setHover] = useState(false);
@@ -122,18 +114,14 @@ function Toggle({
 
 export default function ViewBar({
   style,
-  scaling,
   onStyle,
-  onScaling,
   caption,
   onCaption,
   filmstrip,
   onFilmstrip,
 }: {
   style: GridStyle;
-  scaling: Scaling;
   onStyle: (s: GridStyle) => void;
-  onScaling: (s: Scaling) => void;
   caption: boolean;
   onCaption: (v: boolean) => void;
   filmstrip: boolean;
@@ -142,22 +130,15 @@ export default function ViewBar({
   return (
     <div className="flex items-center gap-1">
       <Cycle items={STYLES} value={style} onChange={onStyle} what="보기" />
-      {/* 양쪽 맞춤은 사진 비를 지키므로 담는 방식이 의미 없다 */}
-      {style !== "justified" && (
-        <Cycle
-          items={SCALINGS}
-          value={scaling}
-          onChange={onScaling}
-          what="담기"
-        />
+      {hasCaption(style) && (
+        <Toggle
+          label="이름·크기 표시"
+          on={caption}
+          onClick={() => onCaption(!caption)}
+        >
+          <IconCaption className="w-[17px] h-[17px]" />
+        </Toggle>
       )}
-      <Toggle
-        label="이름·크기 표시"
-        on={caption}
-        onClick={() => onCaption(!caption)}
-      >
-        <IconCaption className="w-[17px] h-[17px]" />
-      </Toggle>
       <Toggle
         label="필름스트립"
         on={filmstrip}

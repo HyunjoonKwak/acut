@@ -6,7 +6,7 @@ import {
   type StateStorage,
 } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
-import type { GridStyle, Scaling } from "./gridStyle.ts";
+import type { GridStyle } from "./gridStyle.ts";
 import type { GroupBy } from "./groupItems.ts";
 import type { Source } from "./railItems.ts";
 import { DEFAULT_SORT, type Sort } from "./sortItems.ts";
@@ -23,7 +23,6 @@ import { DEFAULT_SORT, type Sort } from "./sortItems.ts";
 export type Prefs = {
   thumbSize: number;
   gridStyle: GridStyle;
-  scaling: Scaling;
   caption: boolean;
   filmstrip: boolean;
   panelW: number;
@@ -40,7 +39,6 @@ export type Prefs = {
 export const DEFAULT_PREFS: Prefs = {
   thumbSize: 180,
   gridStyle: "card",
-  scaling: "cover",
   caption: true,
   filmstrip: false,
   panelW: 224,

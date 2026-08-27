@@ -40,7 +40,6 @@ export default function Toolbar({
   const [sort, setSort] = usePref("sort");
   const [group, setGroup] = usePref("group");
   const [gridStyle, setGridStyle] = usePref("gridStyle");
-  const [scaling, setScaling] = usePref("scaling");
   const [filmstrip, setFilmstrip] = usePref("filmstrip");
   const [caption, setCaption] = usePref("caption");
   const [thumbSize, setThumbSize] = usePref("thumbSize");
@@ -72,9 +71,7 @@ export default function Toolbar({
           <GroupMenu value={group} onChange={setGroup} />
           <ViewBar
             style={gridStyle}
-            scaling={scaling}
             onStyle={setGridStyle}
-            onScaling={setScaling}
             filmstrip={filmstrip}
             onFilmstrip={setFilmstrip}
             caption={caption}

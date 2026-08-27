@@ -42,7 +42,6 @@ export default function App() {
   const [group] = usePref("group");
   const [thumbSize] = usePref("thumbSize");
   const [gridStyle] = usePref("gridStyle");
-  const [scaling] = usePref("scaling");
   const [caption] = usePref("caption");
   const [filmstrip] = usePref("filmstrip");
   const [watch] = usePref("watch");
@@ -276,7 +275,6 @@ export default function App() {
             buckets={buckets}
             caption={caption}
             gridStyle={gridStyle}
-            scaling={scaling}
             group={group}
             onPick={pick}
             onOpen={openViewer}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { objectFit, type GridStyle, type Scaling } from "./gridStyle";
+import { fitOf, type GridStyle } from "./gridStyle";
 import {
   HOVER_DELAY_MS,
   claimHoverPreview,
@@ -36,7 +36,6 @@ export default function Tile({
   onContextMenu,
   caption = true,
   style = "card",
-  scaling = "cover",
   aspect,
 }: {
   file: TileFile;
@@ -50,7 +49,6 @@ export default function Tile({
   /** 사진 아래에 이름과 날짜·크기를 적을지 */
   caption?: boolean;
   style?: GridStyle;
-  scaling?: Scaling;
   /** 그림 상자 크기. 폭은 양쪽 맞춤에서만 준다 — 격자에서는 칸이 정한다. */
   aspect?: { width?: number; height: number };
 }) {
@@ -118,7 +116,7 @@ export default function Tile({
             src={url}
             loading="lazy"
             decoding="async"
-            className={`w-full h-full ${objectFit(scaling)}`}
+            className={`w-full h-full ${fitOf(style)}`}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-fg-faint text-[10px]">
@@ -130,7 +128,7 @@ export default function Tile({
           <video
             ref={video}
             src={`video://localhost/${file.id}`}
-            className={`absolute inset-0 w-full h-full ${objectFit(scaling)} pointer-events-none transition-opacity duration-150`}
+            className={`absolute inset-0 w-full h-full ${fitOf(style)} pointer-events-none transition-opacity duration-150`}
             style={{ opacity: ready ? 1 : 0 }}
             muted
             autoPlay

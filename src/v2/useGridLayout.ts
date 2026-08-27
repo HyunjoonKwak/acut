@@ -4,7 +4,9 @@ import { layout, HEADER_H } from "./gridLayout";
 import {
   CAPTION_H,
   GAP,
+  hasCaption,
   justify,
+  masonry as masonryOf,
   metrics,
   ratio,
   type GridStyle,
@@ -12,12 +14,16 @@ import {
 } from "./gridStyle";
 import type { FileRow } from "./types";
 
+/** 메이슨리에서 화면 밖으로 이만큼은 미리 그려 둔다 (px) */
+const OVERSCAN = 600;
+
 /**
  * 그리드의 치수와 가상 스크롤.
  *
  * 스크롤 요소의 폭·높이를 재고(ResizeObserver), 거기서 칸 수·줄 높이를
  * 내고(gridStyle.metrics), 줄을 가상화한다. 양쪽 맞춤은 줄마다 높이가
- * 달라 따로 잰다.
+ * 달라 따로 잰다. 메이슨리는 줄이 없어 상자 자리를 다 셈해 두고(수만
+ * 장이라도 밀리초) 보이는 범위만 그린다.
  */
 export function useGridLayout(
   rows: FileRow[],
@@ -47,7 +53,9 @@ export function useGridLayout(
     return () => ro.disconnect();
   }, []);
 
-  const { thumbSize, gridStyle, caption } = opts;
+  const { thumbSize, gridStyle } = opts;
+  // 이름줄은 카드에서만 붙는다 — 다른 보기에서는 줄 높이에 넣지 않는다
+  const caption = opts.caption && hasCaption(gridStyle);
   const { contentW, cols, imageH, rowH } = useMemo(
     () => metrics(viewW, thumbSize, gridStyle, caption),
     [viewW, thumbSize, gridStyle, caption],
@@ -76,8 +84,37 @@ export function useGridLayout(
     return out;
   }, [grid, gridStyle, contentW, thumbSize]);
 
+  /// 메이슨리 — 상자 자리 전부와, 그중 지금 그릴 것.
+  const masonry = useMemo(() => {
+    if (gridStyle !== "masonry" || contentW <= 0) return null;
+    const L = masonryOf(
+      rows,
+      (r) => r.group,
+      (r) => ratio(r.width, r.height),
+      contentW,
+      cols,
+      GAP,
+      HEADER_H,
+    );
+    const top = scrollTop - OVERSCAN;
+    const bottom = scrollTop + viewH + OVERSCAN;
+    const visible = L.boxes.filter((b) => b.y + b.h >= top && b.y <= bottom);
+    // 스크롤바가 쓸 «맨 위 사진 순번»과 «한 화면 장수»
+    const onScreen = L.boxes.filter(
+      (b) => b.y + b.h >= scrollTop && b.y <= scrollTop + viewH,
+    );
+    return {
+      ...L,
+      visible,
+      firstIndex: onScreen.length
+        ? Math.min(...onScreen.map((b) => b.index))
+        : 0,
+      onScreen: Math.max(1, onScreen.length),
+    };
+  }, [gridStyle, rows, contentW, cols, scrollTop, viewH]);
+
   const virt = useVirtualizer({
-    count: grid.length,
+    count: masonry ? 0 : grid.length,
     getScrollElement: () => scrollRef.current,
     // 머리글과 사진 줄은 높이가 다르다
     estimateSize: (i) => {
@@ -98,20 +135,36 @@ export function useGridLayout(
   const items = virt.getVirtualItems();
   const lastIndex = items[items.length - 1]?.index ?? -1;
   const { loadMore } = opts;
+  const masonryLast = masonry?.visible.length
+    ? Math.max(...masonry.visible.map((b) => b.index))
+    : -1;
   useEffect(() => {
+    if (masonry) {
+      if (masonryLast >= rows.length - 12) loadMore();
+      return;
+    }
     if (lastIndex >= 0 && lastIndex >= grid.length - 3) loadMore();
-  }, [lastIndex, grid.length, loadMore]);
+  }, [lastIndex, grid.length, loadMore, masonry, masonryLast, rows.length]);
 
-  /// 초점이 화면 밖으로 나가면 그 줄까지 옮긴다. `align: "auto"`라 이미
-  /// 보이는 것은 건드리지 않는다 — 누를 때마다 가운데로 끌어오면 눈이 어지럽다.
+  /// 초점이 화면 밖으로 나가면 그 줄까지 옮긴다. 이미 보이는 것은 건드리지
+  /// 않는다 — 누를 때마다 가운데로 끌어오면 눈이 어지럽다.
   const { selected } = opts;
   useEffect(() => {
     if (selected === null) return;
+    if (masonry) {
+      const b = masonry.boxes.find((x) => x.file.id === selected);
+      const el = scrollRef.current;
+      if (!b || !el) return;
+      if (b.y < el.scrollTop) el.scrollTo({ top: b.y - GAP });
+      else if (b.y + b.h > el.scrollTop + el.clientHeight)
+        el.scrollTo({ top: b.y + b.h - el.clientHeight + GAP });
+      return;
+    }
     const at = grid.findIndex(
       (r) => r.kind === "photos" && r.items.some((i) => i.id === selected),
     );
     if (at >= 0) virt.scrollToIndex(at, { align: "auto" });
-    // grid는 목록이 바뀔 때마다 새로 만들어진다. 초점이 그대로면 굳이
+    // grid·masonry는 목록이 바뀔 때마다 새로 만들어진다. 초점이 그대로면 굳이
     // 다시 맞출 이유가 없어 의존성에서 뺀다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
@@ -127,8 +180,12 @@ export function useGridLayout(
   }, []);
 
   /// 스크롤바가 알아야 하는 둘 — 지금 맨 위 사진의 상대 순번과 한 화면 장수
-  const topOffset = Math.floor(scrollTop / rowH) * cols;
-  const pageSize = Math.max(cols, Math.ceil(viewH / rowH) * cols);
+  const topOffset = masonry
+    ? masonry.firstIndex
+    : Math.floor(scrollTop / rowH) * cols;
+  const pageSize = masonry
+    ? masonry.onScreen
+    : Math.max(cols, Math.ceil(viewH / rowH) * cols);
 
   return {
     scrollRef,
@@ -139,6 +196,7 @@ export function useGridLayout(
     imageH,
     grid,
     justified,
+    masonry,
     virt,
     topOffset,
     pageSize,

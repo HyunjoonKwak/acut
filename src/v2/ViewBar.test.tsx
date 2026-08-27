@@ -4,8 +4,6 @@ import userEvent from "@testing-library/user-event";
 import ViewBar from "./ViewBar";
 
 const base = {
-  scaling: "cover" as const,
-  onScaling: () => {},
   caption: true,
   onCaption: () => {},
   filmstrip: false,
@@ -13,7 +11,7 @@ const base = {
 };
 
 describe("보기 방식 버튼", () => {
-  it("누를 때마다 카드 → 타일 → 양쪽 맞춤 → 카드로 돈다", async () => {
+  it("누를 때마다 카드 → 타일 → 양쪽 맞춤 → 메이슨리 → 카드로 돈다", async () => {
     const onStyle = vi.fn();
     const { rerender } = render(
       <ViewBar {...base} style="card" onStyle={onStyle} />,
@@ -27,17 +25,24 @@ describe("보기 방식 버튼", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "보기: 양쪽 맞춤" }),
     );
+    expect(onStyle).toHaveBeenLastCalledWith("masonry");
+    rerender(<ViewBar {...base} style="masonry" onStyle={onStyle} />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "보기: 메이슨리" }),
+    );
     expect(onStyle).toHaveBeenLastCalledWith("card");
   });
 
-  it("양쪽 맞춤에서는 담기 버튼이 없다", () => {
+  it("이름·크기 버튼은 카드에서만 있다", () => {
     const { rerender } = render(
       <ViewBar {...base} style="card" onStyle={() => {}} />,
     );
-    expect(screen.getByRole("button", { name: /담기:/ })).toBeInTheDocument();
-    rerender(<ViewBar {...base} style="justified" onStyle={() => {}} />);
     expect(
-      screen.queryByRole("button", { name: /담기:/ }),
+      screen.getByRole("button", { name: "이름·크기 표시" }),
+    ).toBeInTheDocument();
+    rerender(<ViewBar {...base} style="tile" onStyle={() => {}} />);
+    expect(
+      screen.queryByRole("button", { name: "이름·크기 표시" }),
     ).not.toBeInTheDocument();
   });
 

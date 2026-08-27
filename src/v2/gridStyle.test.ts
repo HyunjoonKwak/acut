@@ -20,7 +20,8 @@ test("양쪽 맞춤 — 각 줄이 폭에 딱 맞는다", () => {
   const rows = justify(files, r, 1000, 200, 10);
   // 마지막 줄은 늘리지 않으므로 뺀다
   for (const row of rows.slice(0, -1)) {
-    const w = row.items.reduce((a, i) => a + i.width, 0) + 10 * (row.items.length - 1);
+    const w =
+      row.items.reduce((a, i) => a + i.width, 0) + 10 * (row.items.length - 1);
     assert.ok(Math.abs(w - 1000) < 0.5, `줄 폭 ${w}`);
   }
 });
@@ -44,7 +45,10 @@ test("마지막 줄은 늘리지 않는다 — 두 장이 화면을 가로지르
 test("모든 사진이 정확히 한 번씩 나온다", () => {
   const files = Array.from({ length: 37 }, (_, i) => 0.6 + (i % 5) * 0.4);
   const rows = justify(files, r, 900, 180, 8);
-  assert.equal(rows.reduce((a, x) => a + x.items.length, 0), 37);
+  assert.equal(
+    rows.reduce((a, x) => a + x.items.length, 0),
+    37,
+  );
 });
 
 test("빈 목록과 잘못된 폭", () => {

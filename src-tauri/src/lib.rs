@@ -110,6 +110,7 @@ pub fn run() {
             api::scan_cancel,
             api::files_page,
             api::files_summary,
+            api::files_facets,
             api::files_timeline,
             api::files_cursor_at,
             api::files_mark,

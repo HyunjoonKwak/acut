@@ -295,6 +295,16 @@ pub fn files_cursor_at(
     query::cursor_at(&state.db, &filter, index).map_err(err)
 }
 
+/// 사이드바가 훑어볼 갈래별 장수.
+#[tauri::command]
+pub fn files_facets(
+    state: State<'_, AppState>,
+    filter: Filter,
+    kind: query::FacetKind,
+) -> Result<Vec<query::Facet>, String> {
+    query::facets(&state.db, &filter, kind).map_err(err)
+}
+
 #[tauri::command]
 pub fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result<Summary, String> {
     let (count, bytes) = query::summary(&state.db, &filter).map_err(err)?;

@@ -134,6 +134,10 @@ pub struct Filter {
     pub trashed: bool,
     /// 무엇으로 어떤 방향으로 늘어놓을까.
     pub sort: Sort,
+    /// 사이드바에서 고른 연도 (`2024`)
+    pub year: Option<String>,
+    /// 사이드바에서 고른 카메라 모델
+    pub camera: Option<String>,
 }
 
 /// 그리드에 머리글을 넣어 묶는 기준. Lap의 GROUP과 같다.
@@ -227,6 +231,19 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     if let Some(c) = f.culling_flag {
         w.push("fi.culling_flag = ?".into());
         p.push(Box::new(c));
+    }
+    if let Some(y) = f.year.as_deref().filter(|s| !s.is_empty()) {
+        w.push("strftime('%Y', fi.taken_at,'unixepoch','localtime') = ?".into());
+        p.push(Box::new(y.to_string()));
+    }
+    if let Some(cam) = f.camera.as_ref() {
+        // 빈 문자열은 "카메라 정보 없음"을 뜻한다
+        if cam.is_empty() {
+            w.push("COALESCE(NULLIF(fi.cam_model,''),'') = ''".into());
+        } else {
+            w.push("fi.cam_model = ?".into());
+            p.push(Box::new(cam.clone()));
+        }
     }
     if f.favorite_only {
         w.push("fi.favorite = 1".into());
@@ -456,6 +473,84 @@ pub fn cursor_at(db: &Db, f: &Filter, index: i64) -> Result<Option<Cursor>> {
         })
         .optional()
     })
+}
+
+/// 사이드바의 갈래 하나 — 값·표시 이름·장수.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Facet {
+    pub value: String,
+    pub label: String,
+    pub count: i64,
+}
+
+/// 사이드바가 훑어볼 갈래.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FacetKind {
+    Year,
+    Camera,
+    Rating,
+    Kind,
+}
+
+/// 지금 필터 안에서 각 값이 몇 장인지 센다.
+///
+/// 필터를 함께 거는 이유: 「2020년」을 고른 뒤 카메라 목록을 보면 그해에 쓴
+/// 카메라만 나와야 한다. 전체 목록이 나오면 눌러도 0장인 것이 섞인다.
+pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
+    let (where_sql, params) = build_where(f, None);
+    let join = if needs_folder_join(f) {
+        "JOIN folders fo ON fo.id = fi.folder_id"
+    } else {
+        ""
+    };
+    let expr = match kind {
+        FacetKind::Year => "strftime('%Y', fi.taken_at,'unixepoch','localtime')",
+        FacetKind::Camera => "COALESCE(NULLIF(fi.cam_model,''),'')",
+        FacetKind::Rating => "CAST(fi.rating AS TEXT)",
+        FacetKind::Kind => "CAST(fi.kind AS TEXT)",
+    };
+    let order = match kind {
+        // 연도·평점은 값 순서로, 카메라는 많이 쓴 것부터
+        FacetKind::Year | FacetKind::Rating => "v DESC",
+        _ => "n DESC, v",
+    };
+    let sql = format!(
+        "SELECT {expr} v, COUNT(*) n FROM files fi {join} {where_sql}
+         GROUP BY v ORDER BY {order} LIMIT 200"
+    );
+    let rows: Vec<(String, i64)> = db.read(|c| {
+        let mut st = c.prepare(&sql)?;
+        let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        let it = st.query_map(refs.as_slice(), |r| Ok((r.get(0)?, r.get(1)?)))?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(value, count)| {
+            let label = match kind {
+                FacetKind::Year => format!("{value}년"),
+                FacetKind::Rating => match value.as_str() {
+                    "0" => "평점 없음".into(),
+                    n => "★".repeat(n.parse::<usize>().unwrap_or(0)),
+                },
+                FacetKind::Kind => match value.as_str() {
+                    "0" => "사진".into(),
+                    "1" => "영상".into(),
+                    _ => "RAW".into(),
+                },
+                FacetKind::Camera => {
+                    if value.is_empty() {
+                        "(카메라 정보 없음)".into()
+                    } else {
+                        value.clone()
+                    }
+                }
+            };
+            Facet { value, label, count }
+        })
+        .collect())
 }
 
 /// 필터에 걸리는 전체 개수와 용량. 페이지마다 세지 않고 필터가 바뀔 때만 호출한다.
@@ -957,6 +1052,44 @@ mod tests {
             timeline(&db, &area).unwrap().iter().map(|x| x.count).sum::<i64>(),
             summary(&db, &area).unwrap().0
         );
+    }
+
+    /// 갈래 목록은 **지금 필터 안에서** 세야 한다. 전체를 세면 눌러도 0장인
+    /// 항목이 섞인다.
+    #[test]
+    fn facets_are_counted_inside_the_current_filter() {
+        let (_d, db) = seeded();
+        let all = facets(&db, &Filter::default(), FacetKind::Kind).unwrap();
+        assert_eq!(all.iter().map(|f| f.count).sum::<i64>(), 50);
+
+        // 영상만 걸어 두면 갈래도 영상만 남는다
+        let only_video = Filter { kind: Some(1), ..Default::default() };
+        let v = facets(&db, &only_video, FacetKind::Kind).unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].label, "영상");
+        assert_eq!(v[0].count, 5);
+    }
+
+    #[test]
+    fn facet_labels_are_readable() {
+        let (_d, db) = seeded();
+        let r = facets(&db, &Filter::default(), FacetKind::Rating).unwrap();
+        assert!(r.iter().any(|f| f.label == "평점 없음"));
+        assert!(r.iter().any(|f| f.label.starts_with('★')));
+
+        let y = facets(&db, &Filter::default(), FacetKind::Year).unwrap();
+        assert!(y.iter().all(|f| f.label.ends_with('년')), "{y:?}");
+        // 연도는 최근이 위
+        for w in y.windows(2) {
+            assert!(w[0].value >= w[1].value);
+        }
+    }
+
+    #[test]
+    fn camera_facet_names_the_unknown() {
+        let (_d, db) = seeded();
+        let c = facets(&db, &Filter::default(), FacetKind::Camera).unwrap();
+        assert!(c.iter().any(|f| f.label == "(카메라 정보 없음)"), "{c:?}");
     }
 
     #[test]

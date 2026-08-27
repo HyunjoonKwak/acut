@@ -9,7 +9,10 @@ const key = (x: F) => x.g;
 test("묶지 않으면 그냥 cols개씩 자른다", () => {
   const rows = layout([f(1, null), f(2, null), f(3, null)], key, 2);
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows.map((r) => (r.kind === "photos" ? r.items.length : -1)), [2, 1]);
+  assert.deepEqual(
+    rows.map((r) => (r.kind === "photos" ? r.items.length : -1)),
+    [2, 1],
+  );
 });
 
 test("그룹마다 머리글이 하나씩", () => {
@@ -18,7 +21,10 @@ test("그룹마다 머리글이 하나씩", () => {
   assert.equal(heads.length, 2);
   assert.deepEqual(
     heads.map((h) => (h.kind === "header" ? [h.label, h.count] : null)),
-    [["A", 2], ["B", 1]],
+    [
+      ["A", 2],
+      ["B", 1],
+    ],
   );
 });
 
@@ -35,7 +41,11 @@ test("그룹은 새 줄에서 시작한다 — 섞이면 머리글이 거짓말�
 });
 
 test("한 그룹이 여러 줄로 나뉜다", () => {
-  const rows = layout([1, 2, 3, 4, 5].map((n) => f(n, "A")), key, 2);
+  const rows = layout(
+    [1, 2, 3, 4, 5].map((n) => f(n, "A")),
+    key,
+    2,
+  );
   assert.equal(rows.filter((r) => r.kind === "header").length, 1);
   assert.equal(rows.filter((r) => r.kind === "photos").length, 3);
 });

@@ -10,6 +10,10 @@ export type Picks = {
   min_rating: number | null;
   favorite_only: boolean;
   name_like: string | null;
+  /** 사이드바에서 고른 연도 (`2024`) */
+  year: string | null;
+  /** 사이드바에서 고른 카메라 모델 */
+  camera: string | null;
 };
 
 export const EMPTY: Picks = {
@@ -18,6 +22,8 @@ export const EMPTY: Picks = {
   min_rating: null,
   favorite_only: false,
   name_like: null,
+  year: null,
+  camera: null,
 };
 
 export const isEmpty = (p: Picks) =>
@@ -25,7 +31,9 @@ export const isEmpty = (p: Picks) =>
   p.culling_flag === null &&
   p.min_rating === null &&
   !p.favorite_only &&
-  !p.name_like;
+  !p.name_like &&
+  !p.year &&
+  !p.camera;
 
 const KINDS = [
   { v: 0, label: "사진" },

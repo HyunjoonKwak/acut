@@ -63,6 +63,8 @@ pub struct Filter {
     pub favorite_only: bool,
     /// 파일명 부분 일치
     pub name_like: Option<String>,
+    /// true면 **휴지통에 든 것만** 본다. 기본은 살아 있는 것만.
+    pub trashed: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -89,6 +91,17 @@ fn needs_folder_join(f: &Filter) -> bool {
 fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
     let mut w: Vec<String> = Vec::new();
     let mut p: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    // 버린 것은 기본적으로 안 보인다. 이게 첫 조건이어야 한다 — 빼먹으면
+    // 휴지통에 넣은 사진이 목록에 계속 남아 있고 원본은 없어 썸네일만 뜬다.
+    w.push(
+        if f.trashed {
+            "fi.trashed_at IS NOT NULL"
+        } else {
+            "fi.trashed_at IS NULL"
+        }
+        .into(),
+    );
 
     if let Some(id) = f.library_id {
         w.push("fo.library_id = ?".into());
@@ -412,6 +425,28 @@ mod tests {
 
     /// 경로 앞부분으로 폴더와 그 아래를 고른다. 사이드바 트리의 중간 마디는
     /// DB 행이 없어 id로는 못 고른다.
+    /// 버린 사진이 목록에 남아 있으면 원본은 없는데 타일만 뜬다.
+    #[test]
+    fn trashed_files_disappear_from_the_default_view() {
+        let (_d, db) = seeded();
+        let all = page(&db, &Filter::default(), None, 500).unwrap().rows.len();
+        db.write(|c| {
+            c.execute("UPDATE files SET trashed_at=1 WHERE id IN (1,2,3)", [])
+        })
+        .unwrap();
+
+        assert_eq!(page(&db, &Filter::default(), None, 500).unwrap().rows.len(), all - 3);
+        assert_eq!(summary(&db, &Filter::default()).unwrap().0, all as i64 - 3);
+        assert_eq!(
+            timeline(&db, &Filter::default()).unwrap().iter().map(|b| b.count).sum::<i64>(),
+            all as i64 - 3
+        );
+
+        // 휴지통 보기에서는 그것만 나온다
+        let t = Filter { trashed: true, ..Default::default() };
+        assert_eq!(page(&db, &t, None, 500).unwrap().rows.len(), 3);
+    }
+
     #[test]
     fn folder_path_selects_the_subtree() {
         let (_d, db) = seeded();

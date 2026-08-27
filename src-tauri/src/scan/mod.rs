@@ -219,7 +219,8 @@ pub fn scan_folder(
     db.write(|c| {
         c.execute(
             "UPDATE folders SET file_count =
-               (SELECT COUNT(*) FROM files WHERE files.folder_id = folders.id)
+               (SELECT COUNT(*) FROM files
+                 WHERE files.folder_id = folders.id AND files.trashed_at IS NULL)
              WHERE library_id = ?1",
             [library_id],
         )

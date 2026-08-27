@@ -2,6 +2,7 @@
 
 mod ai;
 mod api;
+pub mod ops;
 mod commands;
 mod core;
 mod cull;
@@ -86,6 +87,12 @@ pub fn run() {
             api::library_remove,
             api::library_stats,
             api::cache_usage,
+            api::trash::trash_pending,
+            api::trash::trash_summary,
+            api::trash::trash_apply,
+            api::trash::trash_files,
+            api::trash::trash_restore,
+            api::trash::trash_empty,
             api::volumes_list,
             api::scan_start,
             api::scan_cancel,

@@ -127,6 +127,12 @@ CREATE TABLE IF NOT EXISTS files (
     -- AI — 나중에 채운다. 컬럼은 미리 둔다 (재인덱싱 방지) ------------------
     embedding   BLOB,
 
+    -- 휴지통 -------------------------------------------------------------
+    -- 행을 지우지 않고 표시만 한다. 그래야 되돌릴 때 평점·판정이 살아남는다.
+    trashed_at   INTEGER,                     -- NULL이면 제자리에 있다
+    trash_path   TEXT,                        -- 휴지통 안 경로 (라이브러리 기준)
+    trash_batch  INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+
     inode       INTEGER,
     scanned_at  INTEGER NOT NULL,
     UNIQUE (folder_id, name)
@@ -147,6 +153,8 @@ CREATE INDEX IF NOT EXISTS idx_files_kind      ON files(kind, taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_files_gps       ON files(gps_lat, gps_lon) WHERE gps_lat IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_camera    ON files(cam_model) WHERE cam_model IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_inode     ON files(inode);
+-- idx_files_trashed는 db/upgrade.rs가 만든다. 여기 두면 구버전 DB에서
+-- 컬럼이 아직 없는 채로 이 배치가 돌아 앱이 뜨지 않는다.
 
 -- ---------------------------------------------------------------------------
 -- 썸네일 — 무효화 키를 함께 저장한다. 원본이 바뀌면 다시 만든다

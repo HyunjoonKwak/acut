@@ -52,7 +52,7 @@ pub fn list(db: &Db) -> Result<Vec<Library>> {
                     l.name, l.area,
                     (SELECT COUNT(*) FROM files fi
                        JOIN folders fo ON fo.id = fi.folder_id
-                      WHERE fo.library_id = l.id)
+                      WHERE fo.library_id = l.id AND fi.trashed_at IS NULL)
              FROM libraries l
              LEFT JOIN volumes v ON v.uuid = l.volume_uuid
              ORDER BY l.added_at",

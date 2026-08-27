@@ -55,6 +55,7 @@ pub fn generate(
              LEFT JOIN thumbs t ON t.file_id = fi.id
              WHERE fo.library_id = ?1
                AND fi.kind <> 1                        -- 영상은 아직 (AVFoundation 필요)
+               AND fi.trashed_at IS NULL                -- 버린 것은 만들지 않는다
                AND (t.file_id IS NULL
                     OR t.state <> 1
                     OR t.src_size <> fi.size

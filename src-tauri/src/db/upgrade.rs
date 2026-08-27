@@ -9,7 +9,28 @@ use rusqlite::Connection;
 pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_library_id(c)?;
     backfill_libraries(c)?;
+    add_trash_columns(c)?;
     Ok(())
+}
+
+/// 휴지통 표시용 컬럼. 파일 행을 지우지 않고 표시만 하는 이유는
+/// 되돌릴 때 평점·판정이 살아남아야 하기 때문이다.
+fn add_trash_columns(c: &Connection) -> rusqlite::Result<()> {
+    for (col, ddl) in [
+        ("trashed_at", "ALTER TABLE files ADD COLUMN trashed_at INTEGER"),
+        ("trash_path", "ALTER TABLE files ADD COLUMN trash_path TEXT"),
+        (
+            "trash_batch",
+            "ALTER TABLE files ADD COLUMN trash_batch INTEGER REFERENCES batches(id) ON DELETE SET NULL",
+        ),
+    ] {
+        if !has_column(c, "files", col)? {
+            c.execute_batch(ddl)?;
+        }
+    }
+    c.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_files_trashed ON files(trashed_at) WHERE trashed_at IS NOT NULL;",
+    )
 }
 
 fn has_column(c: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -141,6 +162,32 @@ mod tests {
         )
         .unwrap();
         path
+    }
+
+    #[test]
+    fn trash_columns_are_added_to_an_old_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(include_str!("schema.sql")).unwrap();
+            c.execute_batch(
+                "DROP INDEX IF EXISTS idx_files_trashed;
+                 ALTER TABLE files DROP COLUMN trashed_at;
+                 ALTER TABLE files DROP COLUMN trash_path;
+                 ALTER TABLE files DROP COLUMN trash_batch;",
+            )
+            .unwrap();
+            assert!(!has_column(&c, "files", "trashed_at").unwrap());
+        }
+        let db = Db::open(&path).expect("구버전 DB도 열려야 한다");
+        db.read(|c| {
+            assert!(has_column(c, "files", "trashed_at")?);
+            assert!(has_column(c, "files", "trash_path")?);
+            assert!(has_column(c, "files", "trash_batch")?);
+            Ok(())
+        })
+        .unwrap();
     }
 
     /// 이 순서를 틀리면 앱이 아예 뜨지 않는다. `schema.sql`이 먼저 도는데

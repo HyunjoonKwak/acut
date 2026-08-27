@@ -9,6 +9,7 @@
 pub mod cull;
 pub mod photo_protocol;
 pub mod thumb_protocol;
+pub mod trash;
 
 use crate::db::conn::Db;
 use crate::db::libraries::Library as LibRow;
@@ -331,7 +332,7 @@ pub fn library_stats(
             c.query_row(
                 "SELECT COUNT(*), COALESCE(SUM(fi.size),0)
                  FROM files fi JOIN folders fo ON fo.id=fi.folder_id
-                 WHERE (?1 IS NULL OR fo.library_id = ?1)",
+                 WHERE fi.trashed_at IS NULL AND (?1 IS NULL OR fo.library_id = ?1)",
                 [library_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
@@ -346,7 +347,8 @@ pub fn library_stats(
                 "SELECT COUNT(*) FROM thumbs t
                  JOIN files fi ON fi.id = t.file_id
                  JOIN folders fo ON fo.id = fi.folder_id
-                 WHERE t.state = 1 AND (?1 IS NULL OR fo.library_id = ?1)",
+                 WHERE t.state = 1 AND fi.trashed_at IS NULL
+                   AND (?1 IS NULL OR fo.library_id = ?1)",
                 [library_id],
                 |r| r.get(0),
             )

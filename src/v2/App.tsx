@@ -53,6 +53,14 @@ type Stats = {
 };
 /** 캐시 용량 — 디스크를 훑어야 해서 자주 부르지 않는다 */
 type CacheUsage = { bytes: number; files: number };
+type Counted = { files: number; bytes: number };
+type Outcome = {
+  batch_id: number;
+  moved: number;
+  failed: number;
+  bytes: number;
+  first_error: string | null;
+};
 type Bucket = { year: number; month: number; count: number; top: number };
 /** 사이드바 트리 한 줄. 중간 마디는 DB 행이 없어 id가 null이다. */
 type FolderRow = {
@@ -108,6 +116,12 @@ export default function App() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   /// 찾기 줄에서 고른 것들
   const [picks, setPicks] = useState<Picks>(EMPTY_PICKS);
+  /// 휴지통을 보고 있는가
+  const [viewTrash, setViewTrash] = useState(false);
+  /// 휴지통에 든 것 / 제외 판정만 하고 아직 안 치운 것
+  const [trash, setTrash] = useState<Counted | null>(null);
+  const [toClean, setToClean] = useState<Counted | null>(null);
+  const [busy, setBusy] = useState("");
   const [scanMsg, setScanMsg] = useState<string>("");
   const [thumbSize, setThumbSize] = useState(180);
   const [selected, setSelected] = useState<number | null>(null);
@@ -138,8 +152,13 @@ export default function App() {
   }, []);
 
   const filter = useMemo(
-    () => ({ ...picks, library_id: libId, folder_path: sel?.rel ?? null }),
-    [picks, libId, sel],
+    () => ({
+      ...picks,
+      library_id: libId,
+      folder_path: viewTrash ? null : (sel?.rel ?? null),
+      trashed: viewTrash,
+    }),
+    [picks, libId, sel, viewTrash],
   );
 
   const loadFirst = useCallback(async () => {
@@ -183,6 +202,20 @@ export default function App() {
     setLibs(await invoke<Library[]>("libraries_list"));
   }, []);
 
+  /// 휴지통과 「치울 것」 개수. 판정을 바꿀 때마다 달라진다.
+  const refreshTrash = useCallback(async () => {
+    try {
+      const [t, p] = await Promise.all([
+        invoke<Counted>("trash_summary", { libraryId: libId }),
+        invoke<Counted>("trash_pending", { libraryId: libId }),
+      ]);
+      setTrash(t);
+      setToClean(p);
+    } catch {
+      /* 아직 라이브러리가 없을 수 있다 */
+    }
+  }, [libId]);
+
   // 셋을 한꺼번에 던진다. 줄줄이 await하면 셋의 시간이 그대로 더해진다.
   // 둘을 한꺼번에 던진다. 줄줄이 await하면 시간이 그대로 더해진다.
   const refreshMeta = useCallback(async () => {
@@ -193,6 +226,7 @@ export default function App() {
       ]);
       setStats(st);
       setBuckets(bk);
+      refreshTrash();
     } catch {
       /* 아직 등록된 라이브러리가 없을 수 있다 */
     }
@@ -230,7 +264,7 @@ export default function App() {
     setDone(false);
     loadFirst();
     refreshMeta();
-  }, [libs.length, libId, sel, picks, loadFirst, refreshMeta]);
+  }, [libs.length, libId, sel, picks, viewTrash, loadFirst, refreshMeta]);
 
   // 스캔·썸네일 진행 상황
   useEffect(() => {
@@ -505,6 +539,57 @@ export default function App() {
     });
   }, []);
 
+  /// 되돌릴 수 없는 일은 여기서 확인 문구를 만들고, 프론트가 물어본 뒤에만 부른다.
+  const runTrashOp = useCallback(
+    async (cmd: string, args: Record<string, unknown>, doing: string) => {
+      setBusy(doing);
+      try {
+        const r = await invoke<Outcome>(cmd, args);
+        setBusy(
+          r.failed > 0
+            ? `${r.moved}장 처리 · ${r.failed}장 실패 — ${r.first_error ?? ""}`
+            : "",
+        );
+        await Promise.all([
+          loadFirst(),
+          refreshMeta(),
+          refreshLibs(),
+          refreshTrash(),
+        ]);
+      } catch (e) {
+        setBusy(String(e));
+      }
+    },
+    [loadFirst, refreshMeta, refreshLibs, refreshTrash],
+  );
+
+  /// 제외로 판정한 것을 휴지통으로. 파일은 라이브러리 안 `.acut/휴지통`으로
+  /// 옮겨질 뿐이라 되돌릴 수 있다.
+  const cleanExcluded = useCallback(() => {
+    if (!toClean || toClean.files === 0) return;
+    if (
+      !window.confirm(
+        `제외로 판정한 ${toClean.files.toLocaleString()}장(${fmtBytes(toClean.bytes)})을 ` +
+          `휴지통으로 옮깁니다.\n\n파일은 라이브러리 안 .acut/휴지통 으로 이동하며 ` +
+          `언제든 되돌릴 수 있습니다.`,
+      )
+    )
+      return;
+    runTrashOp("trash_apply", { libraryId: libId }, "치우는 중…");
+  }, [toClean, libId, runTrashOp]);
+
+  const emptyTrash = useCallback(() => {
+    if (!trash || trash.files === 0) return;
+    if (
+      !window.confirm(
+        `휴지통의 ${trash.files.toLocaleString()}장(${fmtBytes(trash.bytes)})을 ` +
+          `영구히 지웁니다.\n\n되돌릴 수 없습니다.`,
+      )
+    )
+      return;
+    runTrashOp("trash_empty", { libraryId: libId, ids: [] }, "지우는 중…");
+  }, [trash, libId, runTrashOp]);
+
   /// 찾기 결과 개수 — 눈금 합이 곧 필터에 걸린 장수라 따로 세지 않는다
   const matched = useMemo(
     () => buckets.reduce((a, b) => a + b.count, 0),
@@ -568,6 +653,61 @@ export default function App() {
 
       {libs.length > 0 && <FilterBar value={picks} onChange={setPicks} />}
 
+      {/* 치우기 줄 — 판정이 실제 정리로 이어지는 곳 */}
+      {(viewTrash || (toClean?.files ?? 0) > 0 || busy) && (
+        <div className="h-9 shrink-0 flex items-center gap-2 px-3 bg-[#1B2123] border-b border-[#242C2E] text-[12px]">
+          {viewTrash ? (
+            <>
+              <span className="text-[#A3B2B4]">
+                휴지통 {trash?.files.toLocaleString() ?? 0}장 ·{" "}
+                {fmtBytes(trash?.bytes ?? 0)}
+              </span>
+              <button
+                onClick={() =>
+                  runTrashOp(
+                    "trash_restore",
+                    { libraryId: libId, ids: [] },
+                    "되돌리는 중…",
+                  )
+                }
+                className="h-6 px-2.5 rounded text-[#A3B2B4] ring-1 ring-[#333C3F]"
+              >
+                전부 되돌리기
+              </button>
+              <button
+                onClick={emptyTrash}
+                className="h-6 px-2.5 rounded bg-[#E2685C] text-[#2A0D09] font-semibold"
+              >
+                영구히 비우기
+              </button>
+              <span className="text-[#6D7B7E]">
+                비우기 전까지는 원본이 그대로 있습니다
+              </span>
+            </>
+          ) : (
+            (toClean?.files ?? 0) > 0 && (
+              <>
+                <span className="text-[#A3B2B4]">
+                  제외로 판정한 {toClean?.files.toLocaleString()}장 ·{" "}
+                  <b className="text-[#F0B429]">
+                    {fmtBytes(toClean?.bytes ?? 0)}
+                  </b>{" "}
+                  확보 가능
+                </span>
+                <button
+                  onClick={cleanExcluded}
+                  className="h-6 px-2.5 rounded bg-[#F0B429] text-[#231A00] font-semibold"
+                >
+                  휴지통으로 치우기
+                </button>
+              </>
+            )
+          )}
+          <div className="flex-1" />
+          {busy && <span className="text-[#F0B429]">{busy}</span>}
+        </div>
+      )}
+
       <div className="flex-1 flex min-h-0">
         {/* 사이드바 — 위는 등록한 라이브러리, 아래는 그 안의 폴더 */}
         <aside className="w-56 shrink-0 bg-[#1C2123] border-r border-[#242C2E] overflow-y-auto py-2">
@@ -579,6 +719,7 @@ export default function App() {
               setLibId(null);
               setSel(null);
               setOpen(new Set());
+              setViewTrash(false);
             }}
             className={`w-full text-left px-3 py-1.5 ${
               libId === null ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
@@ -596,6 +737,7 @@ export default function App() {
                   setLibId(l.id);
                   setSel(null);
                   setOpen(new Set());
+                  setViewTrash(false);
                 }}
                 title={l.dir ?? `${l.volume_name}/${l.rel_path} (연결 안 됨)`}
                 className={`w-full text-left px-3 py-1.5 truncate ${
@@ -632,7 +774,24 @@ export default function App() {
             </div>
           ))}
 
-          {folders.length > 0 && (
+          {trash && trash.files > 0 && (
+            <button
+              onClick={() => {
+                setViewTrash((v) => !v);
+                setSel(null);
+              }}
+              className={`w-full text-left px-3 py-1.5 mt-1 ${
+                viewTrash ? "bg-[#232A2C] text-white" : "text-[#A3B2B4]"
+              }`}
+            >
+              🗑 휴지통{" "}
+              <span className="text-[#6D7B7E] tabular-nums float-right">
+                {trash.files.toLocaleString()}
+              </span>
+            </button>
+          )}
+
+          {!viewTrash && folders.length > 0 && (
             <div className="mt-3 pt-2 border-t border-[#242C2E]">
               <div className="px-3 pb-1 text-[10.5px] uppercase tracking-wider text-[#5F6C6E]">
                 폴더

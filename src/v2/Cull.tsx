@@ -379,7 +379,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         </span>
         <div className="flex-1" />
         <span className="text-[12px] text-[#6D7B7E]">
-          판정만 기록합니다 — 파일은 지워지지 않습니다
+          여기서는 판정만 합니다 — 닫으면 「휴지통으로 치우기」가 나옵니다
         </span>
       </div>
     </div>

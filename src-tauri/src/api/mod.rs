@@ -400,7 +400,7 @@ pub fn file_detail(state: State<'_, AppState>, id: i64) -> Result<serde_json::Va
                         fi.width, fi.height, fi.cam_make, fi.cam_model, fi.lens,
                         fi.iso, fi.aperture, fi.shutter, fi.focal_mm,
                         fi.gps_lat, fi.gps_lon, fi.rating, fi.culling_flag, fi.favorite,
-                        fi.comment, fi.kind
+                        fi.comment, fi.kind, fi.duration_ms
                  FROM files fi JOIN folders fo ON fo.id=fi.folder_id WHERE fi.id=?1",
                 [id],
                 |r| {
@@ -426,6 +426,7 @@ pub fn file_detail(state: State<'_, AppState>, id: i64) -> Result<serde_json::Va
                         "favorite": r.get::<_, i32>(18)? != 0,
                         "comment": r.get::<_, Option<String>>(19)?,
                         "kind": r.get::<_, i32>(20)?,
+                        "durationMs": r.get::<_, Option<i64>>(21)?,
                     }))
                 },
             )

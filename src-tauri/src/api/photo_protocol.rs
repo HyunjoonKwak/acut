@@ -33,7 +33,7 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
         c.query_row(
             "SELECT fo.library_id, fo.volume_uuid,
                     fo.rel_path || CASE WHEN fo.rel_path = '' THEN '' ELSE '/' END || fi.name,
-                    fi.size, COALESCE(fi.modified_at, 0)
+                    fi.size, COALESCE(fi.modified_at, 0), fi.kind
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
              WHERE fi.id = ?1 AND fo.library_id IS NOT NULL",
             [id],
@@ -44,11 +44,12 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
                     r.get::<_, String>(2)?,
                     r.get::<_, i64>(3)?,
                     r.get::<_, i64>(4)?,
+                    r.get::<_, i32>(5)?,
                 ))
             },
         )
     });
-    let Ok((lib_id, volume_uuid, vol_rel, size, mtime)) = row else {
+    let Ok((lib_id, volume_uuid, vol_rel, size, mtime, kind)) = row else {
         responder.respond(fail(StatusCode::NOT_FOUND));
         return;
     };
@@ -68,14 +69,24 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
     let out =
         crate::media::cache::thumb_path(&crate::media::cache::preview_root(&lib_dir), &key);
 
-    // 캐시에 있으면 그대로, 없으면 만든다
+    // 캐시에 있으면 그대로, 없으면 만든다.
+    // 영상은 ImageIO가 못 여니 QuickLook이 대표 프레임을 준다.
     if !out.is_file() {
-        let r = crate::media::thumbnail::make(
-            &src,
-            &out,
-            crate::media::cache::PREVIEW_PX,
-            crate::media::cache::PREVIEW_QUALITY,
-        );
+        let r = if kind == 1 {
+            crate::media::video::thumbnail(
+                &src,
+                &out,
+                crate::media::cache::PREVIEW_PX,
+                crate::media::cache::PREVIEW_QUALITY,
+            )
+        } else {
+            crate::media::thumbnail::make(
+                &src,
+                &out,
+                crate::media::cache::PREVIEW_PX,
+                crate::media::cache::PREVIEW_QUALITY,
+            )
+        };
         if r.is_err() {
             responder.respond(fail(StatusCode::UNSUPPORTED_MEDIA_TYPE));
             return;

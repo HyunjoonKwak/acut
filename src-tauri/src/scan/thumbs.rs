@@ -28,6 +28,8 @@ struct Job {
     rel_path: String,
     size: i64,
     mtime: i64,
+    /// 영상인가. ImageIO와 QuickLook 중 어느 쪽으로 갈지 정한다.
+    video: bool,
 }
 
 /// 아직 썸네일이 없거나 원본이 바뀐 파일들의 썸네일을 만든다.
@@ -49,12 +51,11 @@ pub fn generate(
     // 썸네일이 없거나, 있어도 원본의 크기·수정시각이 달라진 것들.
     let jobs: Vec<Job> = db.read(|c| {
         let mut st = c.prepare(
-            "SELECT fi.id, fo.rel_path, fi.name, fi.size, COALESCE(fi.modified_at, 0)
+            "SELECT fi.id, fo.rel_path, fi.name, fi.size, COALESCE(fi.modified_at, 0), fi.kind
              FROM files fi
              JOIN folders fo ON fo.id = fi.folder_id
              LEFT JOIN thumbs t ON t.file_id = fi.id
              WHERE fo.library_id = ?1
-               AND fi.kind <> 1                        -- 영상은 아직 (AVFoundation 필요)
                AND fi.trashed_at IS NULL                -- 버린 것은 만들지 않는다
                AND (t.file_id IS NULL
                     OR t.state <> 1
@@ -71,6 +72,7 @@ pub fn generate(
                 rel_path,
                 size: r.get(3)?,
                 mtime: r.get(4)?,
+                video: r.get::<_, i32>(5)? == 1,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -122,7 +124,17 @@ pub fn generate(
                     ));
                 }
 
-                let r = thumbnail::make(&j.full_path, &out, cache::THUMB_PX, cache::THUMB_QUALITY);
+                // 영상은 QuickLook이 대표 프레임을 준다. 그 뒤는 같은 길이다.
+                let r = if j.video {
+                    crate::media::video::thumbnail(
+                        &j.full_path,
+                        &out,
+                        cache::THUMB_PX,
+                        cache::THUMB_QUALITY,
+                    )
+                } else {
+                    thumbnail::make(&j.full_path, &out, cache::THUMB_PX, cache::THUMB_QUALITY)
+                };
                 let n = counter.fetch_add(1, Ordering::Relaxed);
                 let row = match r {
                     Ok(sz) => {

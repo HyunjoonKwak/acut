@@ -5,3 +5,4 @@ pub mod cache;
 pub mod exif;
 pub mod taken_at;
 pub mod thumbnail;
+pub mod video;

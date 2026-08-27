@@ -1024,6 +1024,11 @@ export default function App() {
                                 {r.kind === 1 ? "영상" : "…"}
                               </div>
                             )}
+                            {r.kind === 1 && url && (
+                              <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-[#EAEFEF]">
+                                ▶
+                              </span>
+                            )}
                             {r.kind === 2 && (
                               <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-[#F0B429]">
                                 RAW

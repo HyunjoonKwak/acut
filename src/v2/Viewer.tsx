@@ -16,6 +16,7 @@ type Detail = {
   aperture: number | null;
   shutter: string | null;
   focalMm: number | null;
+  durationMs: number | null;
   rating: number;
   cullingFlag: number;
   favorite: boolean;
@@ -33,6 +34,16 @@ const fmtBytes = (n: number) => {
     i++;
   }
   return `${i === 0 ? v : v.toFixed(1)} ${u[i]}`;
+};
+/** 12345678 → `2:03` */
+const fmtDuration = (ms: number) => {
+  const t = Math.round(ms / 1000);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = t % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+    : `${m}:${String(sec).padStart(2, "0")}`;
 };
 const fmtDateTime = (ts: number) =>
   new Date(ts * 1000).toLocaleString("ko-KR", {
@@ -208,21 +219,13 @@ export default function Viewer({
           className={`flex-1 relative min-w-0 ${zoom ? "overflow-auto" : "overflow-hidden flex items-center justify-center"}`}
           onClick={() => setZoom((z) => !z)}
         >
-          {loading && !isVideo && (
+          {loading && (
             <div className="absolute inset-0 flex items-center justify-center text-[#4E5A5C] text-[13px] pointer-events-none">
               불러오는 중…
             </div>
           )}
-          {/* 영상은 아직 ImageIO로 한 장을 뽑지 못한다 — AVFoundation이 붙기 전까지는 안내만 */}
-          {isVideo ? (
-            <div className="flex flex-col items-center gap-2 text-[#5F6C6E] text-[13px]">
-              <span className="text-3xl">▶</span>
-              영상은 아직 크게 볼 수 없습니다
-              <span className="text-[11.5px] text-[#4E5A5C]">
-                {detail?.name}
-              </span>
-            </div>
-          ) : failed ? (
+          {/* 영상도 QuickLook이 대표 프레임을 준다. 재생은 아직 못 한다. */}
+          {failed ? (
             <div className="flex flex-col items-center gap-2 text-[#5F6C6E] text-[13px]">
               읽을 수 없는 파일입니다
               <span className="text-[11.5px] text-[#4E5A5C]">
@@ -244,6 +247,14 @@ export default function Viewer({
               }
               style={{ opacity: loading ? 0 : 1, transition: "opacity .12s" }}
             />
+          )}
+
+          {/* 영상임을 알린다 — 정지 프레임이라 사진과 구분이 안 된다 */}
+          {isVideo && !failed && !loading && (
+            <span className="absolute bottom-4 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/60 text-[#EAEFEF] text-[12px] pointer-events-none">
+              ▶ 영상
+              {detail?.durationMs ? ` · ${fmtDuration(detail.durationMs)}` : ""}
+            </span>
           )}
 
           {/* 좌우 */}
@@ -289,6 +300,9 @@ export default function Viewer({
               }
             />
             <Row k="용량" v={fmtBytes(detail.size)} />
+            {detail.durationMs ? (
+              <Row k="길이" v={fmtDuration(detail.durationMs)} />
+            ) : null}
             <Row k="폴더" v={detail.folder || "/"} />
 
             {(detail.camModel || detail.lens) && (

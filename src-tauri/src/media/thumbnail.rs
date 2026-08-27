@@ -21,7 +21,7 @@ use core_foundation::string::CFString;
 use core_foundation::url::CFURL;
 use std::path::Path;
 
-mod ffi {
+pub(crate) mod ffi {
     use core_foundation::base::CFTypeRef;
     use core_foundation::dictionary::CFDictionaryRef;
     use core_foundation::string::CFStringRef;
@@ -216,6 +216,18 @@ pub fn make(
         }
     };
 
+    write_jpeg(image, out, quality)?;
+    Ok(size)
+}
+
+/// CGImage 하나를 JPEG 파일로 쓴다.
+///
+/// 사진(ImageIO)과 영상 프레임(QuickLook)이 같은 길을 쓴다. 어느 쪽이든
+/// 결국 CGImage 하나이므로 저장 코드를 둘로 둘 이유가 없다.
+pub(crate) fn write_jpeg(image: ffi::CGImageRef, out: &Path, quality: f64) -> Result<()> {
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let out_url = CFURL::from_path(out, false).ok_or(ThumbError::BadPath)?;
     let jpeg = CFString::new("public.jpeg");
     let dest = unsafe {
@@ -243,7 +255,7 @@ pub fn make(
             return Err(ThumbError::WriteFailed);
         }
     }
-    Ok(size)
+    Ok(())
 }
 
 /// 이 파일을 ImageIO가 실제로 디코딩할 수 있는지 확인한다.

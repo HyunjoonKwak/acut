@@ -124,25 +124,39 @@ pub fn scan_folder(
                     return None; // 바뀐 게 없다
                 }
             }
-            let meta = if f.kind == Kind::Video {
-                // 영상은 ImageIO 대상이 아니다. 나중에 AVFoundation으로.
-                None
+            // 영상은 ImageIO가 못 읽는다. Spotlight에서 촬영 시각·해상도를 가져온다.
+            // probe는 한 번만 부른다 — 두 번 부르면 스캔이 두 배로 느려진다.
+            let (m, duration_ms) = if f.kind == Kind::Video {
+                let v = crate::media::video::probe(&f.full_path);
+                (
+                    exif::Meta {
+                        taken_at: v.taken_at,
+                        width: v.width.map(|x| x as u32),
+                        height: v.height.map(|x| x as u32),
+                        ..Default::default()
+                    },
+                    // 0은 "읽어 봤지만 없더라"는 뜻이다. NULL은 "아직 안 읽었다".
+                    // 이 구분이 없으면 Spotlight가 모르는 영상을 스캔할 때마다
+                    // 다시 뒤진다 (실측 1,357개 × 26개/초 ≈ 52초).
+                    Some(v.duration_ms.unwrap_or(0)),
+                )
             } else {
-                exif::read(&f.full_path)
+                (exif::read(&f.full_path).unwrap_or_default(), None)
             };
-            let m = meta.unwrap_or_default();
+            // 영상의 taken_at_source도 0(exif)으로 남는다. 파일 안에 박힌
+            // 메타데이터라는 뜻이라 의미가 같다 — 출처가 EXIF가 아니라 컨테이너일 뿐.
             let (ts, src) = taken_at::resolve(m.taken_at, &f.name, f.mtime, f.birthtime, now);
 
             let n = counter.fetch_add(1, Ordering::Relaxed);
             if n % 500 == 0 {
                 on_progress(&progress.lock().unwrap().clone());
             }
-            Some((f, m, ts, src))
+            Some((f, m, ts, src, duration_ms))
         })
         .collect();
 
     // 폴더를 먼저 만들고(부모→자식 순서), 그 다음 파일을 넣는다.
-    let mut dirs: Vec<&String> = rows.iter().map(|(f, _, _, _)| &f.rel_dir).collect();
+    let mut dirs: Vec<&String> = rows.iter().map(|(f, _, _, _, _)| &f.rel_dir).collect();
     dirs.sort();
     dirs.dedup();
 
@@ -163,20 +177,21 @@ pub fn scan_folder(
 
         let mut ins = tx.prepare(
             "INSERT INTO files(folder_id,name,ext,size,kind,taken_at,taken_at_source,
-                created_at,modified_at,width,height,orientation,
+                created_at,modified_at,width,height,orientation,duration_ms,
                 cam_make,cam_model,lens,iso,aperture,shutter,focal_mm,
                 gps_lat,gps_lon,gps_alt,inode,scanned_at)
              VALUES((SELECT id FROM folders WHERE volume_uuid=?1 AND rel_path=?2),
-                ?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,
+                ?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?25,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,
                 strftime('%s','now'))
              ON CONFLICT(folder_id,name) DO UPDATE SET
                 size=excluded.size, taken_at=excluded.taken_at,
                 taken_at_source=excluded.taken_at_source,
                 modified_at=excluded.modified_at, width=excluded.width,
-                height=excluded.height, scanned_at=excluded.scanned_at",
+                height=excluded.height, duration_ms=excluded.duration_ms,
+                scanned_at=excluded.scanned_at",
         )?;
 
-        for (f, m, ts, src) in &rows {
+        for (f, m, ts, src, duration_ms) in &rows {
             let r = ins.execute(rusqlite::params![
                 vol.uuid,
                 f.rel_dir,
@@ -204,6 +219,7 @@ pub fn scan_folder(
                 m.gps_lon,
                 m.gps_alt,
                 f.inode as i64,
+                duration_ms,
             ]);
             let mut p = progress.lock().unwrap();
             match r {
@@ -261,9 +277,12 @@ fn load_known(
 ) -> Result<std::collections::HashMap<(String, String), (i64, i64)>> {
     let map = db.read(|c| {
         let mut st = c.prepare(
+            // 영상인데 duration_ms가 NULL이면 아직 메타데이터를 안 읽은 것이다.
+            // 크기·수정시각이 그대로여도 한 번은 다시 봐야 한다.
             "SELECT fo.rel_path, fi.name, fi.size, COALESCE(fi.modified_at,0)
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
-             WHERE fo.library_id = ?1",
+             WHERE fo.library_id = ?1
+               AND NOT (fi.kind = 1 AND fi.duration_ms IS NULL)",
         )?;
         let rows = st.query_map([library_id], |r| {
             Ok((
@@ -342,6 +361,32 @@ fn now_secs() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    /// 영상 메타데이터를 아직 안 읽었으면 다시 스캔 대상이 되어야 한다.
+    /// 안 그러면 이미 들어 있는 2,828개는 영영 길이도 촬영일도 못 얻는다.
+    #[test]
+    fn videos_without_metadata_are_rescanned_once() {
+        use super::*;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.jpg"), b"x".repeat(50)).unwrap();
+        std::fs::write(dir.path().join("v.mp4"), b"y".repeat(50)).unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+
+        let lib: i64 = db
+            .read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0)))
+            .unwrap();
+        // 스캔이 끝나면 영상은 0(=읽어 봤지만 없음)이 찍혀 다시 대상이 되지 않는다
+        let known = load_known(&db, lib).unwrap();
+        assert_eq!(known.len(), 2, "둘 다 아는 파일이어야 한다");
+
+        // 구버전에서 넘어온 것처럼 NULL로 되돌려 본다
+        db.write(|c| c.execute("UPDATE files SET duration_ms=NULL WHERE kind=1", []))
+            .unwrap();
+        let known = load_known(&db, lib).unwrap();
+        assert_eq!(known.len(), 1, "영상은 다시 읽을 대상이 된다");
+    }
+
+
     use super::*;
 
     #[test]

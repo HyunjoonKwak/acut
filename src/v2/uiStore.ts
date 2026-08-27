@@ -25,6 +25,10 @@ type Store = {
   menuFor: number | null;
   /** 이름을 바꾸는 중인 사진 */
   renaming: number | null;
+  /** 파인더에서 끌어다 놓은 것들 — 가져오기 상자의 시작점 */
+  dropped: string[];
+  /** 창 위에 무언가를 끌고 있는 중 */
+  dragging: boolean;
   set: (p: Partial<Omit<Store, "set">>) => void;
 };
 
@@ -40,6 +44,8 @@ export const useUi = create<Store>()((set) => ({
   ctxIds: [],
   menuFor: null,
   renaming: null,
+  dropped: [],
+  dragging: false,
   set: (p) => set(p),
 }));
 

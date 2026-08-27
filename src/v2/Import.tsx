@@ -40,17 +40,21 @@ type Library = { id: number; name: string; online: boolean };
 export default function Import({
   libs,
   libId,
+  initialSources = [],
   onDone,
   onClose,
 }: {
   libs: Library[];
   /** 지금 보고 있는 라이브러리. 들어갈 곳의 첫 후보다. */
   libId: number | null;
+  /** 파인더에서 끌어다 놓은 것들 — 있으면 고르기 없이 바로 센다 */
+  initialSources?: string[];
   onDone: () => void;
   onClose: () => void;
 }) {
   const usable = libs.filter((l) => l.online);
-  const [source, setSource] = useState<string | null>(null);
+  /// 가져올 곳들 — 폴더 하나이거나, 끌어다 놓은 파일·폴더 여럿
+  const [sources, setSources] = useState<string[]>(initialSources);
   const [target, setTarget] = useState<number | null>(
     libId ?? usable[0]?.id ?? null,
   );
@@ -60,14 +64,14 @@ export default function Import({
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState("");
 
-  const look = useCallback(async (src: string, lib: number) => {
+  const look = useCallback(async (src: string[], lib: number) => {
     setLooking(true);
     setPreview(null);
     setError("");
     try {
       setPreview(
         await invoke<Preview>("import_preview", {
-          source: src,
+          sources: src,
           libraryId: lib,
         }),
       );
@@ -81,14 +85,13 @@ export default function Import({
   const choose = async () => {
     const picked = await openDialog({ directory: true, multiple: false });
     if (typeof picked !== "string") return;
-    setSource(picked);
-    if (target !== null) look(picked, target);
+    setSources([picked]);
   };
 
   // 들어갈 곳을 바꾸면 겹치는 것의 수가 달라진다 — 다시 센다
   useEffect(() => {
-    if (source && target !== null) look(source, target);
-  }, [source, target, look]);
+    if (sources.length > 0 && target !== null) look(sources, target);
+  }, [sources, target, look]);
 
   useEffect(() => {
     const un = [
@@ -105,12 +108,12 @@ export default function Import({
   }, [onDone]);
 
   const run = async () => {
-    if (!source || target === null) return;
+    if (sources.length === 0 || target === null) return;
     setReport(null);
     setError("");
     setProgress({ found: 0, copied: 0, skipped: 0, failed: 0, current: "" });
     try {
-      await invoke("import_run", { source, libraryId: target });
+      await invoke("import_run", { sources, libraryId: target });
     } catch (e) {
       setError(String(e));
       setProgress(null);
@@ -133,8 +136,19 @@ export default function Import({
         <Label>어디서</Label>
         <div className="flex items-center gap-2">
           <div className="flex-1 min-w-0 h-control px-2 rounded-md bg-canvas ring-1 ring-line flex items-center">
-            <span className="text-[12px] truncate" title={source ?? undefined}>
-              {source ?? <span className="text-fg-faint">폴더를 고르세요</span>}
+            <span
+              className="text-[12px] truncate"
+              title={sources.join("\n") || undefined}
+            >
+              {sources.length === 0 ? (
+                <span className="text-fg-faint">
+                  폴더를 고르거나 창에 끌어다 놓으세요
+                </span>
+              ) : sources.length === 1 ? (
+                sources[0]
+              ) : (
+                `${sources.length}개 — ${sources[0].split("/").pop()} 외`
+              )}
             </span>
           </div>
           <Btn onClick={choose} disabled={running}>
@@ -271,7 +285,10 @@ export default function Import({
             <Btn
               tone="accent"
               disabled={
-                running || !source || target === null || !preview?.files
+                running ||
+                sources.length === 0 ||
+                target === null ||
+                !preview?.files
               }
               onClick={run}
             >

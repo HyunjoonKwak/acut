@@ -74,6 +74,7 @@ test("갈래를 셀 때는 그 갈래 조건들을 뺀다", () => {
     kind: 1,
     year: "2024",
     month: "2024-08",
+    day: "2024-08-27",
     camera: "X",
     min_rating: 3,
     tag_id: 7,

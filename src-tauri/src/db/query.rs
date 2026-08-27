@@ -138,6 +138,8 @@ pub struct Filter {
     pub year: Option<String>,
     /// 사이드바에서 고른 달 (`2024-08`)
     pub month: Option<String>,
+    /// 사이드바에서 고른 날 (`2024-08-27`)
+    pub day: Option<String>,
     /// 사이드바에서 고른 카메라 모델
     pub camera: Option<String>,
     /// 사이드바에서 고른 렌즈. 빈 문자열이면 "렌즈 정보 없음".
@@ -247,6 +249,10 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     if let Some(m) = f.month.as_deref().filter(|s| !s.is_empty()) {
         w.push("strftime('%Y-%m', fi.taken_at,'unixepoch','localtime') = ?".into());
         p.push(Box::new(m.to_string()));
+    }
+    if let Some(d) = f.day.as_deref().filter(|s| !s.is_empty()) {
+        w.push("strftime('%Y-%m-%d', fi.taken_at,'unixepoch','localtime') = ?".into());
+        p.push(Box::new(d.to_string()));
     }
     if let Some(cam) = f.camera.as_ref() {
         // 빈 문자열은 "카메라 정보 없음"을 뜻한다
@@ -529,6 +535,8 @@ pub struct Facet {
 #[serde(rename_all = "snake_case")]
 pub enum FacetKind {
     Year,
+    /// 하루 단위. 달력이 한 달을 펼쳤을 때 쓴다 — 필터에 month를 함께 건다.
+    Day,
     Camera,
     Lens,
     Rating,
@@ -549,6 +557,7 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
     };
     let expr = match kind {
         FacetKind::Year => "strftime('%Y', fi.taken_at,'unixepoch','localtime')",
+        FacetKind::Day => "strftime('%Y-%m-%d', fi.taken_at,'unixepoch','localtime')",
         FacetKind::Camera => "COALESCE(NULLIF(fi.cam_model,''),'')",
         FacetKind::Lens => "COALESCE(NULLIF(fi.lens,''),'')",
         FacetKind::Rating => "CAST(fi.rating AS TEXT)",
@@ -563,7 +572,7 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
     };
     let order = match kind {
         // 연도·평점은 값 순서로, 카메라는 많이 쓴 것부터
-        FacetKind::Year | FacetKind::Rating => "v DESC",
+        FacetKind::Year | FacetKind::Day | FacetKind::Rating => "v DESC",
         FacetKind::Place => "n DESC, v",
         _ => "n DESC, v",
     };
@@ -583,6 +592,13 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
         .map(|(value, count)| {
             let label = match kind {
                 FacetKind::Year => format!("{value}년"),
+                // `2024-08-27` → `27일`. 어느 달인지는 위에 펼쳐진 줄이 말한다.
+                FacetKind::Day => value
+                    .rsplit('-')
+                    .next()
+                    .and_then(|d| d.parse::<u32>().ok())
+                    .map(|d| format!("{d}일"))
+                    .unwrap_or_else(|| value.clone()),
                 FacetKind::Rating => match value.as_str() {
                     "0" => "평점 없음".into(),
                     n => "★".repeat(n.parse::<usize>().unwrap_or(0)),
@@ -1282,6 +1298,26 @@ mod tests {
             .unwrap()
             .0;
             assert_eq!(n, f.count, "{} 되돌리기", f.label);
+        }
+    }
+
+    #[test]
+    fn day_facet_and_filter_round_trip() {
+        let (_d, db) = seeded();
+        // 한 달 안에서 날짜별로 센다 — 갈래 값을 필터로 되돌리면 같은 수
+        let month = facets(&db, &Filter::default(), FacetKind::Year).unwrap();
+        assert!(!month.is_empty());
+        let fs = facets(&db, &Filter::default(), FacetKind::Day).unwrap();
+        assert!(fs.iter().all(|f| f.label.ends_with('일')), "{fs:?}");
+        for f in &fs {
+            let n = summary(&db, &Filter { day: Some(f.value.clone()), ..Default::default() })
+                .unwrap()
+                .0;
+            assert_eq!(n, f.count, "{} 되돌리기", f.value);
+        }
+        // 최근이 위
+        for w in fs.windows(2) {
+            assert!(w[0].value >= w[1].value);
         }
     }
 

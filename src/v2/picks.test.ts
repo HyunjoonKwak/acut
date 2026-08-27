@@ -17,6 +17,7 @@ test("저장한 조건이 하나도 안 빠지고 돌아온다", () => {
     name_like: "IMG",
     year: "2024",
     month: "2024-08",
+    day: "2024-08-27",
     camera: "ILCE-7M4",
     lens: "FE 24-70",
     tag_id: 7,

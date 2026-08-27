@@ -682,14 +682,25 @@ mod tests {
 #[tauri::command]
 pub fn import_preview(
     state: State<'_, AppState>,
-    source: String,
+    sources: Vec<String>,
     library_id: i64,
 ) -> Result<crate::ops::import::Preview, String> {
-    let dir = PathBuf::from(&source);
-    if !dir.is_dir() {
-        return Err(format!("폴더가 아닙니다: {source}"));
+    let paths = source_paths(&sources)?;
+    crate::ops::import::preview(&state.db, &paths, library_id).map_err(err)
+}
+
+/// 끌어다 놓은 것들 — 파일·폴더 섞여 온다. 없는 경로는 거절한다.
+fn source_paths(sources: &[String]) -> Result<Vec<PathBuf>, String> {
+    if sources.is_empty() {
+        return Err("가져올 것이 없습니다".into());
     }
-    crate::ops::import::preview(&state.db, &dir, library_id).map_err(err)
+    sources
+        .iter()
+        .map(|s| {
+            let p = PathBuf::from(s);
+            if p.exists() { Ok(p) } else { Err(format!("없는 경로입니다: {s}")) }
+        })
+        .collect()
 }
 
 /// 실제로 가져온다. 진행 상황은 `import-progress`로 흘린다.
@@ -698,12 +709,9 @@ pub fn import_preview(
 /// 몇 장 들이는 데 몇 분이 걸린다. 스캐너는 이미 아는 파일을 건너뛰므로
 /// 새로 들어온 것만 읽는다.
 #[tauri::command]
-pub fn import_run(app: AppHandle, source: String, library_id: i64) -> Result<(), String> {
+pub fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let dir = PathBuf::from(&source);
-    if !dir.is_dir() {
-        return Err(format!("폴더가 아닙니다: {source}"));
-    }
+    let paths = source_paths(&sources)?;
     let lib = crate::db::libraries::get(&state.db, library_id)
         .map_err(err)?
         .ok_or("등록되지 않은 라이브러리입니다")?;
@@ -734,7 +742,7 @@ pub fn import_run(app: AppHandle, source: String, library_id: i64) -> Result<(),
             .unwrap_or(0);
 
         let handle = app.clone();
-        let r = crate::ops::import::copy_in(&db, &dir, library_id, |p| {
+        let r = crate::ops::import::copy_in(&db, &paths, library_id, |p| {
             let _ = handle.emit("import-progress", p);
         });
         let (mut rep, dirs) = match r {

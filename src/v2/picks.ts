@@ -20,6 +20,8 @@ export type Picks = {
   year: string | null;
   /** 사이드바에서 고른 달 (`2024-08`) */
   month: string | null;
+  /** 사이드바에서 고른 날 (`2024-08-27`) */
+  day: string | null;
   /** 사이드바에서 고른 카메라 모델 */
   camera: string | null;
   /** 사이드바에서 고른 렌즈. 빈 문자열이면 «렌즈 없음» */
@@ -38,6 +40,7 @@ export const EMPTY: Picks = {
   name_like: null,
   year: null,
   month: null,
+  day: null,
   camera: null,
   lens: null,
   tag_id: null,
@@ -58,6 +61,7 @@ const TYPES: Record<keyof Picks, "number" | "string" | "boolean"> = {
   name_like: "string",
   year: "string",
   month: "string",
+  day: "string",
   camera: "string",
   lens: "string",
   tag_id: "number",

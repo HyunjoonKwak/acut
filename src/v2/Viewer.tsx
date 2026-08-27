@@ -68,19 +68,58 @@ export default function Viewer({
   // 되돌릴 일이 없다.
   const [loadedId, setLoadedId] = useState<number | null>(null);
   const [failedId, setFailedId] = useState<number | null>(null);
-  const [zoomId, setZoomId] = useState<number | null>(null);
   const loading = loadedId !== id && failedId !== id;
   const failed = failedId === id;
-  const zoom = zoomId === id;
-  const setZoom = useCallback(
-    (v: boolean | ((z: boolean) => boolean)) =>
-      setZoomId((cur) => {
-        const now = cur === id;
-        const next = typeof v === "function" ? v(now) : v;
-        return next ? id : null;
-      }),
+  /// 확대 — 배율과 보는 자리(0–1). 어느 사진 것인지와 함께 두어 넘기면 1로.
+  const [view, setView] = useState<{
+    id: number;
+    scale: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const scale = view?.id === id ? view.scale : 1;
+  const origin =
+    view?.id === id ? { x: view.x, y: view.y } : { x: 0.5, y: 0.5 };
+  const zoom = scale > 1;
+  const resetZoom = useCallback(() => setView(null), []);
+  const zoomTo = useCallback(
+    (s: number, x: number, y: number) =>
+      setView(s <= 1 ? null : { id, scale: Math.min(8, s), x, y }),
     [id],
   );
+  /// 커서 자리를 기준으로 휠 확대. 나란히 보기와 같은 손맛.
+  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (isVideo) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const fx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    const fy = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    zoomTo(scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15), fx, fy);
+  };
+  /// 확대한 상태에서 끌면 옮겨 다닌다
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.buttons !== 1 || !zoom) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    setView((v) =>
+      v && v.id === id
+        ? {
+            ...v,
+            x: Math.min(1, Math.max(0, v.x - e.movementX / r.width / v.scale)),
+            y: Math.min(1, Math.max(0, v.y - e.movementY / r.height / v.scale)),
+          }
+        : v,
+    );
+  };
+
+  /// 슬라이드쇼 — 3초마다 다음 장. 끝에 닿거나 아무 키나 누르면 멈춘다.
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    if (!playing) return;
+    const t = setInterval(() => {
+      if (index + 1 < ids.length) onIndex(index + 1);
+      else setPlaying(false);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [playing, index, ids.length, onIndex]);
 
   useEffect(() => {
     if (id == null) return;
@@ -117,9 +156,15 @@ export default function Viewer({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // 슬라이드쇼는 무슨 키든 누르면 멈춘다 — S만 켜고 끄는 스위치
+      if (e.key === "s") {
+        setPlaying((p) => !p);
+        return;
+      }
+      setPlaying(false);
       switch (e.key) {
         case "Escape":
-          if (zoom) setZoom(false);
+          if (zoom) resetZoom();
           else onClose();
           break;
         case "ArrowRight":
@@ -137,7 +182,8 @@ export default function Viewer({
           if (v) {
             if (v.paused) v.play().catch(() => {});
             else v.pause();
-          } else setZoom((z) => !z);
+          } else if (zoom) resetZoom();
+          else zoomTo(2, 0.5, 0.5);
           break;
         }
         case "i":
@@ -165,7 +211,8 @@ export default function Viewer({
     step,
     onClose,
     zoom,
-    setZoom,
+    resetZoom,
+    zoomTo,
     mark,
     detail?.favorite,
     onToggleFullScreen,
@@ -212,6 +259,18 @@ export default function Viewer({
         )}
         {detail?.favorite && <span className="text-drop">♥</span>}
         <div className="flex-1" />
+        {zoom && (
+          <button onClick={resetZoom} className="text-fg-dim px-2 tabular-nums">
+            {scale.toFixed(1)}× 되돌리기
+          </button>
+        )}
+        <button
+          onClick={() => setPlaying((p) => !p)}
+          className={`px-2 ${playing ? "text-accent" : "text-fg-dim"}`}
+        >
+          {playing ? "멈춤" : "슬라이드쇼"}{" "}
+          <span className="text-[10px] font-mono">S</span>
+        </button>
         <button
           onClick={() => setShowInfo((s) => !s)}
           className="text-fg-dim px-2"
@@ -233,8 +292,19 @@ export default function Viewer({
       <div className="flex-1 flex min-h-0">
         {/* 사진 */}
         <div
-          className={`flex-1 relative min-w-0 ${zoom ? "overflow-auto" : "overflow-hidden flex items-center justify-center"}`}
-          onClick={() => !isVideo && setZoom((z) => !z)}
+          className="flex-1 relative min-w-0 overflow-hidden flex items-center justify-center touch-none"
+          onWheel={onWheel}
+          onPointerMove={onMove}
+          onClick={(e) => {
+            if (isVideo) return;
+            if (zoom) return resetZoom();
+            const r = e.currentTarget.getBoundingClientRect();
+            zoomTo(
+              2,
+              (e.clientX - r.left) / r.width,
+              (e.clientY - r.top) / r.height,
+            );
+          }}
         >
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center text-fg-faint text-[13px] pointer-events-none">
@@ -287,12 +357,16 @@ export default function Viewer({
               src={src}
               onLoad={() => setLoadedId(id)}
               onError={() => setFailedId(id)}
-              className={
-                zoom
-                  ? "max-w-none cursor-zoom-out"
-                  : "max-w-full max-h-full object-contain cursor-zoom-in"
-              }
-              style={{ opacity: loading ? 0 : 1, transition: "opacity .12s" }}
+              draggable={false}
+              className={`max-w-full max-h-full object-contain select-none ${
+                zoom ? "cursor-grab" : "cursor-zoom-in"
+              }`}
+              style={{
+                opacity: loading ? 0 : 1,
+                transform: `scale(${scale})`,
+                transformOrigin: `${origin.x * 100}% ${origin.y * 100}%`,
+                transition: "opacity .12s",
+              }}
             />
           )}
 
@@ -439,7 +513,8 @@ export default function Viewer({
               <b className="text-fg-mute">단축키</b>
               <br />← → 이동 · Space 확대 · 0–5 별점
               <br />P 남김 · X 제외 · F 즐겨찾기
-              <br />I 정보 · \ 전체화면
+              <br />I 정보 · \ 전체화면 · S 슬라이드쇼
+              <br />휠 확대 · 끌어서 이동
             </div>
           </aside>
         )}

@@ -96,12 +96,13 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// 가져올 곳을 훑는다. 하위 폴더까지 본다.
+/// 가져올 것들을 훑는다. 폴더는 하위까지, 파일은 그것만.
 ///
+/// 파인더에서 끌어다 놓으면 파일 몇 개나 폴더가 섞여 온다 — 둘 다 받는다.
 /// 라이브러리에 이미 있는 것은 (이름, 크기)로 가려낸다. 같은 카드를 두 번
 /// 꽂아도 같은 사진이 두 벌 들어가지 않게 하려는 것이다. 다른 사진인데
 /// 이름과 크기가 우연히 같을 확률은 실질적으로 없다.
-pub fn look(db: &Db, source: &Path, library_id: i64) -> Result<Vec<Candidate>> {
+pub fn look(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Vec<Candidate>> {
     let known: HashSet<(String, i64)> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.name, fi.size FROM files fi
@@ -113,7 +114,18 @@ pub fn look(db: &Db, source: &Path, library_id: i64) -> Result<Vec<Candidate>> {
     })?;
 
     let mut out = Vec::new();
-    walk(source, &mut out);
+    for src in sources {
+        if src.is_dir() {
+            walk(src, &mut out);
+        } else if src.is_file() {
+            if let Some(c) = candidate(src) {
+                out.push(c);
+            }
+        }
+    }
+    // 같은 파일을 두 번 끌어다 놓아도 한 번만
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out.dedup_by(|a, b| a.path == b.path);
 
     for c in &mut out {
         c.duplicate = known.contains(&(c.name.clone(), c.size as i64));
@@ -134,37 +146,47 @@ fn walk(dir: &Path, out: &mut Vec<Candidate>) {
             }
             continue;
         }
-        if !ft.is_file() || classify(&name).is_none() {
+        if !ft.is_file() {
             continue;
         }
-        // exFAT은 파일마다 `._`로 시작하는 곁가지를 만든다. 사진이 아니다.
-        if name.starts_with("._") {
-            continue;
+        if let Some(c) = candidate(&e.path()) {
+            out.push(c);
         }
-        let Ok(md) = e.metadata() else { continue };
-        let path = e.path();
-        let taken = crate::media::exif::read(&path)
-            .and_then(|m| m.taken_at)
-            .or_else(|| {
-                md.modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64)
-            })
-            .unwrap_or(0);
-        out.push(Candidate {
-            name,
-            size: md.len(),
-            day: to_day(taken),
-            duplicate: false,
-            path,
-        });
     }
 }
 
+/// 파일 하나를 후보로. 사진이 아니거나 곁가지면 None.
+fn candidate(path: &Path) -> Option<Candidate> {
+    let name = crate::scan::nfc(&path.file_name()?.to_string_lossy());
+    if classify(&name).is_none() {
+        return None;
+    }
+    // exFAT은 파일마다 `._`로 시작하는 곁가지를 만든다. 사진이 아니다.
+    if name.starts_with("._") {
+        return None;
+    }
+    let md = std::fs::metadata(path).ok()?;
+    let taken = crate::media::exif::read(path)
+        .and_then(|m| m.taken_at)
+        .or_else(|| {
+            md.modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+        })
+        .unwrap_or(0);
+    Some(Candidate {
+        name,
+        size: md.len(),
+        day: to_day(taken),
+        duplicate: false,
+        path: path.to_path_buf(),
+    })
+}
+
 /// 미리 보기 — 몇 장이 어느 날짜로 들어가는지.
-pub fn preview(db: &Db, source: &Path, library_id: i64) -> Result<Preview> {
-    let cands = look(db, source, library_id)?;
+pub fn preview(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Preview> {
+    let cands = look(db, sources, library_id)?;
     let mut days: Vec<String> = cands
         .iter()
         .filter(|c| !c.duplicate)
@@ -186,11 +208,11 @@ pub fn preview(db: &Db, source: &Path, library_id: i64) -> Result<Preview> {
 /// DB에 넣는 일은 하지 않는다 — 부르는 쪽이 그 폴더만 다시 스캔한다.
 pub fn copy_in(
     db: &Db,
-    source: &Path,
+    sources: &[PathBuf],
     library_id: i64,
     on_progress: impl Fn(&Progress),
 ) -> Result<(Report, Vec<PathBuf>)> {
-    let cands = look(db, source, library_id)?;
+    let cands = look(db, sources, library_id)?;
     let Some(lib) = libraries::get(db, library_id)? else {
         return Ok((
             Report {
@@ -210,7 +232,11 @@ pub fn copy_in(
         ));
     };
 
-    let batch_id = super::open_batch(db, "import", &format!("{} 가져오기", source.display()))?;
+    let label = match sources {
+        [one] => format!("{} 가져오기", one.display()),
+        many => format!("{}곳에서 가져오기", many.len()),
+    };
+    let batch_id = super::open_batch(db, "import", &label)?;
     let mut rep = Report { batch_id, ..Default::default() };
     let mut p = Progress { found: cands.len(), ..Default::default() };
     let mut dirs: Vec<PathBuf> = Vec::new();
@@ -343,7 +369,7 @@ mod tests {
         put(&src, "IMG_2.jpg", b"bb", 1_724_716_800);
         put(&src, "IMG_3.jpg", b"ccc", 1_709_164_800); // 2024-02-29
 
-        let (rep, dirs) = copy_in(&db, &src, lib, |_| {}).unwrap();
+        let (rep, dirs) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 3);
         assert_eq!(rep.failed, 0);
         assert_eq!(rep.bytes, 6);
@@ -361,7 +387,7 @@ mod tests {
     fn the_source_is_left_alone() {
         let (_d, db, src, lib) = setup();
         put(&src, "IMG_1.jpg", b"a", 1_724_716_800);
-        copy_in(&db, &src, lib, |_| {}).unwrap();
+        copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
         assert!(src.join("IMG_1.jpg").is_file(), "카드에 그대로 있어야 한다");
     }
 
@@ -387,7 +413,7 @@ mod tests {
         })
         .unwrap();
 
-        let (rep, dirs) = copy_in(&db, &src, lib, |_| {}).unwrap();
+        let (rep, dirs) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 0);
         assert_eq!(rep.skipped, 1);
         assert!(dirs.is_empty(), "건드린 폴더가 없어야 한다");
@@ -404,7 +430,7 @@ mod tests {
         put(&a, "IMG_1.jpg", b"first", 1_724_716_800);
         put(&b, "IMG_1.jpg", b"second!!", 1_724_716_800);
 
-        let (rep, _) = copy_in(&db, &src, lib, |_| {}).unwrap();
+        let (rep, _) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 2);
 
         let day = libraries::get(&db, lib)
@@ -430,7 +456,7 @@ mod tests {
         put(&src, "메모.txt", b"x", 1_724_716_800);
         put(&src, "._IMG_1.jpg", b"y", 1_724_716_800);
 
-        let (rep, _) = copy_in(&db, &src, lib, |_| {}).unwrap();
+        let (rep, _) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 1);
     }
 
@@ -442,7 +468,7 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
         put(&deep, "IMG_1.jpg", b"a", 1_724_716_800);
 
-        let (rep, _) = copy_in(&db, &src, lib, |_| {}).unwrap();
+        let (rep, _) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 1);
     }
 
@@ -452,7 +478,7 @@ mod tests {
         put(&src, "IMG_1.jpg", b"ab", 1_724_716_800);
         put(&src, "IMG_2.jpg", b"cd", 1_709_164_800);
 
-        let p = preview(&db, &src, lib).unwrap();
+        let p = preview(&db, &[src.clone()], lib).unwrap();
         assert_eq!(p.files, 2);
         assert_eq!(p.bytes, 4);
         assert_eq!(p.duplicates, 0);
@@ -460,10 +486,29 @@ mod tests {
         assert_eq!(p.days, vec!["2024-02-29", "2024-08-27"]);
     }
 
+    /// 파인더에서 파일 하나만 끌어다 놓으면 그것만 들어온다 — 옆의 것은 아니다.
+    #[test]
+    fn a_dropped_file_brings_only_itself() {
+        let (_d, db, src, lib) = setup();
+        put(&src, "IMG_1.jpg", b"a", 1_724_716_800);
+        put(&src, "IMG_2.jpg", b"b", 1_724_716_800);
+        let (rep, _) = copy_in(&db, &[src.join("IMG_1.jpg")], lib, |_| {}).unwrap();
+        assert_eq!(rep.copied, 1);
+    }
+
+    /// 같은 것을 두 번 놓아도(파일 + 그 폴더) 한 번만
+    #[test]
+    fn overlapping_sources_are_deduplicated() {
+        let (_d, db, src, lib) = setup();
+        put(&src, "IMG_1.jpg", b"a", 1_724_716_800);
+        let (rep, _) = copy_in(&db, &[src.join("IMG_1.jpg"), src.clone()], lib, |_| {}).unwrap();
+        assert_eq!(rep.copied, 1);
+    }
+
     #[test]
     fn an_empty_card_is_not_an_error() {
         let (_d, db, src, lib) = setup();
-        let (rep, dirs) = copy_in(&db, &src, lib, |_| {}).unwrap();
+        let (rep, dirs) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 0);
         assert_eq!(rep.failed, 0);
         assert!(dirs.is_empty());

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import Compare from "./Compare";
 import ContextMenu from "./ContextMenu";
 import Cull from "./Cull";
@@ -81,6 +82,30 @@ export default function App() {
   useEffect(() => {
     useData.getState().loadFolders();
   }, [libs]);
+  // 파인더에서 끌어다 놓기 — 놓으면 가져오기 상자가 그 경로들로 뜬다.
+  // Tauri가 OS 드롭을 가로채 경로를 준다 (브라우저 DataTransfer가 아니다).
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    getCurrentWebview()
+      .onDragDropEvent((e) => {
+        const ui = useUi.getState();
+        if (e.payload.type === "enter" || e.payload.type === "over") {
+          if (!ui.dragging) ui.set({ dragging: true });
+        } else if (e.payload.type === "leave") {
+          ui.set({ dragging: false });
+        } else if (e.payload.type === "drop") {
+          ui.set({
+            dragging: false,
+            dropped: e.payload.paths,
+            importing: true,
+          });
+        }
+      })
+      .then((f) => (un = f))
+      .catch(() => {});
+    return () => un?.();
+  }, []);
+
   // 폴더 감시 — 라이브러리 목록이나 설정이 바뀔 때 지금 목록에 맞춘다
   useEffect(() => {
     if (libs.length === 0) return;
@@ -314,9 +339,17 @@ export default function App() {
         <Import
           libs={libs}
           libId={libId}
+          initialSources={ui.dropped}
           onDone={ops.after}
-          onClose={() => ui.set({ importing: false })}
+          onClose={() => ui.set({ importing: false, dropped: [] })}
         />
+      )}
+      {ui.dragging && (
+        <div className="fixed inset-0 z-[70] pointer-events-none flex items-center justify-center bg-accent/10 ring-4 ring-inset ring-accent">
+          <div className="px-5 py-3 rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl text-[14px] text-fg">
+            놓으면 라이브러리로 가져옵니다 — 원본은 그대로 둡니다
+          </div>
+        </div>
       )}
       {ui.comparing && (
         <Compare

@@ -49,9 +49,12 @@ export function chips(
   if (p.name_like) add("name_like", `"${p.name_like}"`);
   if (p.tag_id !== null) add("tag_id", tagName(p.tag_id) ?? `태그 ${p.tag_id}`);
   if (p.place !== null) add("place", formatPlace(p.place));
-  // 달을 고르면 연도는 그 안에 이미 들어 있다 — 둘 다 띄우면 겹쳐 보인다
+  // 날을 고르면 달·연도는 그 안에 이미 들어 있다 — 셋 다 띄우면 겹쳐 보인다
   // `2024-08` → `2024년 8월`. 사이드바 달력이 「8월」로 쓰니 여기도 맞춘다.
-  if (p.month) {
+  if (p.day) {
+    const [y, m, d] = p.day.split("-");
+    add("day", `${y}년 ${Number(m)}월 ${Number(d)}일`);
+  } else if (p.month) {
     const [y, m] = p.month.split("-");
     add("month", `${y}년 ${Number(m)}월`);
   } else if (p.year) add("year", `${p.year}년`);

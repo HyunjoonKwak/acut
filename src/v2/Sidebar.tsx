@@ -152,7 +152,9 @@ export default function Sidebar({
               buckets={calBuckets}
               year={picks.year}
               month={picks.month}
-              onPick={(y, m) => patchPicks({ year: y, month: m })}
+              day={picks.day}
+              facetFilter={facetFilter}
+              onPick={(y, m, d) => patchPicks({ year: y, month: m, day: d })}
             />
           )}
           {source === "camera" && (

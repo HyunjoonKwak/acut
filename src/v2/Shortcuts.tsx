@@ -16,7 +16,9 @@ const GRID: Row[] = [
 
 const VIEWER: Row[] = [
   { keys: ["←", "→"], what: "앞뒤 사진" },
-  { keys: ["Space"], what: "확대 / 되돌리기" },
+  { keys: ["Space"], what: "확대 / 되돌리기 · 영상은 재생" },
+  { keys: ["휠"], what: "커서 자리로 확대 · 끌어서 이동" },
+  { keys: ["S"], what: "슬라이드쇼 (아무 키나 누르면 멈춤)" },
   { keys: ["I"], what: "정보 켜고 끄기" },
   { keys: ["\\"], what: "전체화면" },
   { keys: ["P", "X", "F"], what: "남김 · 제외 · 즐겨찾기" },

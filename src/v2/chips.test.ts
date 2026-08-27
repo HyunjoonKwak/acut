@@ -24,6 +24,19 @@ test("달을 고르면 연도는 따로 안 뜬다", () => {
   assert.deepEqual(labels({ year: "2024" }), ["2024년"]);
 });
 
+test("날을 고르면 하나만 뜨고, 떼면 달로 돌아간다", () => {
+  assert.deepEqual(
+    labels({ year: "2024", month: "2024-08", day: "2024-08-27" }),
+    ["2024년 8월 27일"],
+  );
+  const p = without(
+    { ...EMPTY, year: "2024", month: "2024-08", day: "2024-08-27" },
+    "day",
+  );
+  assert.equal(p.day, null);
+  assert.equal(p.month, "2024-08", "달은 남는다");
+});
+
 test("태그는 이름으로 뜬다", () => {
   const byId = (id: number) => (id === 3 ? "가족" : undefined);
   assert.deepEqual(
@@ -70,11 +83,16 @@ test("전부 떼면 EMPTY로 돌아온다", () => {
     name_like: "IMG",
     year: "2024",
     month: "2024-08",
+    day: "2024-08-27",
     camera: "ILCE-7M4",
     lens: "FE 24-70",
     tag_id: 7,
     place: "37.5,126.9",
   };
-  for (const c of chips(p, none)) p = without(p, c.key);
+  // 날을 떼면 달이 드러나고, 달을 떼면 연도까지 떨어진다 — 사람이 ✕를
+  // 계속 누르는 것과 같다. 스무 번 안에 다 없어져야 한다.
+  for (let i = 0; i < 20 && chips(p, none).length > 0; i++) {
+    p = without(p, chips(p, none)[0].key);
+  }
   assert.equal(isEmpty(p), true, JSON.stringify(p));
 });

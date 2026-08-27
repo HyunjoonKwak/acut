@@ -16,6 +16,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(async () => null),
 }));
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }),
+}));
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn(async () => "0.0.0-test"),
 }));

@@ -99,6 +99,7 @@ export const facetOf = (f: Filter): Filter => ({
   ...f,
   year: null,
   month: null,
+  day: null,
   camera: null,
   lens: null,
   min_rating: null,

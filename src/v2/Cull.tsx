@@ -201,7 +201,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               key={k.id}
               onClick={() => setKind(k.id)}
               title={k.hint}
-              className={`h-7 px-3 rounded-md text-[12.5px] ${
+              className={`h-control px-3 rounded-md text-[12.5px] ${
                 kind === k.id
                   ? "bg-raised text-white ring-1 ring-line-strong"
                   : "text-fg-dim"
@@ -221,7 +221,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               await invoke("scan_cancel");
               setBusy("");
             }}
-            className="h-7 px-3 rounded-md text-[12.5px] text-drop ring-1 ring-drop"
+            className="h-control px-3 rounded-md text-[12.5px] text-drop ring-1 ring-drop"
           >
             멈추기
           </button>
@@ -231,7 +231,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               setBusy("찾는 중…");
               invoke("cull_scan").catch((e) => setBusy(String(e)));
             }}
-            className="h-7 px-3 rounded-md text-[12.5px] text-fg-dim ring-1 ring-line-strong"
+            className="h-control px-3 rounded-md text-[12.5px] text-fg-dim ring-1 ring-line-strong"
           >
             다시 찾기
           </button>
@@ -370,7 +370,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         <button
           onClick={apply}
           disabled={!cur}
-          className="h-8 px-4 rounded-lg bg-keep text-keep-fg font-semibold text-[13px] disabled:opacity-40 flex items-center gap-2"
+          className="h-control px-3.5 rounded-lg bg-keep text-keep-fg font-semibold text-[13px] disabled:opacity-40 flex items-center gap-2"
         >
           이대로 확정
           <span className="text-[10.5px] bg-black/20 px-1.5 py-0.5 rounded font-mono">
@@ -380,7 +380,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         <button
           onClick={skip}
           disabled={!cur}
-          className="h-8 px-4 rounded-lg text-fg-dim text-[13px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
+          className="h-control px-3.5 rounded-lg text-fg-dim text-[13px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
         >
           나중에
           <span className="text-[10.5px] bg-white/8 px-1.5 py-0.5 rounded font-mono">

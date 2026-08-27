@@ -100,7 +100,7 @@ export default function Organize({
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="h-8 px-2 rounded bg-raised text-[13px] text-fg ring-1 ring-line outline-none focus:ring-accent"
+              className="h-control px-2 rounded bg-raised text-[13px] text-fg ring-1 ring-line outline-none focus:ring-accent"
             />
           </label>
           <label className="flex-1 flex flex-col gap-1 min-w-0">
@@ -112,7 +112,7 @@ export default function Organize({
               autoFocus
               onChange={(e) => setTitle(e.target.value)}
               placeholder="예: 거제통영 가족여행"
-              className="h-8 px-2 rounded bg-raised text-[13px] text-fg placeholder:text-fg-faint ring-1 ring-line outline-none focus:ring-accent"
+              className="h-control px-2 rounded bg-raised text-[13px] text-fg placeholder:text-fg-faint ring-1 ring-line outline-none focus:ring-accent"
             />
           </label>
         </div>
@@ -160,13 +160,13 @@ export default function Organize({
           <button
             onClick={run}
             disabled={!date || busy}
-            className="h-8 px-4 rounded-lg bg-accent text-accent-fg font-semibold text-[13px] disabled:opacity-40"
+            className="h-control px-3.5 rounded-lg bg-accent text-accent-fg font-semibold text-[13px] disabled:opacity-40"
           >
             {busy ? "옮기는 중…" : "옮기기"}
           </button>
           <button
             onClick={onClose}
-            className="h-8 px-3 rounded-lg text-fg-dim text-[13px] ring-1 ring-line-strong"
+            className="h-control px-3 rounded-lg text-fg-dim text-[13px] ring-1 ring-line-strong"
           >
             취소
           </button>

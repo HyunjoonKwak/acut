@@ -1486,7 +1486,7 @@ export default function App() {
                 ? "옮겨 넣을 라이브러리를 왼쪽에서 고르세요"
                 : undefined
             }
-            className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
+            className="h-control px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
           >
             정리
           </button>
@@ -1501,14 +1501,14 @@ export default function App() {
               runTrashOp("trash_files", { ids: [...picked] }, "치우는 중…");
               setPicked(new Set());
             }}
-            className="h-7 px-3 rounded-md text-drop ring-1 ring-drop text-[12.5px]"
+            className="h-control px-3 rounded-md text-drop ring-1 ring-drop text-[12.5px]"
           >
             휴지통으로
           </button>
           <div className="flex-1" />
           <button
             onClick={() => setPicked(new Set())}
-            className="h-7 px-2 rounded-md text-fg-dim text-[12.5px]"
+            className="h-control px-2 rounded-md text-fg-dim text-[12.5px]"
           >
             선택 해제 <span className="text-[10px] font-mono">Esc</span>
           </button>
@@ -1642,7 +1642,7 @@ function PanelBtn({
   return (
     <button
       onClick={onClick}
-      className="h-7 px-2.5 rounded-md text-[12.5px] text-fg-dim ring-1 ring-line-strong hover:text-white"
+      className="h-control px-2.5 rounded-md text-[12.5px] text-fg-dim ring-1 ring-line-strong hover:text-white"
     >
       {children}
       {hint && (

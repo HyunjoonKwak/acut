@@ -71,6 +71,7 @@ test("전부 떼면 EMPTY로 돌아온다", () => {
     year: "2024",
     month: "2024-08",
     camera: "ILCE-7M4",
+    lens: "FE 24-70",
     tag_id: 7,
     place: "37.5,126.9",
   };

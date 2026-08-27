@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { fmtBytes, fmtDateTime, fmtDuration } from "./format";
 import TagEditor from "./TagEditor";
 import Histogram from "./Histogram";
+import RenameDialog from "./RenameDialog";
+import CommentBox from "./CommentBox";
 
 type Detail = {
   name: string;
@@ -24,6 +26,7 @@ type Detail = {
   cullingFlag: number;
   favorite: boolean;
   kind: number;
+  comment: string | null;
 };
 
 const SOURCE_LABEL = ["EXIF", "파일명 추정", "파일시각 추정", "알 수 없음"];
@@ -37,6 +40,7 @@ export default function Viewer({
   fullScreen,
   onToggleFullScreen,
   kindOf,
+  onRename,
 }: {
   ids: number[];
   index: number;
@@ -51,7 +55,10 @@ export default function Viewer({
   onToggleFullScreen: () => void;
   /** 사진인지 영상인지를 상세를 읽기 전에 알려 준다. 없으면 상세를 기다린다. */
   kindOf?: (id: number) => number | undefined;
+  /** 이름을 바꾼다. 서버가 준 이름을 돌려준다. 실패는 던진다. */
+  onRename?: (id: number, name: string) => Promise<string>;
 }) {
+  const [renaming, setRenaming] = useState(false);
   const id = ids[index];
   const player = useRef<HTMLVideoElement>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -178,9 +185,13 @@ export default function Viewer({
     >
       {/* 상단 */}
       <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[12.5px]">
-        <span className="text-fg truncate max-w-[40%]">
+        <button
+          onClick={() => onRename && setRenaming(true)}
+          title={onRename ? "이름 바꾸기" : undefined}
+          className={`text-fg truncate max-w-[40%] text-left ${onRename ? "hover:underline" : ""}`}
+        >
           {detail?.name ?? "…"}
-        </span>
+        </button>
         <span className="text-fg-mute tabular-nums">
           {index + 1} / {ids.length}
         </span>
@@ -340,6 +351,12 @@ export default function Viewer({
               <Row k="길이" v={fmtDuration(detail.durationMs)} />
             ) : null}
             <Row k="폴더" v={detail.folder || "/"} />
+            <CommentBox
+              key={id}
+              id={id}
+              initial={detail.comment ?? ""}
+              onSaved={(c) => setDetail((d) => (d ? { ...d, comment: c } : d))}
+            />
 
             {(detail.camModel || detail.lens) && (
               <>
@@ -427,6 +444,16 @@ export default function Viewer({
           </aside>
         )}
       </div>
+      {renaming && detail && onRename && (
+        <RenameDialog
+          name={detail.name}
+          onSubmit={async (n) => {
+            const next = await onRename(id, n);
+            setDetail((d) => (d ? { ...d, name: next } : d));
+          }}
+          onClose={() => setRenaming(false)}
+        />
+      )}
     </div>
   );
 }

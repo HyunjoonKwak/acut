@@ -10,6 +10,7 @@
 pub mod import;
 pub mod naming;
 pub mod organize;
+pub mod rename;
 pub mod trash;
 pub mod undo;
 

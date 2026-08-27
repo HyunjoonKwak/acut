@@ -7,6 +7,7 @@ import Filmstrip from "./Filmstrip";
 import Import from "./Import";
 import Organize from "./Organize";
 import PhotoGrid from "./PhotoGrid";
+import RenameDialog from "./RenameDialog";
 import SelectionPanel from "./SelectionPanel";
 import Shortcuts from "./Shortcuts";
 import Sidebar from "./Sidebar";
@@ -95,7 +96,7 @@ export default function App() {
     onReload: refreshMeta,
     onSeek: () => resetScroll.current(),
   });
-  const { rows, loadFirst, loadMore, markOne } = list;
+  const { rows, loadFirst, loadMore, markOne, patchRow } = list;
 
   const selected = useSelection((s) => s.selected);
   const picked = useSelection((s) => s.picked);
@@ -157,6 +158,18 @@ export default function App() {
     markOne,
     undoLast: ops.undoLast,
   });
+
+  /// 이름을 바꾼다 — 서버가 준 이름(NFC)으로 목록을 고친다. 실패는 던진다.
+  const renameFile = useCallback(
+    async (id: number, name: string) => {
+      const next = await invoke<string>("file_rename", { id, name });
+      patchRow(id, { name: next });
+      useData.getState().refreshBatches();
+      toast(`「${next}」로 바꿨습니다`, "ok");
+      return next;
+    },
+    [patchRow],
+  );
 
   // ── 위에 뜨는 것들 ───────────────────────────────────────────────
   const ui = useUi();
@@ -275,6 +288,7 @@ export default function App() {
               fullScreen={ui.viewerFull}
               onToggleFullScreen={() => ui.set({ viewerFull: !ui.viewerFull })}
               kindOf={kindOf}
+              onRename={renameFile}
             />
           )}
         </div>
@@ -287,6 +301,15 @@ export default function App() {
       />
       <Toasts />
       {ui.helping && <Shortcuts onClose={() => ui.set({ helping: false })} />}
+      {ui.renaming !== null && (
+        <RenameDialog
+          name={rows.find((r) => r.id === ui.renaming)?.name ?? ""}
+          onSubmit={async (n) => {
+            await renameFile(ui.renaming!, n);
+          }}
+          onClose={() => ui.set({ renaming: null })}
+        />
+      )}
       {ui.importing && (
         <Import
           libs={libs}

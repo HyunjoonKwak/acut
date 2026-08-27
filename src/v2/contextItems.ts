@@ -87,6 +87,15 @@ export function contextItems(
       },
     },
     { kind: "sep" },
+    ...(n === 1
+      ? ([
+          {
+            kind: "item",
+            label: "이름 바꾸기…",
+            run: () => ui().set({ renaming: ids[0] }),
+          },
+        ] as MenuItem[])
+      : []),
     {
       kind: "item",
       label: "Finder에서 보기",

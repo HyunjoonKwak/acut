@@ -56,6 +56,7 @@ export function chips(
     add("month", `${y}년 ${Number(m)}월`);
   } else if (p.year) add("year", `${p.year}년`);
   if (p.camera !== null) add("camera", p.camera || "카메라 없음");
+  if (p.lens !== null) add("lens", p.lens || "렌즈 없음");
   if (p.kind !== null) add("kind", KIND[p.kind] ?? String(p.kind));
   if (p.culling_flag !== null)
     add("culling_flag", FLAG[p.culling_flag] ?? String(p.culling_flag));

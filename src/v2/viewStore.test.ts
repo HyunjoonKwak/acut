@@ -90,6 +90,7 @@ test("갈래를 셀 때는 그 갈래 조건들을 뺀다", () => {
     "year",
     "month",
     "camera",
+    "lens",
     "min_rating",
     "tag_id",
     "place",

@@ -23,6 +23,8 @@ type Store = {
   ctxIds: number[];
   /** 「⋯」를 연 라이브러리 (앨범 트리) */
   menuFor: number | null;
+  /** 이름을 바꾸는 중인 사진 */
+  renaming: number | null;
   set: (p: Partial<Omit<Store, "set">>) => void;
 };
 
@@ -37,6 +39,7 @@ export const useUi = create<Store>()((set) => ({
   ctxAt: null,
   ctxIds: [],
   menuFor: null,
+  renaming: null,
   set: (p) => set(p),
 }));
 

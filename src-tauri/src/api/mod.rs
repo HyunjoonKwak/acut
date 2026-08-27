@@ -860,6 +860,26 @@ pub fn open_in_default_app(state: State<'_, AppState>, id: i64) -> Result<(), St
     Ok(())
 }
 
+// ── 코멘트 · 이름 ──────────────────────────────────────────────────────
+
+/// 한 장의 코멘트. 비우면 NULL로.
+#[tauri::command]
+pub fn file_comment(state: State<'_, AppState>, id: i64, text: String) -> Result<(), String> {
+    let t = crate::scan::nfc(text.trim());
+    let v: Option<String> = if t.is_empty() { None } else { Some(t) };
+    state
+        .db
+        .write(|c| c.execute("UPDATE files SET comment = ?2 WHERE id = ?1", rusqlite::params![id, v]))
+        .map_err(err)?;
+    Ok(())
+}
+
+/// 이름을 바꾼다. 같은 이름이 있으면 거절한다. 새 이름을 돌려준다.
+#[tauri::command]
+pub fn file_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<String, String> {
+    crate::ops::rename::rename(&state.db, id, &name).map_err(err)
+}
+
 // ── 폴더 감시 ───────────────────────────────────────────────────────────
 
 /// 켜면 연결된 라이브러리 전부를 감시하고, 끄면 다 멈춘다.

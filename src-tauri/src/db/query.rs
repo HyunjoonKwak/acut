@@ -140,6 +140,8 @@ pub struct Filter {
     pub month: Option<String>,
     /// 사이드바에서 고른 카메라 모델
     pub camera: Option<String>,
+    /// 사이드바에서 고른 렌즈. 빈 문자열이면 "렌즈 정보 없음".
+    pub lens: Option<String>,
     /// 사이드바에서 고른 태그
     pub tag_id: Option<i64>,
     /// 위치 — 좌표 격자 한 칸 (`37.5,127.0`). 빈 문자열이면 "위치 없음".
@@ -253,6 +255,14 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         } else {
             w.push("fi.cam_model = ?".into());
             p.push(Box::new(cam.clone()));
+        }
+    }
+    if let Some(l) = f.lens.as_ref() {
+        if l.is_empty() {
+            w.push("COALESCE(NULLIF(fi.lens,''),'') = ''".into());
+        } else {
+            w.push("fi.lens = ?".into());
+            p.push(Box::new(l.clone()));
         }
     }
     if let Some(t) = f.tag_id {
@@ -520,6 +530,7 @@ pub struct Facet {
 pub enum FacetKind {
     Year,
     Camera,
+    Lens,
     Rating,
     Kind,
     Place,
@@ -539,6 +550,7 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
     let expr = match kind {
         FacetKind::Year => "strftime('%Y', fi.taken_at,'unixepoch','localtime')",
         FacetKind::Camera => "COALESCE(NULLIF(fi.cam_model,''),'')",
+        FacetKind::Lens => "COALESCE(NULLIF(fi.lens,''),'')",
         FacetKind::Rating => "CAST(fi.rating AS TEXT)",
         FacetKind::Kind => "CAST(fi.kind AS TEXT)",
         // 좌표를 0.1도 격자로 내린다. 역지오코딩이 없어 지명은 못 붙이지만
@@ -583,6 +595,13 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
                 FacetKind::Camera => {
                     if value.is_empty() {
                         "(카메라 정보 없음)".into()
+                    } else {
+                        value.clone()
+                    }
+                }
+                FacetKind::Lens => {
+                    if value.is_empty() {
+                        "(렌즈 정보 없음)".into()
                     } else {
                         value.clone()
                     }
@@ -1262,6 +1281,20 @@ mod tests {
             )
             .unwrap()
             .0;
+            assert_eq!(n, f.count, "{} 되돌리기", f.label);
+        }
+    }
+
+    #[test]
+    fn lens_facet_and_filter_round_trip() {
+        let (_d, db) = seeded();
+        db.write(|c| c.execute("UPDATE files SET lens='FE 24-70' WHERE id <= 3", [])).unwrap();
+        let fs = facets(&db, &Filter::default(), FacetKind::Lens).unwrap();
+        assert!(fs.iter().any(|f| f.label == "(렌즈 정보 없음)"), "{fs:?}");
+        for f in &fs {
+            let n = summary(&db, &Filter { lens: Some(f.value.clone()), ..Default::default() })
+                .unwrap()
+                .0;
             assert_eq!(n, f.count, "{} 되돌리기", f.label);
         }
     }

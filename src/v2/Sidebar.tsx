@@ -156,12 +156,23 @@ export default function Sidebar({
             />
           )}
           {source === "camera" && (
-            <FacetList
-              kind="camera"
-              filter={facetFilter}
-              selected={picks.camera ?? null}
-              onPick={(v) => patchPicks({ camera: v })}
-            />
+            <>
+              <FacetList
+                kind="camera"
+                filter={facetFilter}
+                selected={picks.camera ?? null}
+                onPick={(v) => patchPicks({ camera: v })}
+              />
+              <div className="px-3 pt-4 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
+                렌즈
+              </div>
+              <FacetList
+                kind="lens"
+                filter={facetFilter}
+                selected={picks.lens}
+                onPick={(v) => patchPicks({ lens: v })}
+              />
+            </>
           )}
           {source === "location" && (
             <FacetList

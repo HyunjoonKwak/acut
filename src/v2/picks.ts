@@ -22,6 +22,8 @@ export type Picks = {
   month: string | null;
   /** 사이드바에서 고른 카메라 모델 */
   camera: string | null;
+  /** 사이드바에서 고른 렌즈. 빈 문자열이면 «렌즈 없음» */
+  lens: string | null;
   /** 사이드바에서 고른 태그 */
   tag_id: number | null;
   /** 사이드바에서 고른 자리 (`37.5,126.9`). 빈 문자열이면 위치 없는 것만 */
@@ -37,6 +39,7 @@ export const EMPTY: Picks = {
   year: null,
   month: null,
   camera: null,
+  lens: null,
   tag_id: null,
   place: null,
 };
@@ -56,6 +59,7 @@ const TYPES: Record<keyof Picks, "number" | "string" | "boolean"> = {
   year: "string",
   month: "string",
   camera: "string",
+  lens: "string",
   tag_id: "number",
   place: "string",
 };

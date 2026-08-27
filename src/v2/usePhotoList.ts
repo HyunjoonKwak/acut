@@ -134,28 +134,40 @@ export function usePhotoList(
     cb.current.onReload?.();
   }, [opts.enabled, loadFirst]);
 
-  /// 판정을 바꾼다 — 서버에 쓰고 목록도 그 자리에서 고친다. 뷰어에서 바꾸면
-  /// 그리드도 같이 바뀌어야 한다.
-  const markOne = useCallback(async (id: number, patch: Mark) => {
-    await invoke("files_mark", {
-      ids: [id],
-      rating: patch.rating ?? null,
-      cullingFlag: patch.cullingFlag ?? null,
-      favorite: patch.favorite ?? null,
-    });
-    setRows((prev) =>
-      prev.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              rating: patch.rating ?? r.rating,
-              culling_flag: patch.cullingFlag ?? r.culling_flag,
-              favorite: patch.favorite ?? r.favorite,
-            }
-          : r,
-      ),
-    );
+  /// 한 줄을 그 자리에서 고친다 — 다시 읽지 않는다. 이름·판정이 바뀌었을 때.
+  const patchRow = useCallback((id: number, patch: Partial<FileRow>) => {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }, []);
 
-  return { rows, loading, baseIndex, loadFirst, loadMore, seekTo, markOne };
+  /// 판정을 바꾼다 — 서버에 쓰고 목록도 그 자리에서 고친다. 뷰어에서 바꾸면
+  /// 그리드도 같이 바뀌어야 한다.
+  const markOne = useCallback(
+    async (id: number, patch: Mark) => {
+      await invoke("files_mark", {
+        ids: [id],
+        rating: patch.rating ?? null,
+        cullingFlag: patch.cullingFlag ?? null,
+        favorite: patch.favorite ?? null,
+      });
+      patchRow(id, {
+        ...(patch.rating !== undefined ? { rating: patch.rating } : {}),
+        ...(patch.cullingFlag !== undefined
+          ? { culling_flag: patch.cullingFlag }
+          : {}),
+        ...(patch.favorite !== undefined ? { favorite: patch.favorite } : {}),
+      });
+    },
+    [patchRow],
+  );
+
+  return {
+    rows,
+    loading,
+    baseIndex,
+    loadFirst,
+    loadMore,
+    seekTo,
+    markOne,
+    patchRow,
+  };
 }

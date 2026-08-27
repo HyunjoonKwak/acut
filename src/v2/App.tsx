@@ -38,6 +38,7 @@ type Stats = {
   cache_bytes: number;
   cache_files: number;
 };
+type Bucket = { year: number; month: number; count: number; top: number };
 type FolderRow = {
   id: number;
   rel_path: string;
@@ -81,6 +82,7 @@ export default function App() {
   const [thumbSize, setThumbSize] = useState(180);
   const [selected, setSelected] = useState<number | null>(null);
   const [culling, setCulling] = useState(false);
+  const [buckets, setBuckets] = useState<Bucket[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // 요청이 겹치지 않게 — 스크롤이 빠르면 같은 페이지를 두 번 부를 수 있다
@@ -120,10 +122,11 @@ export default function App() {
     try {
       setStats(await invoke<Stats>("library_stats"));
       setFolders(await invoke<FolderRow[]>("folders_list"));
+      setBuckets(await invoke<Bucket[]>("files_timeline", { filter }));
     } catch {
       /* 라이브러리가 아직 없을 수 있다 */
     }
-  }, []);
+  }, [filter]);
 
   // 앱 시작 — 마지막 라이브러리를 되연다
   useEffect(() => {
@@ -207,6 +210,28 @@ export default function App() {
   };
 
   // 전용 thumb:// 프로토콜 — 캐시 폴더만 서빙한다 (api/thumb_protocol.rs)
+  /// 특정 시점부터 다시 읽는다. keyset 커서라 앞을 건너뛸 필요가 없다.
+  const jumpTo = useCallback(
+    async (top: number) => {
+      if (inflight.current) return;
+      inflight.current = true;
+      try {
+        const p = await invoke<Page>("files_page", {
+          filter,
+          cursor: { taken_at: top + 1, id: Number.MAX_SAFE_INTEGER },
+          limit: PAGE,
+        });
+        setRows(p.rows);
+        setCursor(p.next);
+        setDone(!p.next);
+        scrollRef.current?.scrollTo({ top: 0 });
+      } finally {
+        inflight.current = false;
+      }
+    },
+    [filter],
+  );
+
   const thumbUrl = (r: FileRow) =>
     r.thumb ? `thumb://localhost/${r.thumb.split("/").map(encodeURIComponent).join("/")}` : null;
 
@@ -354,6 +379,43 @@ export default function App() {
           </div>
           {loading && <div className="py-4 text-center text-[#6D7B7E]">불러오는 중…</div>}
         </main>
+
+        {/* 타임라인 스크러버 — 클릭하면 그 달로 바로 간다 */}
+        {buckets.length > 0 && (
+          <div className="w-14 shrink-0 border-l border-[#242C2E] bg-[#181D1F] overflow-y-auto py-2 select-none">
+            {buckets.map((b, i) => {
+              const newYear = i === 0 || buckets[i - 1].year !== b.year;
+              return (
+                <div key={`${b.year}-${b.month}`}>
+                  {newYear && (
+                    <button
+                      onClick={() => jumpTo(b.top)}
+                      className="w-full text-right pr-2.5 pt-2 pb-0.5 font-mono text-[11px] font-bold text-[#8D9A9C] hover:text-[#49B8B4]"
+                    >
+                      {b.year}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => jumpTo(b.top)}
+                    title={`${b.year}년 ${b.month}월 · ${b.count.toLocaleString()}장`}
+                    className="w-full flex items-center justify-end gap-1 pr-2.5 py-[1px] font-mono text-[9.5px] text-[#5F6C6E] hover:text-[#49B8B4]"
+                  >
+                    <span
+                      className="inline-block h-[3px] rounded-sm bg-[#3A4547]"
+                      style={{
+                        width: Math.max(
+                          2,
+                          Math.min(16, Math.round(Math.sqrt(b.count) * 1.2)),
+                        ),
+                      }}
+                    />
+                    {String(b.month).padStart(2, "0")}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {culling && lib && (

@@ -169,6 +169,40 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
     Ok(Page { rows, next })
 }
 
+/// 타임라인 눈금 하나 — 한 달치.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Bucket {
+    pub year: i32,
+    pub month: i32,
+    pub count: i64,
+    /// 이 달에서 가장 최근 촬영 시각. 여기로 점프한다.
+    pub top: i64,
+}
+
+/// 월별 분포. 우측 스크러버가 쓴다.
+///
+/// keyset 페이지네이션이라 `top`만 있으면 그 시점부터 바로 읽을 수 있다.
+/// OFFSET 방식이었다면 앞의 수만 행을 세고 지나가야 했다.
+pub fn timeline(db: &Db, f: &Filter) -> Result<Vec<Bucket>> {
+    let (where_sql, params) = build_where(f, None);
+    let sql = format!(
+        "SELECT CAST(strftime('%Y', fi.taken_at, 'unixepoch') AS INTEGER) y,
+                CAST(strftime('%m', fi.taken_at, 'unixepoch') AS INTEGER) m,
+                COUNT(*), MAX(fi.taken_at)
+         FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+         {where_sql}
+         GROUP BY y, m ORDER BY y DESC, m DESC"
+    );
+    db.read(|c| {
+        let mut st = c.prepare(&sql)?;
+        let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        let it = st.query_map(refs.as_slice(), |r| {
+            Ok(Bucket { year: r.get(0)?, month: r.get(1)?, count: r.get(2)?, top: r.get(3)? })
+        })?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })
+}
+
 /// 필터에 걸리는 전체 개수와 용량. 페이지마다 세지 않고 필터가 바뀔 때만 호출한다.
 pub fn summary(db: &Db, f: &Filter) -> Result<(i64, i64)> {
     let (where_sql, params) = build_where(f, None);
@@ -365,6 +399,24 @@ mod tests {
             p.rows.iter().all(|r| r.thumb.is_none()),
             "실패한 썸네일은 내보내지 않는다"
         );
+    }
+
+    #[test]
+    fn timeline_groups_by_month_newest_first() {
+        let (_d, db) = seeded();
+        let b = timeline(&db, &Filter::default()).unwrap();
+        assert!(!b.is_empty());
+        // 내림차순
+        for w in b.windows(2) {
+            assert!((w[0].year, w[0].month) >= (w[1].year, w[1].month));
+        }
+        // 합계가 전체와 같아야 한다
+        assert_eq!(b.iter().map(|x| x.count).sum::<i64>(), 50);
+        // top으로 그 지점부터 읽을 수 있어야 한다
+        let first = &b[0];
+        let p = page(&db, &Filter::default(), Some(Cursor { taken_at: first.top + 1, id: i64::MAX }), 5)
+            .unwrap();
+        assert!(!p.rows.is_empty(), "점프 지점부터 읽힌다");
     }
 
     #[test]

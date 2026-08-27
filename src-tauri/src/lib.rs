@@ -84,6 +84,7 @@ pub fn run() {
             api::scan_cancel,
             api::files_page,
             api::files_summary,
+            api::files_timeline,
             api::files_mark,
             api::file_detail,
             api::folders_list,

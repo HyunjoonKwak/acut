@@ -232,6 +232,15 @@ pub struct Summary {
     pub bytes: i64,
 }
 
+/// 월별 분포 — 우측 스크러버용.
+#[tauri::command]
+pub fn files_timeline(
+    state: State<'_, AppState>,
+    filter: Filter,
+) -> Result<Vec<query::Bucket>, String> {
+    query::timeline(&state.db, &filter).map_err(err)
+}
+
 #[tauri::command]
 pub fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result<Summary, String> {
     let (count, bytes) = query::summary(&state.db, &filter).map_err(err)?;

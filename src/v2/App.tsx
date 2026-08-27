@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -206,8 +206,9 @@ export default function App() {
     setScanMsg("스캔 시작…");
   };
 
+  // 전용 thumb:// 프로토콜 — 캐시 폴더만 서빙한다 (api/thumb_protocol.rs)
   const thumbUrl = (r: FileRow) =>
-    r.thumb && lib ? convertFileSrc(`${lib.cache_root}/${r.thumb}`) : null;
+    r.thumb ? `thumb://localhost/${r.thumb.split("/").map(encodeURIComponent).join("/")}` : null;
 
   return (
     <div className="h-screen flex flex-col bg-[#15191A] text-[#EAEFEF] text-[13px]">
@@ -356,7 +357,7 @@ export default function App() {
       </div>
 
       {culling && lib && (
-        <Cull cacheRoot={lib.cache_root} onClose={() => { setCulling(false); loadFirst(); }} />
+        <Cull onClose={() => { setCulling(false); loadFirst(); }} />
       )}
 
       {/* 상태바 */}

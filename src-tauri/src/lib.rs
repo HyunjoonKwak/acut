@@ -23,6 +23,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .register_asynchronous_uri_scheme_protocol("thumb", |ctx, req, responder| {
+            api::thumb_protocol::handle(ctx.app_handle(), req, responder);
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

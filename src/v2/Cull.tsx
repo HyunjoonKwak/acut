@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 type Group = {
@@ -40,13 +40,7 @@ const fmtBytes = (n: number) => {
   return `${v.toFixed(1)} ${u[i]}`;
 };
 
-export default function Cull({
-  cacheRoot,
-  onClose,
-}: {
-  cacheRoot: string;
-  onClose: () => void;
-}) {
+export default function Cull({ onClose }: { onClose: () => void }) {
   const [kind, setKind] = useState(2); // 같은 순간이 가장 많다
   const [groups, setGroups] = useState<Group[]>([]);
   const [idx, setIdx] = useState(0);
@@ -55,7 +49,7 @@ export default function Cull({
   const [busy, setBusy] = useState("");
 
   const url = (rel: string | null) =>
-    rel ? convertFileSrc(`${cacheRoot}/${rel}`) : null;
+    rel ? `thumb://localhost/${rel.split("/").map(encodeURIComponent).join("/")}` : null;
 
   const loadSummary = useCallback(async () => {
     setSummary(await invoke<Summary[]>("cull_summary"));

@@ -7,6 +7,7 @@
 //! `convertFileSrc`로 바꿔 `<img src>`에 넣으면 된다 — 웹뷰가 파일을 직접 읽는다.
 
 pub mod cull;
+pub mod thumb_protocol;
 
 use crate::db::conn::Db;
 use crate::db::query::{self, Cursor, Filter, Page};

@@ -210,9 +210,11 @@ pub fn suggest(db: &Db, ids: &[i64], limit: usize) -> Result<Vec<Suggestion>> {
         }
     }
 
-    // 4. 자주 쓰는 낱말 — 위가 다 비어도 뭔가는 내놓는다
+    // 4. 자주 쓰는 낱말 — 위가 다 비어도 뭔가는 내놓는다.
+    // **날짜가 붙은 폴더의 낱말만** 센다. 그게 사람이 이름 지은 이벤트다.
+    // 안 그러면 도구가 만든 `output` 같은 폴더가 82번으로 1등을 한다(실측).
     let mut freq: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
-    for k in &folders {
+    for k in folders.iter().filter(|k| k.date.is_some()) {
         for w in words(&k.title) {
             *freq.entry(w).or_default() += 1;
         }
@@ -313,6 +315,16 @@ mod tests {
         assert!(km_between((37.5, 127.0), (37.5, 127.0)) < 0.001);
     }
 
+    /// 도구가 만든 폴더(`output` 82개)가 낱말 순위 1등을 하던 실측 문제.
+    /// 날짜가 붙은 폴더만 세면 사람이 지은 이름만 남는다.
+    #[test]
+    fn only_dated_folders_feed_the_word_list() {
+        let dated = parse_folder("2024-08-27 가족여행");
+        let plain = parse_folder("output");
+        assert!(dated.0.is_some());
+        assert!(plain.0.is_none(), "날짜 없는 폴더는 이벤트가 아니다");
+    }
+
     #[test]
     fn ranking_drops_duplicates_and_keeps_the_best() {
         let s = |t: &str, n: i32| Suggestion { title: t.into(), why: String::new(), score: n };
@@ -320,5 +332,54 @@ mod tests {
         assert_eq!(r.len(), 2);
         assert_eq!(r[0].title, "여행", "같은 제목은 높은 점수만 남는다");
         assert_eq!(r[0].score, 90);
+    }
+}
+
+#[cfg(test)]
+mod real {
+    use super::*;
+    use crate::db::conn::Db;
+
+    /// 실제 라이브러리로 돌려 본다 (사본을 쓴다).
+    /// `cargo test --lib ops::naming::real -- --ignored --nocapture`
+    #[test]
+    #[ignore = "실제 DB 사본 필요"]
+    fn suggestions_on_the_real_library() {
+        let live = dirs_next_home()
+            .join("Library/Application Support/com.acut.media/acut-v2.db");
+        if !live.is_file() {
+            eprintln!("실제 DB 없음 — 건너뜀");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let copy = tmp.path().join("copy.db");
+        std::fs::copy(&live, &copy).unwrap();
+        let db = Db::open(&copy).unwrap();
+
+        // 아무 폴더에서 한 줌 골라 본다
+        let ids: Vec<i64> = db
+            .read(|c| {
+                let mut st = c.prepare(
+                    "SELECT id FROM files WHERE folder_id =
+                       (SELECT folder_id FROM files GROUP BY folder_id
+                         ORDER BY COUNT(*) DESC LIMIT 1) LIMIT 20",
+                )?;
+                let it = st.query_map([], |r| r.get(0))?;
+                it.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap();
+        assert!(!ids.is_empty());
+
+        let t = std::time::Instant::now();
+        let out = suggest(&db, &ids, 12).unwrap();
+        println!("\n제안 {:.0}ms", t.elapsed().as_secs_f64() * 1000.0);
+        for s in &out {
+            println!("  {:<24} {:>4}  {}", s.title, s.score, s.why);
+        }
+        assert!(!out.is_empty(), "실제 라이브러리라면 뭔가는 나와야 한다");
+    }
+
+    fn dirs_next_home() -> std::path::PathBuf {
+        std::path::PathBuf::from(std::env::var("HOME").unwrap())
     }
 }

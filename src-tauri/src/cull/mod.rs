@@ -30,7 +30,6 @@ mod real {
         let t = std::time::Instant::now();
         crate::scan::scan_test(&db, root, 1, |_| {}).unwrap();
         println!("\n스캔 {:.0}초", t.elapsed().as_secs_f64());
-        let vol = crate::db::volumes::describe(root).unwrap();
 
         // ── 잡동사니 (파일을 열지 않는다) ─────────────────────────
         let t = std::time::Instant::now();

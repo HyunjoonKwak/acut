@@ -181,7 +181,6 @@ mod tests {
 
         let db = crate::db::conn::Db::open(dir.path().join("t.db")).unwrap();
         crate::scan::scan_test(&db, dir.path(), 1, |_| {}).unwrap();
-        let vol = crate::db::volumes::describe(dir.path()).unwrap();
 
         let p = scan(&db).unwrap();
         assert_eq!(p.found, 3, "스크린샷 2 + 작은 파일 1");

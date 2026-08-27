@@ -430,6 +430,16 @@ export default function App() {
     [libs],
   );
 
+  /// 도는 일을 멈춘다. 스캔·썸네일·화질 올리기가 같은 스위치를 본다.
+  /// 진행은 500장마다 저장돼 있어 멈춰도 지금까지 한 것은 남는다.
+  const stopJob = useCallback(async () => {
+    await invoke("scan_cancel");
+    queue.current = [];
+    setJob(null);
+    setScanMsg("멈췄습니다 — 지금까지 한 것은 저장돼 있습니다");
+    await Promise.all([refreshMeta(), refreshLibs()]);
+  }, [refreshMeta, refreshLibs]);
+
   /// 등록을 지우면 그 라이브러리의 폴더·파일 기록이 CASCADE로 전부 사라진다.
   /// 원본 사진은 그대로지만 스캔은 처음부터 다시 해야 한다. 실제로 ⟳ 바로 옆에
   /// 붙어 있다가 잘못 눌려 6만 장짜리 라이브러리가 통째로 날아간 적이 있다.
@@ -804,7 +814,16 @@ export default function App() {
         )}
         <div className="flex-1" />
         {job && (
-          <Progress label={job.label} done={job.done} total={job.total} />
+          <>
+            <Progress label={job.label} done={job.done} total={job.total} />
+            <button
+              onClick={stopJob}
+              title="지금까지 한 것은 저장됩니다"
+              className="h-7 px-3 rounded-md text-[#E2685C] ring-1 ring-[#4A3330] hover:bg-[#2A1D1B]"
+            >
+              멈추기
+            </button>
+          </>
         )}
         {!job && scanMsg && (
           <span className="text-[#F0B429] tabular-nums">{scanMsg}</span>

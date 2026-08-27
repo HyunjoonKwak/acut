@@ -214,12 +214,28 @@ export default function Cull({ onClose }: { onClose: () => void }) {
             </button>
           );
         })}
-        <button
-          onClick={() => invoke("cull_scan")}
-          className="h-7 px-3 rounded-md text-[12.5px] text-[#A3B2B4] ring-1 ring-[#333C3F]"
-        >
-          다시 찾기
-        </button>
+        {busy ? (
+          // 찾는 중에는 멈출 수 있어야 한다. 해시를 읽느라 오래 걸린다.
+          <button
+            onClick={async () => {
+              await invoke("scan_cancel");
+              setBusy("");
+            }}
+            className="h-7 px-3 rounded-md text-[12.5px] text-[#E2685C] ring-1 ring-[#4A3330]"
+          >
+            멈추기
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              setBusy("찾는 중…");
+              invoke("cull_scan").catch((e) => setBusy(String(e)));
+            }}
+            className="h-7 px-3 rounded-md text-[12.5px] text-[#A3B2B4] ring-1 ring-[#333C3F]"
+          >
+            다시 찾기
+          </button>
+        )}
         {busy && (
           <span className="text-[#F0B429] text-[12px] tabular-nums">
             {busy}

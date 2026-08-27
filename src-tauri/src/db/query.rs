@@ -24,6 +24,8 @@ pub struct FileRow {
     pub rating: i32,
     pub culling_flag: i32,
     pub favorite: bool,
+    /// 영상 길이. 타일의 ▶ 배지에 쓴다.
+    pub duration_ms: Option<i64>,
     /// 어느 라이브러리 소속인가. 썸네일 캐시가 라이브러리마다 따로 있어서
     /// 프론트가 `thumb://` 주소를 만들 때 필요하다.
     pub library_id: Option<i64>,
@@ -172,7 +174,7 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
     let sql = format!(
         "SELECT fi.id, fi.name, fi.taken_at, fi.taken_at_source, fi.kind, fi.size,
                 fi.width, fi.height, fi.rating, fi.culling_flag, fi.favorite,
-                fo.library_id, t.rel_path
+                fi.duration_ms, fo.library_id, t.rel_path
          FROM files fi
          JOIN folders fo ON fo.id = fi.folder_id
          LEFT JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
@@ -198,8 +200,9 @@ pub fn page(db: &Db, f: &Filter, cursor: Option<Cursor>, limit: usize) -> Result
                 rating: r.get(8)?,
                 culling_flag: r.get(9)?,
                 favorite: r.get::<_, i32>(10)? != 0,
-                library_id: r.get(11)?,
-                thumb: r.get(12)?,
+                duration_ms: r.get(11)?,
+                library_id: r.get(12)?,
+                thumb: r.get(13)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()

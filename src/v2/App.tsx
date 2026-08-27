@@ -7,6 +7,7 @@ import Cull from "./Cull";
 import Viewer from "./Viewer";
 import ScrollBar from "./ScrollBar";
 import Organize from "./Organize";
+import Tile from "./Tile";
 import { useCountUp } from "./useCountUp";
 import FilterBar, {
   EMPTY as EMPTY_PICKS,
@@ -27,6 +28,7 @@ type FileRow = {
   rating: number;
   culling_flag: number;
   favorite: boolean;
+  duration_ms: number | null;
   /** 어느 라이브러리 소속인가. 썸네일 주소를 만들 때 쓴다 */
   library_id: number | null;
   /** 캐시 루트 기준 상대경로. null이면 아직 생성 전 */
@@ -1077,90 +1079,18 @@ export default function App() {
                       gap: GAP,
                     }}
                   >
-                    {slice.map((r, ci) => {
-                      const url = thumbUrl(r);
-                      return (
-                        <button
-                          key={r.id}
-                          onClick={(e) => pick(r.id, e)}
-                          onDoubleClick={() => setViewerAt(start + ci)}
-                          className="text-left"
-                        >
-                          <div
-                            className="rounded overflow-hidden bg-[#0F1314] relative"
-                            style={{
-                              aspectRatio: "1/1",
-                              boxShadow: picked.has(r.id)
-                                ? "0 0 0 2px #49B8B4"
-                                : selected === r.id
-                                  ? "0 0 0 2px #6C6CE8"
-                                  : undefined,
-                            }}
-                          >
-                            {url ? (
-                              <img
-                                src={url}
-                                loading="lazy"
-                                decoding="async"
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-[#3A4547] text-[10px]">
-                                {r.kind === 1 ? "영상" : "…"}
-                              </div>
-                            )}
-                            {r.kind === 1 && url && (
-                              <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-[#EAEFEF]">
-                                ▶
-                              </span>
-                            )}
-                            {r.kind === 2 && (
-                              <span className="absolute top-1 left-1 text-[9px] px-1 rounded bg-black/60 text-[#F0B429]">
-                                RAW
-                              </span>
-                            )}
-                            {/* 판정 배지 — 뷰어를 열지 않고도 상태가 보여야 한다 */}
-                            {r.culling_flag !== 0 && (
-                              <span
-                                className="absolute top-1 right-1 w-4 h-4 rounded text-[10px] font-bold flex items-center justify-center"
-                                style={
-                                  r.culling_flag === 1
-                                    ? {
-                                        background: "#F0B429",
-                                        color: "#231A00",
-                                      }
-                                    : {
-                                        background: "#E2685C",
-                                        color: "#2A0D09",
-                                      }
-                                }
-                                title={r.culling_flag === 1 ? "남김" : "제외"}
-                              >
-                                {r.culling_flag === 1 ? "★" : "✕"}
-                              </span>
-                            )}
-                            {(r.rating > 0 || r.favorite) && (
-                              <div className="absolute bottom-0 inset-x-0 flex items-center gap-1 px-1 py-0.5 bg-gradient-to-t from-black/70 to-transparent">
-                                {r.rating > 0 && (
-                                  <span className="text-[9px] text-[#F0B429] tracking-tighter">
-                                    {"★".repeat(r.rating)}
-                                  </span>
-                                )}
-                                <div className="flex-1" />
-                                {r.favorite && (
-                                  <span className="text-[9px] text-[#E2685C]">
-                                    ♥
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          <div className="text-[10.5px] text-[#6D7B7E] mt-1 truncate tabular-nums">
-                            {fmtDate(r.taken_at)}
-                          </div>
-                        </button>
-                      );
-                    })}
+                    {slice.map((r, ci) => (
+                      <Tile
+                        key={r.id}
+                        file={r}
+                        url={thumbUrl(r)}
+                        picked={picked.has(r.id)}
+                        focused={selected === r.id}
+                        onClick={(e: React.MouseEvent) => pick(r.id, e)}
+                        onDoubleClick={() => setViewerAt(start + ci)}
+                        label={fmtDate(r.taken_at)}
+                      />
+                    ))}
                   </div>
                 );
               })}

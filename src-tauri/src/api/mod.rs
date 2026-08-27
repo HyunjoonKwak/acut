@@ -11,6 +11,7 @@ pub mod organize;
 pub mod photo_protocol;
 pub mod thumb_protocol;
 pub mod trash;
+pub mod video_protocol;
 
 use crate::db::conn::Db;
 use crate::db::libraries::Library as LibRow;
@@ -238,14 +239,6 @@ pub fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
                 );
                 let _ = app.emit("thumb-done", tp.ok());
 
-                // 2차 — 작게 나온 것만 원본에서 다시 뽑는다. 느리지만 그 사이에도
-                // 앱은 쓸 수 있다. 취소하면 여기서 멈춘다.
-                if !cancel.load(Ordering::Relaxed) {
-                    let up = scan::thumbs::upgrade(&db, lib.id, &mount, &cache_root, cancel, |p| {
-                        let _ = app.emit("upgrade-progress", p);
-                    });
-                    let _ = app.emit("upgrade-done", up.ok());
-                }
             }
             Err(e) => {
                 let _ = app.emit("scan-error", e.to_string());

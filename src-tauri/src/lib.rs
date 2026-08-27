@@ -27,6 +27,11 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol("thumb", |ctx, req, responder| {
             api::thumb_protocol::handle(ctx.app_handle(), req, responder);
         })
+        .register_asynchronous_uri_scheme_protocol("video", |ctx, req, responder| {
+            // 원본을 Range로 잘라 보낸다. 파일이 커서 반드시 별도 스레드로.
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || api::video_protocol::handle(&app, req, responder));
+        })
         .register_asynchronous_uri_scheme_protocol("photo", |ctx, req, responder| {
             // 미리보기를 그 자리에서 만들 수 있으므로 블로킹이다. 별도 스레드로.
             let app = ctx.app_handle().clone();

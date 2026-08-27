@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { EMPTY, picksFrom, type Picks } from "./picks.ts";
 import { usePrefs, usePref } from "./prefs.ts";
 import type { Sort } from "./sortItems.ts";
+import type { GroupBy } from "./groupItems.ts";
 
 /**
  * 무엇을 보고 있나 — 폴더·조건·휴지통.
@@ -48,10 +49,12 @@ export const useView = create<Store>()((set) => ({
       library_id?: number | null;
       folder_path?: string | null;
       trashed?: boolean;
+      group?: GroupBy;
     };
     const prefs = usePrefs.getState();
     prefs.set("libId", v.library_id ?? null);
     if (srt) prefs.set("sort", srt as Sort);
+    if (v.group) prefs.set("group", v.group);
     set({
       picks: picksFrom(f),
       // 폴더는 경로만 되살린다 — 트리에서 고른 것과 같은 모양이면 충분하다

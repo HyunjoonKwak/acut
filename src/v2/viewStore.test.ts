@@ -31,6 +31,14 @@ test("스마트 앨범을 열면 라이브러리·폴더·정렬·조건이 다 
 });
 
 /** 라이브러리 없이 폴더만 저장된 것은 폴더를 살릴 수 없다 — 폴더는 라이브러리에 속한다 */
+test("묶기도 저장돼 있으면 되살린다", () => {
+  reset();
+  useView.getState().applySmart({ kind: 0, group: "month" }, null);
+  assert.equal(usePrefs.getState().group, "month");
+  useView.getState().applySmart({ kind: 0 }, null);
+  assert.equal(usePrefs.getState().group, "month", "없으면 지금 것을 둔다");
+});
+
 test("라이브러리가 없으면 폴더는 살리지 않는다", () => {
   reset();
   useView.getState().applySmart({ folder_path: "a/b", library_id: null }, null);

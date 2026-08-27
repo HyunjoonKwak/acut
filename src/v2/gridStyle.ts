@@ -22,6 +22,49 @@ export const STYLES: { v: GridStyle; label: string }[] = [
  */
 export const CAPTION_H = 30;
 
+/** 칸 사이 틈 (px). 가로·세로 같다. */
+export const GAP = 10;
+/** 그리드 바깥 여백 (px). `main`의 p-2.5와 같아야 한다. */
+export const PAD = 10;
+
+export type Metrics = {
+  /** 안쪽 폭 — 바깥 여백을 뺀 것 */
+  contentW: number;
+  cols: number;
+  /** 칸 하나의 폭. 남는 폭을 나눠 가져 썸네일 크기보다 크다. */
+  cellW: number;
+  /** 그림 상자의 높이 — 칸 폭과 담는 모양에서 나온다 */
+  imageH: number;
+  /** 한 줄이 차지하는 높이. 가상 스크롤이 다음 줄을 놓는 간격이다. */
+  rowH: number;
+};
+
+/**
+ * 격자의 치수 — 전부 여기서 나온다.
+ *
+ * 예전에는 줄 높이를 «썸네일 크기 + 이름줄»로 잡았는데, 칸은 남는 폭을
+ * 나눠 가져 썸네일보다 넓고 그림은 정사각형이라 실제 줄이 더 높았다.
+ * 가상 스크롤은 잡아 둔 높이대로 다음 줄을 놓으니 줄이 겹쳐 이름이 묻히고
+ * 그림이 붙었다. 칸 폭을 먼저 정하고 높이를 그 폭에서 끌어낸다.
+ *
+ * @param clientW  스크롤 요소의 clientWidth (여백 포함, 스크롤바 제외)
+ * @param thumb    썸네일 슬라이더 값 — 칸의 **최소** 폭
+ */
+export function metrics(
+  clientW: number,
+  thumb: number,
+  style: GridStyle,
+  caption: boolean,
+): Metrics {
+  const contentW = Math.max(0, clientW - PAD * 2);
+  // cols·thumb + (cols−1)·GAP ≤ contentW 를 만족하는 가장 큰 cols
+  const cols = Math.max(1, Math.floor((contentW + GAP) / (thumb + GAP)));
+  const cellW = Math.max(0, (contentW - (cols - 1) * GAP) / cols);
+  const imageH = style === "tile" ? (cellW * 3) / 4 : cellW;
+  const rowH = imageH + (caption ? CAPTION_H : 0) + GAP;
+  return { contentW, cols, cellW, imageH, rowH };
+}
+
 export const SCALINGS: { v: Scaling; label: string }[] = [
   { v: "cover", label: "채우기" },
   { v: "contain", label: "사진 전체" },

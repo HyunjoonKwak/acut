@@ -47,7 +47,7 @@ import {
 } from "./ui";
 import FacetList from "./FacetList";
 import Calendar from "./Calendar";
-import { justify, ratio, type JustifiedRow } from "./gridStyle";
+import { GAP, justify, metrics, ratio, type JustifiedRow } from "./gridStyle";
 import { useCountUp } from "./useCountUp";
 import FilterButton from "./FilterBar";
 import {
@@ -137,7 +137,6 @@ type FolderRow = {
 };
 
 const PAGE = 300;
-const GAP = 10;
 
 export default function App() {
   /// 등록된 라이브러리 전부
@@ -476,27 +475,28 @@ export default function App() {
   }, [loadFirst, refreshMeta, refreshLibs, refreshCache]);
 
   // ── 가상 스크롤 ──────────────────────────────────────────────────
-  const [cols, setCols] = useState(6);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      const w = el.clientWidth - GAP;
-      setCols(Math.max(1, Math.floor(w / (thumbSize + GAP))));
       setViewH(el.clientHeight);
-      setViewW(w);
+      setViewW(el.clientWidth);
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [thumbSize]);
+  }, []);
 
-  /// 이름·크기를 적으면 그만큼 줄이 높아진다.
-  const rowH = thumbSize + (caption ? CAPTION_H : 0) + 4;
+  /// 격자 치수 — 칸 수·칸 폭·그림 높이·줄 높이. 셈은 gridStyle.metrics에.
+  /// 줄 높이를 썸네일 크기로 잡으면 넓은 칸에서 줄이 겹친다.
+  const { contentW, cols, imageH, rowH } = useMemo(
+    () => metrics(viewW, thumbSize, gridStyle, caption),
+    [viewW, thumbSize, gridStyle, caption],
+  );
   /// 머리글과 사진 줄을 한 목록으로 편다. 묶기를 끄면 사진 줄만 나온다.
   const grid = useMemo(() => layout(rows, (r) => r.group, cols), [rows, cols]);
   /// 양쪽 맞춤일 때 각 사진 줄의 칸 크기. 줄마다 높이가 다르다.
   const justified = useMemo(() => {
-    if (gridStyle !== "justified" || viewW <= 0) return null;
+    if (gridStyle !== "justified" || contentW <= 0) return null;
     const out = new Map<number, JustifiedRow<FileRow>[]>();
     grid.forEach((row, i) => {
       if (row.kind !== "photos") return;
@@ -505,14 +505,14 @@ export default function App() {
         justify(
           row.items,
           (f) => ratio(f.width, f.height),
-          viewW,
+          contentW,
           thumbSize,
           GAP,
         ),
       );
     });
     return out;
-  }, [grid, gridStyle, viewW, thumbSize]);
+  }, [grid, gridStyle, contentW, thumbSize]);
   const virt = useVirtualizer({
     count: grid.length,
     getScrollElement: () => scrollRef.current,
@@ -1674,6 +1674,7 @@ export default function App() {
                           caption={caption}
                           style={gridStyle}
                           scaling={scaling}
+                          aspect={{ height: imageH }}
                         />
                       ))}
                     </div>

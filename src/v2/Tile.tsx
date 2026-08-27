@@ -51,8 +51,8 @@ export default function Tile({
   caption?: boolean;
   style?: GridStyle;
   scaling?: Scaling;
-  /** 양쪽 맞춤에서 계산된 칸 크기. 없으면 정사각형 격자. */
-  aspect?: { width: number; height: number };
+  /** 그림 상자 크기. 폭은 양쪽 맞춤에서만 준다 — 격자에서는 칸이 정한다. */
+  aspect?: { width?: number; height: number };
 }) {
   const [playing, setPlaying] = useState(false);
   const [ready, setReady] = useState(false);
@@ -98,7 +98,7 @@ export default function Tile({
       onMouseEnter={enter}
       onMouseLeave={stop}
       className="text-left"
-      style={aspect ? { width: aspect.width } : undefined}
+      style={aspect?.width !== undefined ? { width: aspect.width } : undefined}
     >
       <div
         className="rounded overflow-hidden bg-canvas relative"

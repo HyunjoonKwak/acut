@@ -9,7 +9,6 @@
 
 use crate::db::conn::{Db, Result};
 use crate::db::volumes;
-use crate::media::cache;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -37,11 +36,6 @@ pub fn dir_of(volume_uuid: &str, rel_path: &str) -> Option<PathBuf> {
         mount.join(rel_path)
     };
     dir.is_dir().then_some(dir)
-}
-
-/// 썸네일·미리보기 캐시가 있는 곳. 라이브러리 폴더 안(`.acut`)이다.
-pub fn cache_root_of(volume_uuid: &str, rel_path: &str) -> Option<PathBuf> {
-    dir_of(volume_uuid, rel_path).map(|d| cache::cache_root(&d))
 }
 
 /// 등록된 것 전부. 디스크가 빠진 것도 포함한다 — 목록에서 사라지면 안 된다.

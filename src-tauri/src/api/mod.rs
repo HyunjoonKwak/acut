@@ -32,6 +32,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 /// 기억해 두면 다른 디스크 사진에서 엉뚱한 경로를 보게 된다.
 pub struct AppState {
     pub db: Arc<Db>,
+    /// 썸네일·미리보기 캐시의 기준 폴더 (앱 데이터 폴더).
+    pub cache_base: PathBuf,
     /// 스캔·썸네일 생성을 멈추는 스위치.
     pub cancel: Arc<AtomicBool>,
     /// 라이브러리 id → 실제 폴더.
@@ -43,9 +45,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(db: Db) -> Self {
+    pub fn new(db: Db, cache_base: PathBuf) -> Self {
         Self {
             db: Arc::new(db),
+            cache_base,
             cancel: Arc::new(AtomicBool::new(false)),
             dirs: Mutex::new(HashMap::new()),
         }
@@ -76,6 +79,11 @@ impl AppState {
             m.insert(id, dir.clone());
         }
         Some(dir)
+    }
+
+    /// 이 라이브러리의 썸네일 캐시 폴더.
+    pub fn cache_root(&self, library_id: i64) -> PathBuf {
+        cache::cache_root(&self.cache_base, library_id)
     }
 
     /// 기억해 둔 경로를 버린다. 등록이 바뀌거나 디스크 상태가 달라졌을 때.
@@ -164,6 +172,33 @@ pub fn volumes_list(state: State<'_, AppState>) -> Result<Vec<VolumeRow>, String
 
 // ── 스캔 ───────────────────────────────────────────────────────────────
 
+/// 옛 위치(볼륨 안 `.acut/thumbs`)의 캐시를 앱 폴더로 옮긴다.
+///
+/// 앱을 켤 때 한 번 부른다. 이미 만들어 둔 12만 장을 버리지 않기 위해서다 —
+/// 다시 만들려면 390GB를 또 읽어야 한다.
+#[tauri::command]
+pub fn cache_migrate(app: AppHandle) -> Result<(usize, usize), String> {
+    let state = app.state::<AppState>();
+    let libs = crate::db::libraries::list(&state.db).map_err(err)?;
+    let base = state.cache_base.clone();
+    let db = Arc::clone(&state.db);
+    let _ = db;
+
+    let mut moved = 0;
+    let mut failed = 0;
+    for l in libs {
+        let Some(dir) = l.dir.as_deref() else { continue };
+        let legacy = cache::legacy_root(dir);
+        if !legacy.is_dir() {
+            continue;
+        }
+        let (m, f) = cache::migrate_from_legacy(&legacy, &cache::cache_root(&base, l.id));
+        moved += m;
+        failed += f;
+    }
+    Ok((moved, failed))
+}
+
 /// 스캔을 시작한다. 진행 상황은 `scan-progress` 이벤트로 흘린다.
 ///
 /// 블로킹 작업이라 별도 스레드에서 돈다. 커맨드 자체는 바로 돌아온다.
@@ -176,6 +211,7 @@ pub fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     let dir = lib.dir.clone().ok_or("디스크가 연결되어 있지 않습니다")?;
     let mount = crate::db::volumes::find_mount(&lib.volume_uuid)
         .ok_or("디스크가 연결되어 있지 않습니다")?;
+    let cache_root = state.cache_root(lib.id);
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
     cancel.store(false, Ordering::Relaxed);
@@ -189,7 +225,7 @@ pub fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
             Ok(p) => {
                 let _ = app.emit("scan-done", p);
                 // 스캔이 끝나면 곧바로 썸네일을 만든다. 목록은 이미 볼 수 있다.
-                let tp = scan::thumbs::generate(&db, lib.id, &mount, &dir, cancel, |p| {
+                let tp = scan::thumbs::generate(&db, lib.id, &mount, &cache_root, cancel, |p| {
                     let _ = app.emit("thumb-progress", p);
                 });
                 let _ = app.emit("thumb-done", tp.ok());
@@ -382,8 +418,12 @@ pub fn cache_usage(
     let (bytes, files) = libs
         .iter()
         .filter(|l| library_id.is_none_or(|id| l.id == id))
-        .filter_map(|l| l.dir.as_deref())
-        .flat_map(|d| [cache::cache_root(d), cache::preview_root(d)])
+        .flat_map(|l| {
+            [
+                cache::cache_root(&state.cache_base, l.id),
+                cache::preview_root(&state.cache_base, l.id),
+            ]
+        })
         .map(|root| cache::cache_stats(&root))
         .fold((0u64, 0usize), |(b, n), (rb, rn)| (b + rb, n + rn));
     Ok(CacheUsage { bytes, files })

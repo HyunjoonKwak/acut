@@ -58,7 +58,7 @@ pub fn run() {
             // v2 — 재설계된 데이터 계층. 기존 것과 별도 파일을 쓴다.
             let v2 = db::conn::Db::open(app_data_dir.join("acut-v2.db"))
                 .expect("v2 데이터베이스를 열 수 없습니다");
-            app.manage(api::AppState::new(v2));
+            app.manage(api::AppState::new(v2, app_data_dir.clone()));
             app.manage(commands::nas::NasState::default());
 
             // Load config
@@ -87,6 +87,7 @@ pub fn run() {
             api::library_remove,
             api::library_stats,
             api::cache_usage,
+            api::cache_migrate,
             api::trash::trash_pending,
             api::trash::trash_summary,
             api::trash::trash_apply,

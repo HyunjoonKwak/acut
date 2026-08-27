@@ -265,10 +265,20 @@ export default function App() {
     }
   }, []);
 
-  // 앱 시작 — 등록된 라이브러리를 읽어 온다
+  // 앱 시작 — 등록된 라이브러리를 읽어 온다.
+  // 옛 위치(디스크 안)의 캐시가 있으면 앱 폴더로 옮겨 온다. 한 번만 걸린다.
   useEffect(() => {
-    refreshLibs();
-    refreshCache();
+    (async () => {
+      try {
+        const [moved] = await invoke<[number, number]>("cache_migrate");
+        if (moved > 0)
+          setBusy(`썸네일 ${moved.toLocaleString()}장을 옮겼습니다`);
+      } catch {
+        /* 옮길 것이 없으면 그냥 넘어간다 */
+      }
+      refreshLibs();
+      refreshCache();
+    })();
   }, [refreshLibs, refreshCache]);
 
   // 보는 라이브러리나 폴더가 바뀌면 목록을 새로 읽는다

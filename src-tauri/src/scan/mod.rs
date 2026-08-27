@@ -596,7 +596,7 @@ mod real {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let t1 = std::time::Instant::now();
         let last = std::sync::Mutex::new(std::time::Instant::now());
-        let tp = thumbs::generate(&db, lib, &vol.mount_path, tmp.path(), cancel, |pr| {
+        let tp = thumbs::generate(&db, lib, &vol.mount_path, &tmp.path().join("cache"), cancel, |pr| {
             let mut l = last.lock().unwrap();
             if l.elapsed().as_secs() >= 5 {
                 eprintln!("   썸네일 {}/{} · {:.0}s", pr.done, pr.total, t1.elapsed().as_secs_f64());
@@ -611,7 +611,7 @@ mod real {
         println!("  {:.1}초 · {:.0}장/초 · {:.1}ms/장",
                  thumb_s, tp.total as f64 / thumb_s, thumb_s * 1000.0 / tp.total as f64);
 
-        let (bytes, count) = crate::media::cache::cache_stats(&crate::media::cache::cache_root(tmp.path()));
+        let (bytes, count) = crate::media::cache::cache_stats(&tmp.path().join("cache"));
         println!("  캐시 {}개 · {:.0} MB (원본 대비 {:.1}%)",
                  count, bytes as f64 / 1024.0 / 1024.0,
                  bytes as f64 / 373.5 / 1024.0 / 1024.0 / 1024.0 * 100.0);

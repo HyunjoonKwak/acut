@@ -43,13 +43,8 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
         return;
     }
 
-    // 디스크가 빠져 있으면 캐시도 함께 사라진다.
-    // 경로는 AppState가 기억한다 — 썸네일 한 장마다 DB를 읽으면 그리드가 멈춘다.
-    let Some(dir) = state.library_dir(lib_id) else {
-        responder.respond(not_found());
-        return;
-    };
-    let cache_root = crate::media::cache::cache_root(&dir);
+    // 캐시는 앱 데이터 폴더 안이라 디스크가 빠져 있어도 썸네일은 보인다.
+    let cache_root = state.cache_root(lib_id);
     let path = cache_root.join(&decoded);
 
     // 정규화 후에도 캐시 안에 있어야 한다 (심볼릭 링크 대비)

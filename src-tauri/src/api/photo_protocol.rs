@@ -54,11 +54,8 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
         return;
     };
 
-    let (Some(lib_dir), Some(mount)) = (
-        state.library_dir(lib_id),
-        crate::db::volumes::find_mount(&volume_uuid),
-    ) else {
-        // 디스크가 빠져 있다
+    // 원본을 읽어야 하므로 디스크는 꽂혀 있어야 한다
+    let Some(mount) = crate::db::volumes::find_mount(&volume_uuid) else {
         responder.respond(fail(StatusCode::SERVICE_UNAVAILABLE));
         return;
     };
@@ -67,7 +64,10 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
     let src = mount.join(&vol_rel);
     let key = crate::media::cache::key_for(&vol_rel, size as u64, mtime);
     let out =
-        crate::media::cache::thumb_path(&crate::media::cache::preview_root(&lib_dir), &key);
+        crate::media::cache::thumb_path(
+            &crate::media::cache::preview_root(&state.cache_base, lib_id),
+            &key,
+        );
 
     // 캐시에 있으면 그대로, 없으면 만든다.
     // 영상은 ImageIO가 못 여니 QuickLook이 대표 프레임을 준다.

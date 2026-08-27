@@ -65,6 +65,7 @@ pub(crate) mod ffi {
         pub fn CGImageSourceGetCount(src: CGImageSourceRef) -> usize;
 
         pub static kCGImageSourceCreateThumbnailFromImageAlways: CFStringRef;
+        pub static kCGImageSourceCreateThumbnailFromImageIfAbsent: CFStringRef;
         pub static kCGImageSourceCreateThumbnailWithTransform: CFStringRef;
         pub static kCGImageSourceThumbnailMaxPixelSize: CFStringRef;
         pub static kCGImageSourceShouldCache: CFStringRef;
@@ -180,30 +181,65 @@ pub fn make(
     //   FromImageAlways — 내장 미리보기가 없거나 너무 작으면 원본에서 만든다
     //   MaxPixelSize    — 디코더가 이 크기에 맞춰 축소본만 생성한다
     //   WithTransform   — EXIF 방향을 적용해 회전된 사진이 바로 선다
-    let thumb_opts = unsafe {
-        CFDictionary::from_CFType_pairs(&[
-            (
-                CFString::wrap_under_get_rule(ffi::kCGImageSourceCreateThumbnailFromImageAlways),
-                CFType::wrap_under_get_rule(
-                    core_foundation::boolean::CFBoolean::true_value().as_CFTypeRef(),
+    // 파일에 박혀 있는 미리보기를 **먼저** 본다.
+    //
+    // 늘 원본을 통째로 디코딩하면(FromImageAlways) 21MB짜리 CR2를 매번 다 읽는다.
+    // 그런데 CR2에는 원본 크기 JPEG이 들어 있어 화질이 똑같다.
+    // 실측(같은 디스크, 같은 파일):
+    //   RAW  2.9장/초 -> 19.9장/초, 평균폭 625 -> 625 (화질 동일)
+    //   JPEG 7.2장/초 -> 1187장/초, 평균폭 587 -> 210 (너무 작아 못 씀)
+    //
+    // 그래서 크기를 보고 정한다. 목표에 못 미치면 그때 제대로 디코딩한다.
+    // Lap이 하는 것과 같은 판단이다 (select_embedded_jpeg_for_thumbnail).
+    let make_image = |from_image_always: bool| -> ffi::CGImageRef {
+        let key = unsafe {
+            if from_image_always {
+                CFString::wrap_under_get_rule(ffi::kCGImageSourceCreateThumbnailFromImageAlways)
+            } else {
+                CFString::wrap_under_get_rule(ffi::kCGImageSourceCreateThumbnailFromImageIfAbsent)
+            }
+        };
+        let opts = unsafe {
+            CFDictionary::from_CFType_pairs(&[
+                (
+                    CFString::wrap_under_get_rule(ffi::kCGImageSourceShouldCache),
+                    CFType::wrap_under_get_rule(
+                        core_foundation::boolean::CFBoolean::false_value().as_CFTypeRef(),
+                    ),
                 ),
-            ),
-            (
-                CFString::wrap_under_get_rule(ffi::kCGImageSourceCreateThumbnailWithTransform),
-                CFType::wrap_under_get_rule(
-                    core_foundation::boolean::CFBoolean::true_value().as_CFTypeRef(),
+                (
+                    key,
+                    CFType::wrap_under_get_rule(
+                        core_foundation::boolean::CFBoolean::true_value().as_CFTypeRef(),
+                    ),
                 ),
-            ),
-            (
-                CFString::wrap_under_get_rule(ffi::kCGImageSourceThumbnailMaxPixelSize),
-                CFNumber::from(max_px as i64).as_CFType(),
-            ),
-        ])
+                (
+                    CFString::wrap_under_get_rule(ffi::kCGImageSourceCreateThumbnailWithTransform),
+                    CFType::wrap_under_get_rule(
+                        core_foundation::boolean::CFBoolean::true_value().as_CFTypeRef(),
+                    ),
+                ),
+                (
+                    CFString::wrap_under_get_rule(ffi::kCGImageSourceThumbnailMaxPixelSize),
+                    CFNumber::from(max_px as i64).as_CFType(),
+                ),
+            ])
+        };
+        unsafe { ffi::CGImageSourceCreateThumbnailAtIndex(source, 0, opts.as_concrete_TypeRef()) }
     };
 
-    let image = unsafe {
-        ffi::CGImageSourceCreateThumbnailAtIndex(source, 0, thumb_opts.as_concrete_TypeRef())
-    };
+    let mut image = make_image(false);
+    if image.is_null() || long_edge(image) < max_px {
+        // 박힌 미리보기가 없거나 작았다. 원본에서 다시 뽑는다.
+        // 원본이 애초에 작으면 같은 크기가 다시 나오는데, 그건 손해가 아니다.
+        let full = make_image(true);
+        if !full.is_null() {
+            if !image.is_null() {
+                unsafe { ffi::CGImageRelease(image) };
+            }
+            image = full;
+        }
+    }
     if image.is_null() {
         return Err(ThumbError::NoThumbnail);
     }
@@ -218,6 +254,11 @@ pub fn make(
 
     write_jpeg(image, out, quality)?;
     Ok(size)
+}
+
+/// 긴 변의 픽셀 수.
+fn long_edge(image: ffi::CGImageRef) -> u32 {
+    unsafe { ffi::CGImageGetWidth(image).max(ffi::CGImageGetHeight(image)) as u32 }
 }
 
 /// CGImage 하나를 JPEG 파일로 쓴다.
@@ -343,6 +384,40 @@ mod tests {
 
     /// 뷰어가 요청 시 만드는 크기. 그리드용보다 확실히 커야 하고,
     /// RAW에서도 나와야 한다 — RAW는 웹뷰가 직접 못 읽으니 이게 유일한 경로다.
+    /// RAW에는 원본 크기 JPEG이 박혀 있다. 그걸 쓰면 화질은 같고 훨씬 빠르다.
+    /// 실측: 2.9장/초 -> 19.9장/초, 평균폭 625로 동일.
+    #[test]
+    fn raw_uses_the_embedded_preview_without_losing_size() {
+        let Some(src) = sample("cr2") else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("raw.jpg");
+        let s = make(&src, &out, 640, 0.8).expect("CR2 썸네일");
+        assert!(
+            s.width.max(s.height) >= 600,
+            "박힌 미리보기가 작다고 그냥 쓰면 안 된다: {s:?}"
+        );
+        assert!(s.width.max(s.height) <= 640);
+    }
+
+    /// 박힌 미리보기가 작으면 원본에서 다시 뽑아야 한다.
+    /// 옛 JPEG의 EXIF 썸네일은 160~320px이라 그리드에 쓰면 흐리다.
+    #[test]
+    fn small_embedded_preview_falls_back_to_the_full_image() {
+        let Some(src) = sample("jpg") else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("j.jpg");
+        let s = make(&src, &out, 640, 0.8).expect("썸네일");
+        // 원본이 640보다 크다면 결과도 640에 가까워야 한다
+        let full = make(&src, &dir.path().join("full.jpg"), 100_000, 0.8).expect("원본 크기");
+        if full.width.max(full.height) >= 640 {
+            assert_eq!(
+                s.width.max(s.height),
+                640,
+                "박힌 썸네일(보통 160~320px)을 그대로 쓰면 안 된다"
+            );
+        }
+    }
+
     #[test]
     fn makes_a_viewer_preview() {
         let Some(src) = sample("jpg") else { return };

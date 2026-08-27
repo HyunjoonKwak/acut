@@ -1,10 +1,19 @@
 //! 썸네일 캐시 — 어디에 저장하고 언제 다시 만드는가.
 //!
-//! **캐시는 라이브러리 볼륨 안(`.acut/thumbs/`)에 둔다.** 앱 데이터 폴더가 아니다.
-//! 이 프로젝트에서 실제로 겪은 일 때문이다: 리브랜딩으로 앱 ID가
-//! `com.smartcategory.media` → `com.acut.media`로 바뀌자 DB의 썸네일 경로
-//! 64,698건이 전부 죽은 링크가 됐다. 볼륨 안에 두면 앱 ID가 바뀌든 디스크를
-//! 다른 맥에 꽂든 캐시가 함께 간다.
+//! **캐시는 앱 데이터 폴더 안에 라이브러리별로 둔다.**
+//!
+//! 원래는 라이브러리 볼륨 안(`.acut/thumbs/`)에 뒀다. 앱 ID가 바뀌었을 때
+//! 썸네일 경로 64,698건이 죽은 적이 있어서, 디스크를 따라다니게 하려던
+//! 것이었다. 그런데 실측해 보니 대가가 컸다:
+//!
+//!   - 두 라이브러리 볼륨이 모두 exFAT이다. 작은 파일 쓰기가 내장 APFS의
+//!     **1/5.9** (59장/초 vs 347장/초).
+//!   - exFAT은 확장 속성을 못 담아 macOS가 파일마다 `._이름` 사이드카를
+//!     16KB씩 만든다. 실측 PHOTO 1에서만 64,108개 = 1,001MB.
+//!
+//! 그래서 DB 옆으로 옮겼다. 앱 ID가 바뀌면 DB와 캐시가 **함께** 사라지므로
+//! 죽은 참조가 남지 않는다 — 그때는 그냥 다시 만들면 된다.
+//! 대신 디스크를 다른 맥에 꽂으면 썸네일은 따라가지 않는다.
 //!
 //! 파일명은 `볼륨 상대경로 + 크기 + 수정시각`의 해시다. DB를 새로 만들어도
 //! 같은 이름이 나오므로 재생성하지 않는다.
@@ -24,17 +33,20 @@ pub const PREVIEW_PX: u32 = 2560;
 pub const PREVIEW_QUALITY: f64 = 0.85;
 
 /// 뷰어 미리보기 캐시 폴더. 썸네일과 나눠 둔다 — 지울 때 따로 지우기 위해서다.
-pub fn preview_root(library_root: &Path) -> PathBuf {
-    library_root.join(".acut").join("previews")
+pub fn preview_root(base: &Path, library_id: i64) -> PathBuf {
+    base.join("previews").join(library_id.to_string())
 }
 
-/// 라이브러리 루트 안의 캐시 폴더.
+/// 라이브러리의 썸네일 캐시 폴더. `base`는 앱 데이터 폴더다.
 ///
-/// **볼륨 마운트가 아니라 라이브러리 루트 기준**이다. 부팅 볼륨의 마운트는 `/`라
-/// 볼륨 기준으로 하면 `/.acut`에 쓰려다 권한 오류가 난다. 라이브러리가 어디에
-/// 있든 그 폴더 안에 캐시가 함께 있는 편이 옮기기도 쉽다.
-pub fn cache_root(library_root: &Path) -> PathBuf {
-    library_root.join(".acut").join("thumbs")
+/// 라이브러리마다 나누는 이유: 등록을 지울 때 그 라이브러리 것만 지우면 된다.
+pub fn cache_root(base: &Path, library_id: i64) -> PathBuf {
+    base.join("thumbs").join(library_id.to_string())
+}
+
+/// 옛 위치 — 라이브러리 볼륨 안. 옮겨 오기 위해서만 쓴다.
+pub fn legacy_root(library_dir: &Path) -> PathBuf {
+    library_dir.join(".acut").join("thumbs")
 }
 
 /// 폴더 상대경로와 파일명을 볼륨 기준 상대경로로 합친다.
@@ -76,6 +88,52 @@ pub fn thumb_path(root: &Path, key: &str) -> PathBuf {
 /// 캐시 루트 기준 상대경로 (DB의 `thumbs.rel_path`에 저장할 값).
 pub fn thumb_rel(key: &str) -> String {
     format!("{}/{}.jpg", &key[0..2], key)
+}
+
+/// 옛 위치(라이브러리 볼륨 안)의 캐시를 새 위치로 옮긴다.
+///
+/// 이미 만들어 둔 것을 버리지 않기 위해서다 — 실측 12만 장이 쌓여 있었고,
+/// 다시 만들려면 390GB를 또 읽어야 한다. 사이드카(`._…`)는 옮기지 않는다.
+///
+/// 옮긴 개수를 돌려준다. 옛 폴더가 없으면 0.
+pub fn migrate_from_legacy(legacy: &Path, dest: &Path) -> (usize, usize) {
+    let Ok(shards) = std::fs::read_dir(legacy) else {
+        return (0, 0);
+    };
+    let (mut moved, mut failed) = (0, 0);
+    for shard in shards.flatten() {
+        let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
+        let Some(shard_name) = shard.file_name().to_str().map(str::to_string) else { continue };
+        let out_dir = dest.join(&shard_name);
+        if std::fs::create_dir_all(&out_dir).is_err() {
+            failed += 1;
+            continue;
+        }
+        for f in files.flatten() {
+            let name = f.file_name();
+            if name.to_string_lossy().starts_with("._") {
+                let _ = std::fs::remove_file(f.path());
+                continue;
+            }
+            let to = out_dir.join(&name);
+            if to.exists() {
+                let _ = std::fs::remove_file(f.path());
+                moved += 1;
+                continue;
+            }
+            // 볼륨이 다르므로 rename은 안 된다. 복사 후 원본을 지운다.
+            match std::fs::copy(f.path(), &to) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(f.path());
+                    moved += 1;
+                }
+                Err(_) => failed += 1,
+            }
+        }
+        let _ = std::fs::remove_dir(shard.path());
+    }
+    let _ = std::fs::remove_dir(legacy);
+    (moved, failed)
 }
 
 /// macOS가 exFAT에 만드는 AppleDouble 사이드카를 치운다.
@@ -147,12 +205,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cache_lives_inside_the_library_root() {
-        let root = cache_root(Path::new("/Volumes/PHOTO 1"));
-        assert_eq!(root, Path::new("/Volumes/PHOTO 1/.acut/thumbs"));
-        // 하위 폴더를 라이브러리로 잡아도 그 안에 생긴다
-        let sub = cache_root(Path::new("/Volumes/PHOTO 1/내사진"));
-        assert_eq!(sub, Path::new("/Volumes/PHOTO 1/내사진/.acut/thumbs"));
+    fn cache_lives_next_to_the_database() {
+        let base = Path::new("/Users/me/Library/Application Support/com.acut.media");
+        assert_eq!(cache_root(base, 2), base.join("thumbs/2"));
+        assert_eq!(preview_root(base, 2), base.join("previews/2"));
+        // 라이브러리마다 나뉘어야 등록을 지울 때 그것만 지운다
+        assert_ne!(cache_root(base, 1), cache_root(base, 2));
     }
 
     #[test]
@@ -166,14 +224,12 @@ mod tests {
     fn previews_do_not_share_the_thumbnail_folder() {
         // 같은 키를 써도 폴더가 갈려야 한다. 섞이면 그리드가 2560px을 읽어
         // 느려지고, 캐시를 지울 때 둘 다 날아간다.
-        let lib = Path::new("/Volumes/PHOTO 1");
-        assert_eq!(preview_root(lib), Path::new("/Volumes/PHOTO 1/.acut/previews"));
-        assert_ne!(preview_root(lib), cache_root(lib));
-
+        let base = Path::new("/base");
+        assert_ne!(preview_root(base, 1), cache_root(base, 1));
         let key = key_for("2018/a.jpg", 100, 1000);
         assert_ne!(
-            thumb_path(&preview_root(lib), &key),
-            thumb_path(&cache_root(lib), &key),
+            thumb_path(&preview_root(base, 1), &key),
+            thumb_path(&cache_root(base, 1), &key),
         );
     }
 
@@ -213,6 +269,26 @@ mod tests {
 
     /// exFAT에서 macOS가 만드는 `._` 사이드카는 우리 캐시가 아니다.
     /// 세면 캐시 용량이 두 배로 보이고, 지우면 1GB가 돌아온다.
+    #[test]
+    fn legacy_cache_moves_without_losing_work() {
+        let old = tempfile::tempdir().unwrap();
+        let new = tempfile::tempdir().unwrap();
+        let legacy = old.path().join(".acut").join("thumbs");
+        std::fs::create_dir_all(legacy.join("ab")).unwrap();
+        std::fs::write(legacy.join("ab").join("abcd.jpg"), b"thumb").unwrap();
+        std::fs::write(legacy.join("ab").join("._abcd.jpg"), vec![0u8; 16384]).unwrap();
+
+        let dest = new.path().join("thumbs").join("1");
+        let (moved, failed) = migrate_from_legacy(&legacy, &dest);
+        assert_eq!((moved, failed), (1, 0));
+        assert!(dest.join("ab").join("abcd.jpg").is_file(), "썸네일은 살아 온다");
+        assert!(!dest.join("ab").join("._abcd.jpg").exists(), "사이드카는 안 옮긴다");
+        assert!(!legacy.exists(), "옛 폴더는 치운다");
+
+        // 옛 폴더가 없으면 아무 일도 없다
+        assert_eq!(migrate_from_legacy(&legacy, &dest), (0, 0));
+    }
+
     #[test]
     fn sidecars_are_not_counted_and_can_be_purged() {
         let dir = tempfile::tempdir().unwrap();
@@ -255,8 +331,9 @@ mod audit {
     #[test]
     #[ignore = "실제 라이브러리 필요"]
     fn cache_has_no_orphans() {
-        let db_path = std::path::PathBuf::from(std::env::var("HOME").unwrap())
-            .join("Library/Application Support/com.acut.media/acut-v2.db");
+        let base = std::path::PathBuf::from(std::env::var("HOME").unwrap())
+            .join("Library/Application Support/com.acut.media");
+        let db_path = base.join("acut-v2.db");
         if !db_path.is_file() {
             return;
         }
@@ -266,31 +343,18 @@ mod audit {
         )
         .unwrap();
 
-        // 라이브러리마다: 캐시 폴더와, 그 안에 있어야 할 키들
-        let libs: Vec<(i64, String, String)> = {
-            let mut st = c
-                .prepare(
-                    "SELECT l.id, l.rel_path, v.last_mount_path
-                     FROM libraries l JOIN volumes v ON v.uuid = l.volume_uuid",
-                )
-                .unwrap();
-            let it = st
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-                .unwrap();
+        let ids: Vec<i64> = {
+            let mut st = c.prepare("SELECT id FROM libraries").unwrap();
+            let it = st.query_map([], |r| r.get(0)).unwrap();
             it.collect::<rusqlite::Result<Vec<_>>>().unwrap()
         };
 
-        for (id, lib_rel, mount) in libs {
-            let dir = if lib_rel.is_empty() {
-                std::path::PathBuf::from(&mount)
-            } else {
-                std::path::Path::new(&mount).join(&lib_rel)
-            };
-            let root = cache_root(&dir);
+        for id in ids {
+            let root = cache_root(&base, id);
             if !root.is_dir() {
+                println!("라이브러리 {id}: 캐시 폴더 없음");
                 continue;
             }
-
             let mut want = std::collections::HashSet::new();
             let mut st = c
                 .prepare(
@@ -302,11 +366,7 @@ mod audit {
                 .unwrap();
             let rows = st
                 .query_map([id], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, i64>(1)?,
-                        r.get::<_, i64>(2)?,
-                    ))
+                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
                 })
                 .unwrap();
             for row in rows {
@@ -314,30 +374,18 @@ mod audit {
                 want.insert(key_for(&rel, size as u64, mtime));
             }
 
-            let mut have = 0usize;
-            let mut orphan = 0usize;
-            let mut samples: Vec<String> = Vec::new();
+            let (mut have, mut orphan) = (0usize, 0usize);
             for shard in std::fs::read_dir(&root).unwrap().flatten() {
                 let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
                 for f in files.flatten() {
                     have += 1;
                     let n = f.file_name().to_string_lossy().into_owned();
-                    let k = n.trim_end_matches(".jpg").to_string();
-                    if !want.contains(&k) {
+                    if !want.contains(n.trim_end_matches(".jpg")) {
                         orphan += 1;
-                        if samples.len() < 3 {
-                            samples.push(n);
-                        }
                     }
                 }
             }
-            println!(
-                "\n라이브러리 {id}: 파일 {} · 캐시 {have} · 고아 {orphan}",
-                want.len()
-            );
-            for s in &samples {
-                println!("   고아 예: {s}");
-            }
+            println!("라이브러리 {id}: 파일 {} · 캐시 {have} · 고아 {orphan}", want.len());
         }
     }
 }

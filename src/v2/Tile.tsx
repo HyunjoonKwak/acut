@@ -5,11 +5,12 @@ import {
   claimHoverPreview,
   releaseHoverPreview,
 } from "./hoverPreview";
-import { fmtDuration } from "./format";
+import { fmtBytes, fmtDate, fmtDuration } from "./format";
 
 export type TileFile = {
   id: number;
   name: string;
+  size: number;
   kind: number;
   rating: number;
   culling_flag: number;
@@ -33,7 +34,7 @@ export default function Tile({
   onClick,
   onDoubleClick,
   onContextMenu,
-  label,
+  caption = true,
   style = "card",
   scaling = "cover",
   aspect,
@@ -46,7 +47,8 @@ export default function Tile({
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
-  label: string;
+  /** 사진 아래에 이름과 날짜·크기를 적을지 */
+  caption?: boolean;
   style?: GridStyle;
   scaling?: Scaling;
   /** 양쪽 맞춤에서 계산된 칸 크기. 없으면 정사각형 격자. */
@@ -186,9 +188,19 @@ export default function Tile({
           )}
         </div>
       </div>
-      {style === "card" && (
-        <div className="text-[10.5px] text-fg-mute mt-1 truncate tabular-nums">
-          {label}
+      {/* 사진 아래 — 이름과 날짜·크기.
+          썸네일만으로는 어느 파일인지 알 수 없다. 파인더에서 찾거나 남에게
+          말할 때 필요한 건 결국 이름이다. */}
+      {caption && (
+        <div className="mt-1 leading-[1.25]">
+          <div className="text-[11px] text-fg-dim truncate" title={file.name}>
+            {file.name}
+          </div>
+          <div className="text-[10px] text-fg-mute truncate tabular-nums">
+            {fmtDate(file.taken_at)}
+            <span className="text-fg-faint"> · </span>
+            {fmtBytes(file.size)}
+          </div>
         </div>
       )}
     </button>

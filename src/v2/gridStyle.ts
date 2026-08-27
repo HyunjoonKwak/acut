@@ -14,6 +14,14 @@ export const STYLES: { v: GridStyle; label: string }[] = [
   { v: "justified", label: "양쪽 맞춤" },
 ];
 
+/**
+ * 사진 아래 이름·정보가 차지하는 높이 (px).
+ *
+ * 두 줄이다 — 이름 한 줄, 날짜·크기 한 줄. 가상 스크롤이 줄 높이를 미리
+ * 알아야 해서 상수로 둔다. 글자 크기를 바꾸면 여기도 같이 바꿔야 한다.
+ */
+export const CAPTION_H = 30;
+
 export const SCALINGS: { v: Scaling; label: string }[] = [
   { v: "cover", label: "채우기" },
   { v: "contain", label: "사진 전체" },

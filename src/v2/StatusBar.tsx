@@ -10,10 +10,21 @@ export type FocusInfo = {
   duration_ms: number | null;
 };
 
-function Cell({ icon, children }: { icon: string; children: React.ReactNode }) {
+function Cell({
+  icon,
+  children,
+  grow,
+}: {
+  icon: string;
+  children: React.ReactNode;
+  /** 자리가 모자랄 때 먼저 줄어드는 칸 (파일 이름) */
+  grow?: boolean;
+}) {
   return (
-    <span className="flex items-center gap-1 shrink-0 min-w-0">
-      <span className="text-fg-faint">{icon}</span>
+    <span
+      className={`flex items-center gap-1 min-w-0 ${grow ? "" : "shrink-0"}`}
+    >
+      <span className="text-fg-faint shrink-0">{icon}</span>
       <span className="truncate">{children}</span>
     </span>
   );
@@ -51,7 +62,9 @@ export default function StatusBar({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="h-8 shrink-0 flex items-center gap-4 px-3 bg-chrome border-t border-line text-[11.5px] text-fg-mute tabular-nums">
+    // 창이 좁아도 칸이 밖으로 밀려나지 않게 한다 — 밀려나면 오른쪽의
+    // 진행·되돌리기까지 화면 밖으로 사라진다.
+    <div className="h-8 shrink-0 flex items-center gap-4 px-3 overflow-hidden bg-chrome border-t border-line text-[11.5px] text-fg-mute tabular-nums">
       <Cell icon="≡">
         {index >= 0 && (
           <span className="text-fg-dim">{(index + 1).toLocaleString()}/</span>
@@ -61,7 +74,7 @@ export default function StatusBar({
 
       {file && (
         <>
-          <Cell icon={file.kind === 1 ? "▶" : "▣"}>
+          <Cell icon={file.kind === 1 ? "▶" : "▣"} grow>
             <span className="text-fg-dim">{file.name}</span> (
             {fmtBytes(file.size)})
           </Cell>

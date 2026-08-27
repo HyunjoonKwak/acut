@@ -11,6 +11,7 @@ import Tile from "./Tile";
 import SortMenu, { DEFAULT_SORT, type Sort } from "./SortMenu";
 import GroupMenu, { type GroupBy } from "./GroupMenu";
 import { layout, headerLabel, HEADER_H } from "./gridLayout";
+import { CAPTION_H } from "./gridStyle";
 import ViewMenu from "./ViewMenu";
 import ContextMenu, {
   type MenuAt,
@@ -53,7 +54,7 @@ import {
   picksFrom,
   type Picks,
 } from "./picks";
-import { fmtBytes, fmtDate } from "./format";
+import { fmtBytes } from "./format";
 
 // ── 타입 (Rust 쪽과 맞춰야 한다) ─────────────────────────────────────
 type FileRow = {
@@ -184,6 +185,8 @@ export default function App() {
     total: number;
   } | null>(null);
   const [thumbSize, setThumbSize] = useState(180);
+  /// 사진 아래에 이름·날짜·크기를 적을지. 줄 높이가 달라지므로 rowH가 안다.
+  const [caption, setCaption] = useState(true);
   /// 키보드·뷰어가 기준으로 삼는 한 장
   const [selected, setSelected] = useState<number | null>(null);
   /// 여러 장 고르기. 정리는 이 묶음을 옮긴다.
@@ -476,8 +479,8 @@ export default function App() {
     return () => ro.disconnect();
   }, [thumbSize]);
 
-  /// 카드는 아래에 날짜가 붙어 한 줄이 더 높다.
-  const rowH = thumbSize + (gridStyle === "card" ? 26 : 0) + 4;
+  /// 이름·크기를 적으면 그만큼 줄이 높아진다.
+  const rowH = thumbSize + (caption ? CAPTION_H : 0) + 4;
   /// 머리글과 사진 줄을 한 목록으로 편다. 묶기를 끄면 사진 줄만 나온다.
   const grid = useMemo(() => layout(rows, (r) => r.group, cols), [rows, cols]);
   /// 양쪽 맞춤일 때 각 사진 줄의 칸 크기. 줄마다 높이가 다르다.
@@ -507,7 +510,11 @@ export default function App() {
       if (grid[i]?.kind === "header") return HEADER_H;
       const j = justified?.get(i);
       // 양쪽 맞춤은 한 「줄」이 여러 소줄로 나뉜다
-      if (j) return j.reduce((a, r) => a + r.height + GAP, 0);
+      if (j)
+        return j.reduce(
+          (a, r) => a + r.height + GAP + (caption ? CAPTION_H : 0),
+          0,
+        );
       return rowH;
     },
     overscan: 4,
@@ -969,6 +976,18 @@ export default function App() {
     ];
   }, [ctxIds, rows, markOne, runTrashOp]);
 
+  /// 목록이 바뀌면 첫 장에 초점을 둔다.
+  ///
+  /// 하단 상태바는 **초점이 간 한 장**을 보여 준다. 아무것도 안 고른 채로
+  /// 시작하면 합계만 덩그러니 있어 그 자리가 무엇을 위한 것인지 알 수 없다.
+  /// 고른 것(`picked`)은 건드리지 않는다 — 초점과 선택은 다른 일이다.
+  useEffect(() => {
+    if (rows.length === 0) return;
+    setSelected((cur) =>
+      cur !== null && rows.some((r) => r.id === cur) ? cur : rows[0].id,
+    );
+  }, [rows]);
+
   /// 상태바에 띄울 지금 사진의 카메라·설정. 상세는 따로 읽는다.
   const [focusExif, setFocusExif] = useState<{
     camModel: string | null;
@@ -1088,6 +1107,8 @@ export default function App() {
               onScaling={setScaling}
               filmstrip={filmstrip}
               onFilmstrip={setFilmstrip}
+              caption={caption}
+              onCaption={setCaption}
             />
             <input
               type="range"
@@ -1490,7 +1511,7 @@ export default function App() {
                                 onContextMenu={(e: React.MouseEvent) =>
                                   openContext(file.id, e)
                                 }
-                                label={fmtDate(file.taken_at)}
+                                caption={caption}
                                 style="justified"
                                 scaling={scaling}
                                 aspect={{ width, height: jr.height }}
@@ -1525,7 +1546,7 @@ export default function App() {
                         onContextMenu={(e: React.MouseEvent) =>
                           openContext(r.id, e)
                         }
-                        label={fmtDate(r.taken_at)}
+                        caption={caption}
                         style={gridStyle}
                         scaling={scaling}
                       />

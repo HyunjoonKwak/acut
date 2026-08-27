@@ -9,6 +9,8 @@ export default function ViewMenu({
   onScaling,
   filmstrip,
   onFilmstrip,
+  caption,
+  onCaption,
 }: {
   style: GridStyle;
   scaling: Scaling;
@@ -16,6 +18,9 @@ export default function ViewMenu({
   onScaling: (s: Scaling) => void;
   filmstrip: boolean;
   onFilmstrip: (v: boolean) => void;
+  /** 사진 아래 이름·날짜·크기 */
+  caption: boolean;
+  onCaption: (v: boolean) => void;
 }) {
   const icon = style === "card" ? "▢" : style === "tile" ? "▦" : "▤";
   return (
@@ -53,6 +58,15 @@ export default function ViewMenu({
             </>
           )}
           <MenuSep />
+          <MenuItem
+            selected={caption}
+            onClick={() => {
+              onCaption(!caption);
+              close();
+            }}
+          >
+            이름·크기 표시
+          </MenuItem>
           <MenuItem
             selected={filmstrip}
             onClick={() => {

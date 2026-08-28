@@ -686,6 +686,8 @@ type NasStatus = {
   free_bytes: number | null;
   zone1_files: number | null;
   error: string | null;
+  rsync: string;
+  rsync_ok: boolean;
 };
 type Verified = {
   library_id: number;
@@ -741,7 +743,14 @@ function Nas() {
   const check = async () => {
     setChecking(true);
     try {
-      setSt(await invoke<NasStatus>("nas_check"));
+      const r = await invoke<NasStatus>("nas_check");
+      setSt(r);
+      toast(
+        r.online
+          ? `NAS 연결됨 — ${r.hostname}${r.rsync_ok ? "" : " · rsync는 못 씀"}`
+          : `NAS 연결 실패 — ${r.error ?? ""}`,
+        r.online && r.rsync_ok ? "ok" : "drop",
+      );
     } catch (e) {
       toast(String(e), "drop");
     } finally {
@@ -838,6 +847,34 @@ function Nas() {
           {checking ? "확인 중…" : "연결 확인"}
         </Btn>
       </Row>
+      {st && (
+        <div className="mx-4 mb-3 px-3 py-2 rounded-md bg-raised text-[12px] flex items-start gap-2">
+          <span
+            className="mt-1.5 w-2 h-2 rounded-full shrink-0"
+            style={{
+              background:
+                st.online && st.rsync_ok
+                  ? "var(--color-keep)"
+                  : "var(--color-drop)",
+            }}
+          />
+          <div className="min-w-0">
+            <div className="text-fg font-semibold">
+              {st.online ? `연결됨 — ${st.hostname}` : "연결 실패"}
+            </div>
+            <div className="text-fg-dim">
+              {st.online
+                ? `남은 공간 ${st.free_bytes === null ? "?" : fmtBytes(st.free_bytes)} · 1차 구역 파일 ${st.zone1_files?.toLocaleString() ?? "?"}개`
+                : st.error}
+            </div>
+            <div className={st.rsync_ok ? "text-fg-mute" : "text-drop"}>
+              {st.rsync_ok
+                ? st.rsync
+                : `${st.rsync} — macOS 내장 openrsync는 못 씁니다. 터미널에서 brew install rsync`}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="px-4 pb-3 flex flex-col gap-1.5">
         {field("host", "호스트")}
         {field("zone1", "1차 구역")}

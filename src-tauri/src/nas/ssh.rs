@@ -64,6 +64,33 @@ pub struct Status {
     pub free_bytes: Option<u64>,
     pub zone1_files: Option<u64>,
     pub error: Option<String>,
+    /// 이 맥의 rsync — 경로와 판. macOS 내장 openrsync는 옵션이 달라 못 쓴다.
+    pub rsync: String,
+    pub rsync_ok: bool,
+}
+
+/// 쓸 rsync — Homebrew 것을 먼저. GUI 앱의 PATH에는 /opt/homebrew/bin이 없어
+/// 그냥 `rsync`라고 하면 macOS 내장 openrsync(프로토콜 29)가 잡힌다.
+pub fn rsync_bin() -> std::path::PathBuf {
+    for p in ["/opt/homebrew/bin/rsync", "/usr/local/bin/rsync"] {
+        if Path::new(p).is_file() {
+            return Path::new(p).to_path_buf();
+        }
+    }
+    std::path::PathBuf::from("rsync")
+}
+
+/// (설명, 쓸 수 있나)
+pub fn rsync_version() -> (String, bool) {
+    let bin = rsync_bin();
+    match Command::new(&bin).arg("--version").output() {
+        Ok(o) => {
+            let first = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
+            let ok = first.starts_with("rsync") && !first.contains("openrsync");
+            (format!("{first} — {}", bin.display()), ok)
+        }
+        Err(e) => (format!("rsync 없음 ({e})"), false),
+    }
 }
 
 /// rsync가 남긴 stderr를 사람 말로. Synology의 /usr/bin/rsync는 setuid 래퍼라
@@ -95,6 +122,7 @@ fn q(s: &str) -> String {
 
 /// 연결이 되나, 남은 공간과 1차 구역의 파일 수는
 pub fn check(cfg: &Config) -> Status {
+    let (rsync, rsync_ok) = rsync_version();
     let script = format!(
         "hostname; df -Pk {z} | tail -1 | awk '{{print $4}}'; find {z} -type f ! -path '*/@eaDir/*' ! -path '*/{t}/*' ! -path '*/#recycle/*' | wc -l",
         z = q(&cfg.zone1),
@@ -108,14 +136,16 @@ pub fn check(cfg: &Config) -> Status {
             let hostname = lines.next().unwrap_or("").to_string();
             let free_bytes = lines.next().and_then(|s| s.parse::<u64>().ok()).map(|kb| kb * 1024);
             let zone1_files = lines.next().and_then(|s| s.parse().ok());
-            Status { online: true, hostname, free_bytes, zone1_files, error: None }
+            Status { online: true, hostname, free_bytes, zone1_files, error: None, rsync, rsync_ok }
         }
         Ok(o) => Status {
             online: false,
             hostname: String::new(),
             free_bytes: None,
             zone1_files: None,
-            error: Some(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+            error: Some(explain(&String::from_utf8_lossy(&o.stderr))),
+            rsync,
+            rsync_ok,
         },
         Err(e) => Status {
             online: false,
@@ -123,6 +153,8 @@ pub fn check(cfg: &Config) -> Status {
             free_bytes: None,
             zone1_files: None,
             error: Some(e.to_string()),
+            rsync,
+            rsync_ok,
         },
     }
 }
@@ -183,7 +215,11 @@ pub fn pull(
 ) -> std::io::Result<Pulled> {
     std::fs::create_dir_all(dest)?;
     let src = format!("{}:{}/", cfg.host, cfg.zone1.trim_end_matches('/'));
-    let mut cmd = Command::new("rsync");
+    let (_, ok) = rsync_version();
+    if !ok {
+        return Err(std::io::Error::other("이 맥의 rsync가 macOS 내장 openrsync라 쓸 수 없습니다 — 터미널에서 `brew install rsync` 뒤 다시 하세요"));
+    }
+    let mut cmd = Command::new(rsync_bin());
     cmd.args(["-a", "--partial", "--no-inc-recursive", "--info=progress2", "--out-format=%n", "-e", &rsync_ssh(cfg)]);
     cmd.args(excludes(cfg));
     cmd.arg(&src).arg(format!("{}/", dest.to_string_lossy()));
@@ -262,7 +298,11 @@ fn read_until_any(r: &mut impl BufRead, buf: &mut Vec<u8>) -> std::io::Result<us
 /// 로컬 폴더가 NAS 폴더에 다 있나 — 없거나 크기가 다른 파일의 상대경로.
 /// rsync 시험 실행(-n): «보낼 것»이 곧 «NAS에 없는 것»이다. 실제로는 아무것도 안 보낸다.
 pub fn missing_on_nas(cfg: &Config, local: &Path, remote: &str) -> std::io::Result<Vec<String>> {
-    let out = Command::new("rsync")
+    let (_, ok) = rsync_version();
+    if !ok {
+        return Err(std::io::Error::other("이 맥의 rsync가 macOS 내장 openrsync라 쓸 수 없습니다 — 터미널에서 `brew install rsync` 뒤 다시 하세요"));
+    }
+    let out = Command::new(rsync_bin())
         .args(["-n", "-a", "--size-only", "--out-format=%n", "-e", &rsync_ssh(cfg)])
         .args(excludes(cfg))
         .arg(format!("{}/", local.to_string_lossy()))
@@ -361,6 +401,13 @@ mod tests {
         let miss = missing_on_nas(&cfg, d.path(), &cfg.zone1).unwrap();
         eprintln!("확인: NAS에 없는 것 {}개 (0이어야)", miss.len());
         assert!(miss.is_empty());
+    }
+
+    #[test]
+    fn homebrew_rsync_is_preferred_and_openrsync_is_refused() {
+        let (desc, ok) = rsync_version();
+        // 이 맥에는 Homebrew rsync가 있다 — 없는 맥이면 openrsync라 false여야 한다
+        assert_eq!(ok, !desc.contains("openrsync") && desc.starts_with("rsync"), "{desc}");
     }
 
     #[test]

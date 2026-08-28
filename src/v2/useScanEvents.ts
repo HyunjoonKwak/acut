@@ -45,7 +45,7 @@ export function useScanEvents(cb: {
         data().setScanMsg("");
         // 아직 한 장도 처리 전이면 폴더를 훑는 중이다 — 찾은 수만 올라간다
         if (p.inserted + p.skipped === 0)
-          job().progress({ label: "폴더 훑는 중", done: p.found, total: 0 });
+          job().progress({ label: "스캔 중", done: p.found, total: 0 });
         else
           job().progress({
             label: "스캔",
@@ -177,7 +177,7 @@ export function useScanEvents(cb: {
       "nas-pull-progress",
       (p) =>
         job().progress({
-          label: p.total > 0 ? "NAS 내려받는 중" : "NAS 훑는 중",
+          label: "NAS 내려받는 중",
           done: p.total > 0 ? p.done : p.percent,
           total: p.total > 0 ? p.total : 0,
         }),

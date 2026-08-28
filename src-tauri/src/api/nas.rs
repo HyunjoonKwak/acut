@@ -57,6 +57,56 @@ pub async fn nas_check(app: AppHandle) -> Result<ssh::Status, String> {
         .map_err(|e| e.to_string())?)
 }
 
+/// 원장 — 받은 적 있는 것들의 상대경로
+fn ledger(db: &crate::db::conn::Db) -> Result<Vec<String>, String> {
+    db.read(|c| {
+        let mut st = c.prepare("SELECT rel_path FROM nas_pulls")?;
+        let it = st.query_map([], |r| r.get(0))?;
+        it.collect::<rusqlite::Result<Vec<String>>>()
+    })
+    .map_err(err)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Probe {
+    pub online: bool,
+    pub hostname: String,
+    /// 내려받을 작업대 라이브러리 — 없으면 None (등록 안 됨·오프라인)
+    pub library_id: Option<i64>,
+    pub new_files: usize,
+    pub new_bytes: u64,
+    pub error: Option<String>,
+}
+
+/// 앱을 열 때·주기적으로 — NAS가 켜져 있나, 1차 구역에 받은 적 없는 사진이 있나.
+/// 실패해도 조용하다(error에 담아 돌려줄 뿐). NAS가 꺼져 있어도 로컬은 무영향.
+#[tauri::command]
+pub async fn nas_probe(app: AppHandle) -> Result<Probe, String> {
+    let state = app.state::<AppState>();
+    let cfg = load(&state)?;
+    let libs = libraries::list(&state.db).map_err(err)?;
+    let desk = libs.into_iter().find(|l| l.area == 0 && l.online);
+    let already = ledger(&state.db)?;
+    let cfg2 = cfg.clone();
+    let dest = desk.as_ref().and_then(|l| l.dir.clone()).map(|d| d.join(ZONE1_DIR));
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        let st = ssh::check(&cfg2);
+        if !st.online {
+            return Probe { online: false, hostname: String::new(), library_id: None, new_files: 0, new_bytes: 0, error: st.error };
+        }
+        let Some(dest) = dest else {
+            return Probe { online: true, hostname: st.hostname, library_id: None, new_files: 0, new_bytes: 0, error: None };
+        };
+        match ssh::count_new(&cfg2, &dest, &already) {
+            Ok((n, b)) => Probe { online: true, hostname: st.hostname, library_id: None, new_files: n, new_bytes: b, error: None },
+            Err(e) => Probe { online: true, hostname: st.hostname, library_id: None, new_files: 0, new_bytes: 0, error: Some(e.to_string()) },
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(Probe { library_id: desk.map(|l| l.id), ..r })
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PullDone {
     pub library_id: i64,
@@ -80,11 +130,12 @@ pub async fn nas_pull_start(app: AppHandle, library_id: i64) -> Result<(), Strin
     let cancel = Arc::clone(&state.cancel);
     cancel.store(false, Ordering::Relaxed);
     let db = Arc::clone(&state.db);
+    let already = ledger(&state.db)?;
     std::thread::spawn(move || {
         let _guard = guard;
         let handle = app.clone();
         let dest = dir.join(ZONE1_DIR);
-        let r = ssh::pull(&cfg, &dest, &cancel, |p| {
+        let r = ssh::pull(&cfg, &dest, &already, &cancel, |p| {
             let _ = handle.emit("nas-pull-progress", p);
         });
         match r {

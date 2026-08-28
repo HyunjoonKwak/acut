@@ -31,6 +31,7 @@ import { useSelection } from "./selectionStore";
 import { thumbUrl, type Mark } from "./types";
 import { toast } from "./toastStore";
 import { useUi } from "./uiStore";
+import { useNasAuto } from "./useNasAuto";
 import { mark, startupMarks } from "./startupMarks";
 import { useGridKeys } from "./useGridKeys";
 import { useGridLayout } from "./useGridLayout";
@@ -47,6 +48,7 @@ import { facetOf, useFilter } from "./viewStore";
  */
 export default function App() {
   const [libId] = usePref("libId");
+  useNasAuto();
   const [group] = usePref("group");
   const [thumbSize] = usePref("thumbSize");
   const [gridStyle] = usePref("gridStyle");

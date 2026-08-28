@@ -711,6 +711,7 @@ function Nas() {
   const libs = useData((s) => s.libs);
   const job = useJob((s) => s.job);
   const busy = job !== null;
+  const [nasAuto, setNasAuto] = usePref("nasAuto");
   const [cfg, setCfg] = useState<NasConfig | null>(null);
   const [dirty, setDirty] = useState(false);
   const [st, setSt] = useState<NasStatus | null>(null);
@@ -907,6 +908,32 @@ function Nas() {
         )}
       </div>
 
+      <Row
+        label="앱을 열 때"
+        hint="첫 화면이 뜬 뒤와 30분마다 1차 구역을 살핍니다. NAS가 꺼져 있으면 조용히 넘어갑니다. 받은 적 없는 사진만 셉니다."
+      >
+        <div className="flex gap-1">
+          {(
+            [
+              ["off", "안 함"],
+              ["notify", "새 사진 알림"],
+              ["pull", "저절로 내려받기"],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              onClick={() => setNasAuto(v)}
+              className={`h-6 px-2 rounded text-[12px] ${
+                nasAuto === v
+                  ? "bg-accent text-accent-fg"
+                  : "text-fg-dim ring-1 ring-line hover:text-white"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </Row>
       <Row
         label="1차 구역 내려받기"
         hint={

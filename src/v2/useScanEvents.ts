@@ -186,6 +186,7 @@ export function useScanEvents(cb: {
       "nas-pull-done",
       (p) => {
         job().clear();
+        useData.getState().setNasNew(null);
         toast(
           p.cancelled
             ? `내려받기 멈춤 — ${p.files.toLocaleString()}개까지 받았습니다`

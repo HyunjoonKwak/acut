@@ -206,14 +206,97 @@ fn parse_progress(line: &str) -> Option<(u8, usize, usize)> {
     Some((pct, done, total))
 }
 
+/// rsync 패턴에서 뜻을 가지는 글자를 막는다 — 파일 이름은 이름 그대로여야 한다
+fn escape_pattern(rel: &str) -> String {
+    let mut out = String::with_capacity(rel.len() + 4);
+    for c in rel.chars() {
+        if matches!(c, '*' | '?' | '[' | ']' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// 이미 받은 것들(원장)을 rsync가 건너뛰게 — `--exclude-from` 파일.
+/// 내려받은 사진을 고르고 내사진으로 옮기면 작업대에서 사라지는데, 이게 없으면
+/// 다음 내려받기가 같은 사진을 또 받는다. 없으면 None.
+fn exclude_file(already: &[String]) -> std::io::Result<Option<std::path::PathBuf>> {
+    if already.is_empty() {
+        return Ok(None);
+    }
+    let p = std::env::temp_dir().join(format!("acut-nas-exclude-{}.txt", std::process::id()));
+    let body: String = already.iter().map(|r| format!("/{}\n", escape_pattern(r))).collect();
+    std::fs::write(&p, body)?;
+    Ok(Some(p))
+}
+
+/// 1차 구역에 «받은 적 없는 것»이 몇 개·몇 바이트나 — rsync 시험 실행(-n --stats).
+pub fn count_new(cfg: &Config, dest: &Path, already: &[String]) -> std::io::Result<(usize, u64)> {
+    let (_, ok) = rsync_version();
+    if !ok {
+        return Err(std::io::Error::other("이 맥의 rsync가 macOS 내장 openrsync라 쓸 수 없습니다 — 터미널에서 `brew install rsync` 뒤 다시 하세요"));
+    }
+    let src = format!("{}:{}/", cfg.host, cfg.zone1.trim_end_matches('/'));
+    let excl = exclude_file(already)?;
+    let mut cmd = Command::new(rsync_bin());
+    cmd.args(["-n", "-a", "--stats", "-e", &rsync_ssh(cfg)]);
+    cmd.args(excludes(cfg));
+    if let Some(p) = &excl {
+        cmd.arg(format!("--exclude-from={}", p.display()));
+    }
+    // 아직 없는 폴더라도 셀 수는 있어야 한다 — 빈 임시 폴더와 견준다
+    let local = if dest.is_dir() { dest.to_path_buf() } else { std::env::temp_dir().join("acut-nas-empty") };
+    std::fs::create_dir_all(&local)?;
+    cmd.arg(&src).arg(format!("{}/", local.to_string_lossy()));
+    let out = cmd.output();
+    if let Some(p) = excl {
+        let _ = std::fs::remove_file(p);
+    }
+    let out = out?;
+    if !out.status.success() {
+        return Err(std::io::Error::other(format!("rsync 실패: {}", explain(&String::from_utf8_lossy(&out.stderr)))));
+    }
+    Ok(parse_stats(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// `--stats` 출력에서 (옮길 파일 수, 바이트)
+fn parse_stats(text: &str) -> (usize, u64) {
+    let num = |line: &str| -> u64 {
+        line.split(':')
+            .nth(1)
+            .unwrap_or("")
+            .trim()
+            .split_whitespace()
+            .next()
+            .unwrap_or("0")
+            .replace(',', "")
+            .parse()
+            .unwrap_or(0)
+    };
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    for l in text.lines() {
+        if l.starts_with("Number of regular files transferred:") {
+            files = num(l) as usize;
+        } else if l.starts_with("Total transferred file size:") {
+            bytes = num(l);
+        }
+    }
+    (files, bytes)
+}
+
 /// 1차 구역을 `dest`로 내려받는다. 이어받기·증분은 rsync가 한다.
+/// `already`(원장)에 있는 것은 건너뛴다 — 작업대에서 정리돼 나간 사진을 또 받지 않게.
 pub fn pull(
     cfg: &Config,
     dest: &Path,
+    already: &[String],
     cancel: &AtomicBool,
     on_progress: impl Fn(&PullProgress),
 ) -> std::io::Result<Pulled> {
     std::fs::create_dir_all(dest)?;
+    let excl = exclude_file(already)?;
     let src = format!("{}:{}/", cfg.host, cfg.zone1.trim_end_matches('/'));
     let (_, ok) = rsync_version();
     if !ok {
@@ -222,6 +305,9 @@ pub fn pull(
     let mut cmd = Command::new(rsync_bin());
     cmd.args(["-a", "--partial", "--no-inc-recursive", "--info=progress2", "--out-format=%n", "-e", &rsync_ssh(cfg)]);
     cmd.args(excludes(cfg));
+    if let Some(p) = &excl {
+        cmd.arg(format!("--exclude-from={}", p.display()));
+    }
     cmd.arg(&src).arg(format!("{}/", dest.to_string_lossy()));
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
@@ -259,6 +345,9 @@ pub fn pull(
         }
     }
     let status = child.wait()?;
+    if let Some(p) = excl {
+        let _ = std::fs::remove_file(p);
+    }
     if !status.success() && !out.cancelled {
         let mut err = String::new();
         if let Some(mut e) = child.stderr.take() {
@@ -388,7 +477,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let last = std::cell::RefCell::new(PullProgress::default());
         let t = std::time::Instant::now();
-        let r = pull(&cfg, d.path(), &cancel, |p| *last.borrow_mut() = p.clone()).unwrap();
+        let r = pull(&cfg, d.path(), &[], &cancel, |p| *last.borrow_mut() = p.clone()).unwrap();
         let last = last.into_inner();
         eprintln!("\n받음 {}개 · 마지막 진행 {}/{} {}% · {:.1}초 · 취소 {}", r.files.len(), last.done, last.total, last.percent, t.elapsed().as_secs_f64(), r.cancelled);
         for f in r.files.iter().take(3) {
@@ -396,8 +485,15 @@ mod tests {
         }
         assert!(!r.cancelled);
         // 두 번째는 받을 것이 없다 — 증분
-        let r2 = pull(&cfg, d.path(), &cancel, |_| {}).unwrap();
+        let r2 = pull(&cfg, d.path(), &[], &cancel, |_| {}).unwrap();
         assert_eq!(r2.files.len(), 0);
+        // 원장에 있는 것은 로컬에서 지워도 다시 받지 않는다
+        let first = r.files[0].clone();
+        std::fs::remove_file(d.path().join(&first)).unwrap();
+        let (n, _) = count_new(&cfg, d.path(), &[first.clone()]).unwrap();
+        assert_eq!(n, 0, "원장에 있는 {first}는 새것이 아니다");
+        let (n2, _) = count_new(&cfg, d.path(), &[]).unwrap();
+        assert_eq!(n2, 1);
         let miss = missing_on_nas(&cfg, d.path(), &cfg.zone1).unwrap();
         eprintln!("확인: NAS에 없는 것 {}개 (0이어야)", miss.len());
         assert!(miss.is_empty());
@@ -408,6 +504,23 @@ mod tests {
         let (desc, ok) = rsync_version();
         // 이 맥에는 Homebrew rsync가 있다 — 없는 맥이면 openrsync라 false여야 한다
         assert_eq!(ok, !desc.contains("openrsync") && desc.starts_with("rsync"), "{desc}");
+    }
+
+    #[test]
+    fn exclude_patterns_are_anchored_and_escaped() {
+        assert_eq!(escape_pattern("a/b [1].jpg"), "a/b \\[1\\].jpg");
+        assert_eq!(escape_pattern("what?.jpg"), "what\\?.jpg");
+        let p = exclude_file(&["x/y.jpg".into(), "z*.png".into()]).unwrap().unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "/x/y.jpg\n/z\\*.png\n");
+        let _ = std::fs::remove_file(p);
+        assert!(exclude_file(&[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn stats_lines_are_parsed() {
+        let text = "Number of files: 2,701 (reg: 2,460, dir: 241)\nNumber of regular files transferred: 1,234\nTotal file size: 9,999 bytes\nTotal transferred file size: 12,345,678 bytes\n";
+        assert_eq!(parse_stats(text), (1234, 12_345_678));
+        assert_eq!(parse_stats(""), (0, 0));
     }
 
     #[test]

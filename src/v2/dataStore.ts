@@ -33,6 +33,8 @@ type Store = {
   /** 태그 id → 이름. 조건 칩이 「3번 태그」가 아니라 「가족」이라 쓰려면 필요하다 */
   tags: Map<number, string>;
   /** 상태바 왼쪽 오른쪽 끝에 잠깐 뜨는 말 */
+  /** NAS 1차 구역에 받은 적 없는 사진 — 상태바 알림 */
+  nasNew: { libraryId: number; files: number; bytes: number } | null;
   busy: string;
   scanMsg: string;
 
@@ -50,11 +52,15 @@ type Store = {
   toggleOpen: (path: string) => void;
   setOpen: (open: Set<string>) => void;
   setBusy: (s: string) => void;
+  setNasNew: (
+    n: { libraryId: number; files: number; bytes: number } | null,
+  ) => void;
   setScanMsg: (s: string) => void;
 };
 
 export const useData = create<Store>()((set, get) => ({
   libs: [],
+  nasNew: null,
   stats: null,
   cache: null,
   trash: null,
@@ -143,5 +149,6 @@ export const useData = create<Store>()((set, get) => ({
     }),
   setOpen: (open) => set({ open }),
   setBusy: (busy) => set({ busy }),
+  setNasNew: (n) => set({ nasNew: n }),
   setScanMsg: (scanMsg) => set({ scanMsg }),
 }));

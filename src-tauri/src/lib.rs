@@ -133,6 +133,7 @@ pub fn run() {
             api::nas::nas_config,
             api::nas::nas_config_set,
             api::nas::nas_check,
+            api::nas::nas_probe,
             api::nas::nas_pull_start,
             api::nas::nas_verify,
             api::nas::nas_purge_plan,

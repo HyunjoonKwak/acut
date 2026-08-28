@@ -1,6 +1,8 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
 import { fmtBytes } from "./format";
 import { useJob } from "./jobStore";
+import { toast } from "./toastStore";
 import { Kbd } from "./ui";
 import { useCountUp } from "./useCountUp";
 import { useView } from "./viewStore";
@@ -27,6 +29,7 @@ export default function StatusActions({
   const toClean = useData((s) => s.toClean);
   const batches = useData((s) => s.batches);
   const stats = useData((s) => s.stats);
+  const nasNew = useData((s) => s.nasNew);
   const viewTrash = useView((s) => s.viewTrash);
   const noThumb = useView((s) => s.picks.no_thumb);
   const hasJob = useJob((s) => s.job !== null);
@@ -70,6 +73,22 @@ export default function StatusActions({
           className="h-5 px-2 rounded bg-keep text-keep-fg font-semibold"
         >
           제외 {toClean?.files.toLocaleString()}장 치우기
+        </button>
+      )}
+      {!hasJob && nasNew && (
+        <button
+          onClick={async () => {
+            try {
+              await invoke("nas_pull_start", { libraryId: nasNew.libraryId });
+              useData.getState().setNasNew(null);
+            } catch (e) {
+              toast(String(e), "drop");
+            }
+          }}
+          title={`NAS 1차 구역에 받은 적 없는 사진 ${nasNew.files.toLocaleString()}장 · ${fmtBytes(nasNew.bytes)}. 누르면 작업대로 내려받습니다.`}
+          className="h-5 px-2 rounded bg-accent text-accent-fg font-semibold"
+        >
+          NAS 새 사진 {nasNew.files.toLocaleString()}장 받기
         </button>
       )}
       {undoable && (

@@ -60,6 +60,8 @@ export type Prefs = {
   slideshowSec: number;
   autoplay: boolean;
   loopVideo: boolean;
+  /** 앱을 열 때 NAS 1차 구역을 살피나 — 안 함 · 새 사진 알림 · 저절로 내려받기 */
+  nasAuto: "off" | "notify" | "pull";
 };
 
 export const DEFAULT_PREFS: Prefs = {
@@ -87,6 +89,7 @@ export const DEFAULT_PREFS: Prefs = {
   slideshowSec: 3,
   autoplay: true,
   loopVideo: false,
+  nasAuto: "notify",
 };
 
 type Store = Prefs & {

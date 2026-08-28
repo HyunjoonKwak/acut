@@ -82,3 +82,12 @@ thiserror = "2.0"
 tempfile = "3"
 # 가져오기 시험에서 «찍은 날»을 못으로 박는다 — EXIF가 없으면 수정시각이 쓰인다
 filetime = "0.2"
+
+# 개발 빌드에서도 의존 라이브러리는 최적화한다.
+# 그림 디코딩(image)이 디버그로 돌면 AI 벡터 만들기가 초당 20장이었다 —
+# 최적화된 벤치는 96장. 우리 코드만 디버그로 두고 나머지는 -O3.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

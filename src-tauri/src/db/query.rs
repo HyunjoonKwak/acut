@@ -164,6 +164,9 @@ pub struct Filter {
     /// 지도에서 고른 영역 — `남,서,북,동` (도). 지도 갈래에서 칸이나 보이는 영역을 누르면 걸린다.
     #[serde(default)]
     pub bbox: Option<String>,
+    /// NAS에 있는지 확인된 것만(true) / 확인 안 된 것만(false)
+    #[serde(default)]
+    pub nas: Option<bool>,
 }
 
 /// 그리드에 머리글을 넣어 묶는 기준. Lap의 GROUP과 같다.
@@ -329,6 +332,13 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         p.push(Box::new(b[2]));
         p.push(Box::new(b[1]));
         p.push(Box::new(b[3]));
+    }
+    if let Some(on) = f.nas {
+        w.push(if on {
+            "EXISTS (SELECT 1 FROM nas_state n WHERE n.file_id = fi.id)".into()
+        } else {
+            "NOT EXISTS (SELECT 1 FROM nas_state n WHERE n.file_id = fi.id)".into()
+        });
     }
     if let Some(pid) = f.person_id {
         w.push("EXISTS (SELECT 1 FROM faces fa WHERE fa.file_id = fi.id AND fa.person_id = ?)".into());

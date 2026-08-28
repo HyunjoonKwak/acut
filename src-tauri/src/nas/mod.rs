@@ -1,3 +1,4 @@
+pub mod ssh;
 // Synology DSM Web API client for NAS upload integration.
 // Follows the same conventions as the companion nas_photo project:
 // - API paths are probed at runtime via SYNO.API.Info (never hardcoded)

@@ -25,6 +25,7 @@ test("저장한 조건이 하나도 안 빠지고 돌아온다", () => {
     no_thumb: true,
     person_id: 3,
     bbox: "37.5,126.9,37.6,127",
+    nas: true,
   };
   // 조건이 늘어나면 이 시험도 같이 늘어나야 한다
   assert.deepEqual(

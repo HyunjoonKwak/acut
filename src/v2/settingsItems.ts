@@ -7,6 +7,7 @@ export const SECTIONS: { id: string; label: string }[] = [
   { id: "ai", label: "AI" },
   { id: "database", label: "데이터베이스" },
   { id: "backup", label: "백업" },
+  { id: "nas", label: "NAS" },
   { id: "advanced", label: "고급" },
   { id: "about", label: "정보" },
 ];

@@ -37,8 +37,14 @@ pub fn organize_date(state: State<'_, AppState>, ids: Vec<i64>) -> Result<String
 
 /// 미리보기 — 실제로 어디로 가는지 보여 준 뒤에 옮긴다.
 #[tauri::command]
-pub fn organize_preview(date: String, title: String) -> Result<String, String> {
-    Ok(organize::event_rel_dir(&date, &title))
+pub fn organize_preview(
+    state: State<'_, AppState>,
+    library_id: i64,
+    date: String,
+    title: String,
+) -> Result<String, String> {
+    let area = crate::db::libraries::get(&state.db, library_id).map_err(err)?.map(|l| l.area).unwrap_or(2);
+    Ok(organize::event_rel_dir_for(area, &date, &title))
 }
 
 #[tauri::command]
@@ -49,7 +55,8 @@ pub fn organize_move(
     date: String,
     title: String,
 ) -> Result<Outcome, String> {
-    let rel_dir = organize::event_rel_dir(&date, &title);
+    let area = crate::db::libraries::get(&state.db, library_id).map_err(err)?.map(|l| l.area).unwrap_or(2);
+    let rel_dir = organize::event_rel_dir_for(area, &date, &title);
     let dest = organize::Dest { library_id, rel_dir: rel_dir.clone() };
     let out =
         organize::move_to(&state.db, &ids, &dest, &format!("정리 → {rel_dir}")).map_err(err)?;

@@ -58,10 +58,10 @@ export default function Organize({
 
   useEffect(() => {
     if (!date) return;
-    invoke<string>("organize_preview", { date, title })
+    invoke<string>("organize_preview", { libraryId: dest, date, title })
       .then(setPreview)
       .catch(() => setPreview(""));
-  }, [date, title]);
+  }, [dest, date, title]);
 
   const run = useCallback(async () => {
     if (!date) return;

@@ -9,6 +9,7 @@
 pub mod cull;
 pub mod backup;
 pub mod job;
+pub mod nas;
 pub mod organize;
 pub mod photo_protocol;
 pub mod thumb_protocol;

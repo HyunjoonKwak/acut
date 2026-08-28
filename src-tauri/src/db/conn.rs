@@ -178,7 +178,7 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(n, 16, "테이블 16개가 만들어져야 한다");
+        assert_eq!(n, 17, "테이블 17개가 만들어져야 한다 (schema.sql 16 + upgrade의 nas_pulls)");
     }
 
     #[test]

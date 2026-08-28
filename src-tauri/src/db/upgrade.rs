@@ -11,6 +11,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     backfill_libraries(c)?;
     add_trash_columns(c)?;
     add_faces_at(c)?;
+    add_nas_pulls(c)?;
     Ok(())
 }
 
@@ -40,6 +41,17 @@ fn add_faces_at(c: &Connection) -> rusqlite::Result<()> {
         c.execute_batch("ALTER TABLE files ADD COLUMN faces_at INTEGER")?;
     }
     c.execute_batch("CREATE INDEX IF NOT EXISTS idx_files_faces_at ON files(faces_at) WHERE faces_at IS NULL;")
+}
+
+/// NAS 1차 구역에서 내려받은 것의 원장 — 비울 때 «우리가 받은 것»만 고른다 (5단계)
+fn add_nas_pulls(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS nas_pulls (
+            rel_path  TEXT PRIMARY KEY,
+            size      INTEGER NOT NULL,
+            pulled_at INTEGER NOT NULL
+        );",
+    )
 }
 
 fn has_column(c: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {

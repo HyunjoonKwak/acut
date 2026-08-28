@@ -172,6 +172,56 @@ export function useScanEvents(cb: {
       job().clear();
       toast(`옮기기 실패 — ${e}`, "drop");
     });
+    // NAS — 내려받기·비우기·XMP
+    on<{ done: number; total: number; percent: number }>(
+      "nas-pull-progress",
+      (p) =>
+        job().progress({
+          label: p.total > 0 ? "NAS 내려받는 중" : "NAS 훑는 중",
+          done: p.total > 0 ? p.done : p.percent,
+          total: p.total > 0 ? p.total : 0,
+        }),
+    );
+    on<{ library_id: number; files: number; cancelled: boolean }>(
+      "nas-pull-done",
+      (p) => {
+        job().clear();
+        toast(
+          p.cancelled
+            ? `내려받기 멈춤 — ${p.files.toLocaleString()}개까지 받았습니다`
+            : `NAS 1차 구역에서 ${p.files.toLocaleString()}개를 받았습니다 — 스캔합니다`,
+          "ok",
+        );
+        // 방금 받은 것이 목록에 보이게 — 그 라이브러리만 스캔
+        queue.current = [];
+        invoke("scan_start", { libraryId: p.library_id }).catch((e) =>
+          toast(String(e), "drop"),
+        );
+      },
+    );
+    on<{ moved: number; bytes: number }>("nas-purge-done", (p) =>
+      toast(
+        `1차 구역에서 ${p.moved.toLocaleString()}개를 #trash로 옮겼습니다`,
+        "ok",
+      ),
+    );
+    on<{ done: number; total: number }>("xmp-progress", (p) =>
+      job().progress({ label: "XMP 사이드카", done: p.done, total: p.total }),
+    );
+    on<{ written: number; skipped: number; failed: number }>(
+      "xmp-done",
+      (x) => {
+        job().clear();
+        toast(
+          `XMP ${x.written.toLocaleString()}개 씀${x.skipped ? ` · ${x.skipped}개 건너뜀` : ""}${x.failed ? ` · ${x.failed}개 실패` : ""}`,
+          x.failed ? "drop" : "ok",
+        );
+      },
+    );
+    on<string>("nas-error", (e) => {
+      job().clear();
+      toast(`NAS — ${e}`, "drop");
+    });
     on<string>("ai-error", (e) => {
       job().clear();
       toast(`AI 실패 — ${e}`, "drop");

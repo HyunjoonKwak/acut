@@ -72,6 +72,7 @@ export function chips(
   if (p.no_thumb) add("no_thumb", "썸네일 없음");
   if (p.person_id !== null) add("person_id", "사람");
   if (p.bbox) add("bbox", "지도 영역");
+  if (p.nas !== null) add("nas", p.nas ? "NAS에 있음" : "NAS에 없음");
 
   return out;
 }

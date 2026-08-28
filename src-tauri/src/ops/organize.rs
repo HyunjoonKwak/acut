@@ -240,6 +240,16 @@ pub fn event_rel_dir(date: &str, title: &str) -> String {
     format!("{year}/{}", sanitize(&event_folder_name(date, title)))
 }
 
+/// 영역에 맞는 모양 — 내사진(1)은 NAS Photos처럼 **평평한** 이벤트 폴더,
+/// 공용(2)과 나머지는 연도/이벤트. Drive Client가 1:1로 맞추니 모양이 같아야 한다.
+pub fn event_rel_dir_for(area: i32, date: &str, title: &str) -> String {
+    if area == 1 {
+        sanitize(&event_folder_name(date, title))
+    } else {
+        event_rel_dir(date, title)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +306,13 @@ mod tests {
             })
             .unwrap();
         (dir, db, lib, ids)
+    }
+
+    #[test]
+    fn my_photos_are_flat_and_shared_is_by_year() {
+        assert_eq!(event_rel_dir_for(1, "2024-08-27", "거제"), "2024-08-27 거제");
+        assert_eq!(event_rel_dir_for(2, "2024-08-27", "거제"), "2024/2024-08-27 거제");
+        assert_eq!(event_rel_dir_for(0, "2024-08-27", ""), "2024/2024-08-27");
     }
 
     #[test]

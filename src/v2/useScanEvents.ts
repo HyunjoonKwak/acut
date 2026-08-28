@@ -132,6 +132,27 @@ export function useScanEvents(cb: {
         "ok",
       );
     });
+    on<{ done: number; total: number }>("backup-progress", (p) =>
+      job().progress({ label: "백업", done: p.done, total: p.total }),
+    );
+    on<{
+      copied: number;
+      updated: number;
+      bytes: number;
+      errors: number;
+      cancelled: boolean;
+    }>("backup-done", (r) => {
+      job().clear();
+      const n = r.copied + r.updated;
+      toast(
+        r.cancelled
+          ? `백업 멈춤 — ${n.toLocaleString()}장까지 복사했습니다`
+          : r.errors > 0
+            ? `백업 끝 — ${n.toLocaleString()}장 복사, ${r.errors}건 문제 (로그 참고)`
+            : `백업 끝 — ${n.toLocaleString()}장 복사했습니다`,
+        r.errors > 0 ? "drop" : "ok",
+      );
+    });
     on<string>("ai-error", (e) => {
       job().clear();
       toast(`AI 실패 — ${e}`, "drop");

@@ -7,6 +7,7 @@
 //! `convertFileSrc`로 바꿔 `<img src>`에 넣으면 된다 — 웹뷰가 파일을 직접 읽는다.
 
 pub mod cull;
+pub mod backup;
 pub mod job;
 pub mod organize;
 pub mod photo_protocol;
@@ -49,6 +50,8 @@ pub struct AppState {
     pub ai_index: Mutex<Option<Arc<crate::ai::similar::Index>>>,
     /// 글로 찾기 모델 — 처음 물을 때 올리고 그대로 둔다 (0.5초)
     pub ai_text: Mutex<Option<Arc<crate::ai::text::Text>>>,
+    /// 백업 계획 — 「살펴보기」가 두고 「백업 시작」이 가져간다
+    pub backup_plans: Mutex<Option<Vec<backup::Planned>>>,
     /// 라이브러리 id → 실제 폴더.
     ///
     /// `thumb://`는 **썸네일 한 장마다** 이걸 부른다. 한 화면에 200장이면
@@ -67,6 +70,7 @@ impl AppState {
             watch: Arc::new(scan::watch::Watchers::default()),
             ai_index: Mutex::new(None),
             ai_text: Mutex::new(None),
+            backup_plans: Mutex::new(None),
             dirs: Mutex::new(HashMap::new()),
         }
     }
@@ -284,6 +288,8 @@ pub fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
 #[tauri::command]
 pub fn scan_cancel(state: State<'_, AppState>) {
     state.cancel.store(true, Ordering::Relaxed);
+    // 백업(sync.rs)은 제 스위치를 본다
+    crate::core::sync::SYNC_CANCELLED.store(true, Ordering::SeqCst);
 }
 
 // ── 목록 ───────────────────────────────────────────────────────────────

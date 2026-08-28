@@ -5,6 +5,12 @@
 //! HTTPS로 부르는 것보다 훨씬 빠르며 끊겨도 이어받는다. 자격증명은 저장하지
 //! 않는다 — ssh 설정이 든다.
 //!
+//! rsync는 DSM의 rsync용 sshd(포트 22)로만 받아 준다 — 일반 sshd(72)로 들어온
+//! rsync는 setuid 래퍼가 «Permission denied»를 낸다. 그래서 rsync는 `-p 22`,
+//! 셸 명령(확인·비우기)은 ssh 별칭(72)으로 간다. 22번 sshd는 셸을 안 준다.
+//! known_hosts에서 22번은 `[host]:22`가 아니라 맨 호스트명으로 찾는다 —
+//! 같은 호스트 키를 이미 믿고 있으니 처음 보는 이름은 받아들인다(accept-new).
+//!
 //! DSM의 휴지통(#recycle)은 이 NAS에서 꺼져 있다. 그래서 «삭제»는 1차 구역
 //! 안의 `#trash/`로 옮기는 것이다 — nas_photo가 공용에 쓰는 것과 같은 이름.
 
@@ -25,6 +31,14 @@ pub struct Config {
     pub shared: String,
     /// 내려받을 때 빼는 것 — 쉼표로
     pub exclude: String,
+    /// rsync가 붙는 SSH 포트. DSM의 rsync 서비스는 제 sshd(기본 22)로만 받는다 —
+    /// 일반 sshd(이 맥은 72)로 들어온 rsync는 setuid 래퍼가 거절한다 (실측).
+    #[serde(default = "default_rsync_port")]
+    pub rsync_port: u16,
+}
+
+fn default_rsync_port() -> u16 {
+    22
 }
 
 impl Default for Config {
@@ -35,6 +49,7 @@ impl Default for Config {
             photos: "/volume1/homes/luckyguy/Photos".into(),
             shared: "/volume1/photo".into(),
             exclude: "@eaDir,#recycle,#trash,_quarantine,.DS_Store,Thumbs.db".into(),
+            rsync_port: 22,
         }
     }
 }
@@ -56,7 +71,7 @@ pub struct Status {
 pub fn explain(stderr: &str) -> String {
     let t = stderr.trim();
     if t.contains("Permission denied") {
-        return "NAS가 rsync를 거절했습니다 — DSM 제어판 › 파일 서비스 › rsync에서 «rsync 서비스 사용»을 켜고, 사용자에게 rsync 응용 프로그램 권한을 주세요. (ssh 접속 자체는 됩니다)".into();
+        return "NAS가 rsync를 거절했습니다 — DSM 제어판 › 파일 서비스 › rsync에서 «rsync 서비스 사용»을 켜고, 설정의 rsync 포트가 DSM의 rsync용 SSH 포트(기본 22)와 같은지 보세요. (ssh 접속 자체는 됩니다)".into();
     }
     if t.contains("Could not resolve hostname") {
         return format!("ssh 설정에 그 호스트가 없습니다: {t}");
@@ -128,6 +143,11 @@ pub struct Pulled {
     pub cancelled: bool,
 }
 
+/// rsync가 쓸 ssh 명령 — rsync용 포트로
+fn rsync_ssh(cfg: &Config) -> String {
+    format!("ssh -p {} -o BatchMode=yes -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new", cfg.rsync_port)
+}
+
 fn excludes(cfg: &Config) -> Vec<String> {
     cfg.exclude
         .split(',')
@@ -164,7 +184,7 @@ pub fn pull(
     std::fs::create_dir_all(dest)?;
     let src = format!("{}:{}/", cfg.host, cfg.zone1.trim_end_matches('/'));
     let mut cmd = Command::new("rsync");
-    cmd.args(["-a", "--partial", "--no-inc-recursive", "--info=progress2", "--out-format=%n", "-e", "ssh -o BatchMode=yes -o LogLevel=ERROR"]);
+    cmd.args(["-a", "--partial", "--no-inc-recursive", "--info=progress2", "--out-format=%n", "-e", &rsync_ssh(cfg)]);
     cmd.args(excludes(cfg));
     cmd.arg(&src).arg(format!("{}/", dest.to_string_lossy()));
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -243,7 +263,7 @@ fn read_until_any(r: &mut impl BufRead, buf: &mut Vec<u8>) -> std::io::Result<us
 /// rsync 시험 실행(-n): «보낼 것»이 곧 «NAS에 없는 것»이다. 실제로는 아무것도 안 보낸다.
 pub fn missing_on_nas(cfg: &Config, local: &Path, remote: &str) -> std::io::Result<Vec<String>> {
     let out = Command::new("rsync")
-        .args(["-n", "-a", "--size-only", "--out-format=%n", "-e", "ssh -o BatchMode=yes -o LogLevel=ERROR"])
+        .args(["-n", "-a", "--size-only", "--out-format=%n", "-e", &rsync_ssh(cfg)])
         .args(excludes(cfg))
         .arg(format!("{}/", local.to_string_lossy()))
         .arg(format!("{}:{}/", cfg.host, remote.trim_end_matches('/')))
@@ -316,6 +336,31 @@ mod tests {
         assert!(m.contains("DSM 제어판"));
         assert!(explain("ssh: Could not resolve hostname nasroot").contains("호스트가 없습니다"));
         assert_eq!(explain("  odd  "), "odd");
+    }
+
+    /// 실제 NAS — 작은 폴더 하나를 받아 본다. `ACUT_NAS_DIR=/volume1/.../_정리 cargo test --lib nas::ssh::tests::real -- --ignored --nocapture`
+    #[test]
+    #[ignore = "실제 NAS 필요"]
+    fn real_pull_small_folder() {
+        let Ok(dir) = std::env::var("ACUT_NAS_DIR") else { return };
+        let cfg = Config { zone1: dir, ..Default::default() };
+        let d = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let last = std::cell::RefCell::new(PullProgress::default());
+        let t = std::time::Instant::now();
+        let r = pull(&cfg, d.path(), &cancel, |p| *last.borrow_mut() = p.clone()).unwrap();
+        let last = last.into_inner();
+        eprintln!("\n받음 {}개 · 마지막 진행 {}/{} {}% · {:.1}초 · 취소 {}", r.files.len(), last.done, last.total, last.percent, t.elapsed().as_secs_f64(), r.cancelled);
+        for f in r.files.iter().take(3) {
+            eprintln!("  {f}");
+        }
+        assert!(!r.cancelled);
+        // 두 번째는 받을 것이 없다 — 증분
+        let r2 = pull(&cfg, d.path(), &cancel, |_| {}).unwrap();
+        assert_eq!(r2.files.len(), 0);
+        let miss = missing_on_nas(&cfg, d.path(), &cfg.zone1).unwrap();
+        eprintln!("확인: NAS에 없는 것 {}개 (0이어야)", miss.len());
+        assert!(miss.is_empty());
     }
 
     #[test]

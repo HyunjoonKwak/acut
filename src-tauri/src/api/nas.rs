@@ -39,6 +39,7 @@ pub fn nas_config_set(state: State<'_, AppState>, config: Config) -> Result<Conf
         photos: config.photos.trim().trim_end_matches('/').to_string(),
         shared: config.shared.trim().trim_end_matches('/').to_string(),
         exclude: config.exclude.trim().to_string(),
+        rsync_port: if config.rsync_port == 0 { 22 } else { config.rsync_port },
     };
     if c.host.is_empty() || c.zone1.is_empty() {
         return Err("호스트와 1차 구역 경로는 비울 수 없습니다".into());

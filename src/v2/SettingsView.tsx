@@ -678,6 +678,7 @@ type NasConfig = {
   photos: string;
   shared: string;
   exclude: string;
+  rsync_port: number;
 };
 type NasStatus = {
   online: boolean;
@@ -843,6 +844,23 @@ function Nas() {
         {field("photos", "개인(내사진)")}
         {field("shared", "공용")}
         {field("exclude", "제외")}
+        <label className="flex items-center gap-2 text-[12px]">
+          <span className="w-20 shrink-0 text-fg-mute">rsync 포트</span>
+          <input
+            value={cfg?.rsync_port ?? 22}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              setCfg((c) =>
+                c ? { ...c, rsync_port: Number.isFinite(n) ? n : 22 } : c,
+              );
+              setDirty(true);
+            }}
+            className="w-20 h-7 px-2 rounded bg-canvas text-[12px] text-fg ring-1 ring-line outline-none focus:ring-accent font-mono"
+          />
+          <span className="text-fg-faint">
+            DSM의 rsync용 SSH 포트 — 일반 SSH 포트와 다릅니다
+          </span>
+        </label>
         {dirty && (
           <div className="flex justify-end">
             <Btn tone="accent" onClick={save}>

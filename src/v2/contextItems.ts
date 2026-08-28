@@ -91,6 +91,11 @@ export function contextItems(
       ? ([
           {
             kind: "item",
+            label: "비슷한 사진 찾기",
+            run: () => ui().set({ similarFor: ids[0] }),
+          },
+          {
+            kind: "item",
             label: "이름 바꾸기…",
             run: () => ui().set({ renaming: ids[0] }),
           },

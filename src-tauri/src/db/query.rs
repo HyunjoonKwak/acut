@@ -369,32 +369,7 @@ pub fn page(
     let mut rows = db.read(|c| {
         let mut st = c.prepare(&sql)?;
         let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-        let it = st.query_map(refs.as_slice(), |r| {
-            Ok(FileRow {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                taken_at: r.get(2)?,
-                taken_at_source: r.get(3)?,
-                kind: r.get(4)?,
-                size: r.get(5)?,
-                width: r.get(6)?,
-                height: r.get(7)?,
-                rating: r.get(8)?,
-                culling_flag: r.get(9)?,
-                favorite: r.get::<_, i32>(10)? != 0,
-                duration_ms: r.get(11)?,
-                created_at: r.get(12)?,
-                modified_at: r.get(13)?,
-                library_id: r.get(14)?,
-                thumb: r.get(15)?,
-                iso: r.get(17)?,
-                aperture: r.get(18)?,
-                shutter: r.get(19)?,
-                focal_mm: r.get(20)?,
-                cam_model: r.get(21)?,
-                group: r.get(16)?,
-            })
-        })?;
+        let it = st.query_map(refs.as_slice(), row_to_file)?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
 
@@ -547,6 +522,61 @@ pub struct Facet {
     pub value: String,
     pub label: String,
     pub count: i64,
+}
+
+/// 한 행 → FileRow. page()와 by_ids()가 같은 SELECT 열 순서를 쓴다.
+fn row_to_file(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {
+    Ok(FileRow {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        taken_at: r.get(2)?,
+        taken_at_source: r.get(3)?,
+        kind: r.get(4)?,
+        size: r.get(5)?,
+        width: r.get(6)?,
+        height: r.get(7)?,
+        rating: r.get(8)?,
+        culling_flag: r.get(9)?,
+        favorite: r.get::<_, i32>(10)? != 0,
+        duration_ms: r.get(11)?,
+        created_at: r.get(12)?,
+        modified_at: r.get(13)?,
+        library_id: r.get(14)?,
+        thumb: r.get(15)?,
+        iso: r.get(17)?,
+        aperture: r.get(18)?,
+        shutter: r.get(19)?,
+        focal_mm: r.get(20)?,
+        cam_model: r.get(21)?,
+        group: r.get(16)?,
+    })
+}
+
+/// 주어진 id들의 행 — **주어진 순서대로**. 비슷한 사진처럼 순서가 곧 뜻인 곳에 쓴다.
+pub fn by_ids(db: &Db, ids: &[i64]) -> Result<Vec<FileRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT fi.id, fi.name, fi.taken_at, fi.taken_at_source, fi.kind, fi.size,
+                fi.width, fi.height, fi.rating, fi.culling_flag, fi.favorite,
+                fi.duration_ms, fi.created_at, fi.modified_at, fo.library_id, t.rel_path,
+                NULL,
+                fi.iso, fi.aperture, fi.shutter, fi.focal_mm, fi.cam_model
+         FROM files fi
+         JOIN folders fo ON fo.id = fi.folder_id
+         LEFT JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
+         WHERE fi.id IN ({list})"
+    );
+    let rows: Vec<FileRow> = db.read(|c| {
+        let mut st = c.prepare(&sql)?;
+        let it = st.query_map([], row_to_file)?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })?;
+    // IN은 순서를 안 지킨다 — 준 순서로 다시 놓는다
+    let by: std::collections::HashMap<i64, FileRow> = rows.into_iter().map(|r| (r.id, r)).collect();
+    Ok(ids.iter().filter_map(|id| by.get(id).cloned()).collect())
 }
 
 /// 사이드바가 훑어볼 갈래.

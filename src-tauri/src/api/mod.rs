@@ -44,6 +44,8 @@ pub struct AppState {
     pub running: Arc<AtomicBool>,
     /// 폴더 감시 — 파인더로 넣은 사진이 저절로 나타난다
     pub watch: Arc<scan::watch::Watchers>,
+    /// 비슷한 사진 색인 — 벡터를 메모리에 한 번 올려 둔 것. 임베딩이 바뀌면 비운다.
+    pub ai_index: Mutex<Option<Arc<crate::ai::similar::Index>>>,
     /// 라이브러리 id → 실제 폴더.
     ///
     /// `thumb://`는 **썸네일 한 장마다** 이걸 부른다. 한 화면에 200장이면
@@ -60,6 +62,7 @@ impl AppState {
             cancel: Arc::new(AtomicBool::new(false)),
             running: Arc::new(AtomicBool::new(false)),
             watch: Arc::new(scan::watch::Watchers::default()),
+            ai_index: Mutex::new(None),
             dirs: Mutex::new(HashMap::new()),
         }
     }
@@ -938,4 +941,126 @@ pub fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String> {
         }
     }
     Ok(w.watching())
+}
+
+/// 주어진 id들의 행 — 준 순서대로. 목록에 없는 사진 한 줄이 필요할 때.
+#[tauri::command]
+pub fn files_by_ids(state: State<'_, AppState>, ids: Vec<i64>) -> Result<Vec<query::FileRow>, String> {
+    query::by_ids(&state.db, &ids).map_err(err)
+}
+
+// ── AI ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AiStatus {
+    /// 모델 파일이 있나
+    pub model_present: bool,
+    pub model_bytes: u64,
+    /// 벡터가 있는 장수 / 전체 장수
+    pub embedded: i64,
+    pub total: i64,
+}
+
+#[tauri::command]
+pub fn ai_status(state: State<'_, AppState>) -> Result<AiStatus, String> {
+    use crate::ai::models::{self, ModelId};
+    let (embedded, total) = crate::ai::embed::counts(&state.db).map_err(err)?;
+    Ok(AiStatus {
+        model_present: models::present(&state.cache_base, ModelId::ClipVision),
+        model_bytes: models::spec(ModelId::ClipVision).bytes,
+        embedded,
+        total,
+    })
+}
+
+/// 모델을 받는다. 진행은 `ai-download`, 끝나면 `ai-download-done`(오류 글 또는 null).
+#[tauri::command]
+pub fn ai_model_download(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let base = state.cache_base.clone();
+    std::thread::spawn(move || {
+        let handle = app.clone();
+        let r = crate::ai::models::download(&base, crate::ai::models::ModelId::ClipVision, |p| {
+            let _ = handle.emit("ai-download", p);
+        });
+        let _ = app.emit("ai-download-done", r.err().map(|e| e.to_string()));
+    });
+    Ok(())
+}
+
+/// 벡터를 채운다. 스캔과 같은 running 스위치를 쓴다 — 같은 DB에 둘이 쓰지 않는다.
+/// 진행은 `ai-progress`, 끝나면 `ai-done`.
+#[tauri::command]
+pub fn ai_embed_start(app: AppHandle) -> Result<(), String> {
+    use crate::ai::models::{self, ModelId};
+    let state = app.state::<AppState>();
+    if !models::present(&state.cache_base, ModelId::ClipVision) {
+        return Err("모델이 없습니다 — 설정 › AI에서 받으세요".into());
+    }
+    let running = Arc::clone(&state.running);
+    if running.swap(true, Ordering::AcqRel) {
+        return Err("스캔이 도는 중입니다. 끝난 뒤에 하세요".into());
+    }
+    let db = Arc::clone(&state.db);
+    let base = state.cache_base.clone();
+    let cancel = Arc::clone(&state.cancel);
+    cancel.store(false, Ordering::Relaxed);
+    let model = models::path(&base, ModelId::ClipVision);
+
+    std::thread::spawn(move || {
+        struct Done(Arc<AtomicBool>);
+        impl Drop for Done {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _done = Done(running);
+        let handle = app.clone();
+        let r = crate::ai::embed::run(&db, &model, &base, cancel, |p| {
+            let _ = handle.emit("ai-progress", p);
+        });
+        // 색인은 낡았다 — 다음 물음 때 다시 올린다
+        if let Ok(mut i) = app.state::<AppState>().ai_index.lock() {
+            *i = None;
+        }
+        match r {
+            Ok(p) => {
+                let _ = app.emit("ai-done", p);
+            }
+            Err(e) => {
+                let _ = app.emit("ai-error", e.to_string());
+            }
+        }
+    });
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct SimilarRow {
+    pub file: query::FileRow,
+    /// 닮은 정도 0–1 (코사인)
+    pub score: f32,
+}
+
+/// 이 사진과 비슷한 것들 — 가까운 순.
+#[tauri::command]
+pub fn ai_similar(state: State<'_, AppState>, id: i64, limit: usize) -> Result<Vec<SimilarRow>, String> {
+    let index = {
+        let mut slot = state.ai_index.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = Some(Arc::new(crate::ai::similar::Index::load(&state.db).map_err(err)?));
+        }
+        Arc::clone(slot.as_ref().unwrap())
+    };
+    if index.is_empty() {
+        return Err("아직 벡터가 없습니다 — 설정 › AI에서 만드세요".into());
+    }
+    let hits = index.similar(id, limit.clamp(1, 200));
+    let ids: Vec<i64> = hits.iter().map(|h| h.0).collect();
+    let rows = query::by_ids(&state.db, &ids).map_err(err)?;
+    let score: HashMap<i64, f32> = hits.into_iter().collect();
+    Ok(rows
+        .into_iter()
+        .map(|file| SimilarRow { score: score.get(&file.id).copied().unwrap_or(0.0), file })
+        .collect())
 }

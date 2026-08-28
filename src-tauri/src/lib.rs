@@ -2,6 +2,7 @@
 // 안 쓰지만 3·5단계에서 붙이므로 남긴다 — 그래서 dead_code를 허용한다.
 #![allow(dead_code)]
 
+mod ai;
 mod api;
 mod core;
 mod cull;
@@ -96,6 +97,11 @@ pub fn run() {
             api::file_comment,
             api::file_rename,
             api::watch_set,
+            api::files_by_ids,
+            api::ai_status,
+            api::ai_model_download,
+            api::ai_embed_start,
+            api::ai_similar,
             api::cache_usage,
             api::cache_clear,
             api::cache_migrate,

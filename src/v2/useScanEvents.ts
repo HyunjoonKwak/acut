@@ -95,6 +95,36 @@ export function useScanEvents(cb: {
       }
     });
     on<string>("scan-error", (m) => data().setScanMsg(`스캔 실패: ${m}`));
+
+    // AI — 모델 받기와 벡터 만들기. 스캔과 같은 자리에 진행이 뜬다.
+    on<{ got: number; total: number }>("ai-download", (p) =>
+      job().progress({
+        label: "모델 받는 중 (MB)",
+        done: Math.round(p.got / 1e6),
+        total: Math.round(p.total / 1e6),
+      }),
+    );
+    on<string | null>("ai-download-done", (e) => {
+      job().clear();
+      if (e) toast(`모델 받기 실패 — ${e}`, "drop");
+      else toast("모델을 받았습니다. 이제 벡터를 만들 수 있습니다", "ok");
+    });
+    on<{ done: number; total: number; failed: number }>("ai-progress", (p) =>
+      job().progress({ label: "AI 벡터", done: p.done, total: p.total }),
+    );
+    on<{ done: number; total: number; failed: number }>("ai-done", (p) => {
+      job().clear();
+      toast(
+        p.failed > 0
+          ? `벡터 ${p.done - p.failed}장 · 실패 ${p.failed}장`
+          : `벡터 ${p.done.toLocaleString()}장을 만들었습니다`,
+        p.failed > 0 ? "drop" : "ok",
+      );
+    });
+    on<string>("ai-error", (e) => {
+      job().clear();
+      toast(`AI 실패 — ${e}`, "drop");
+    });
     // 폴더 감시 — 파인더로 넣거나 지운 것이 반영됐다
     on<{
       library_id: number;

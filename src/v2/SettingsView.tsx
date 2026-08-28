@@ -31,6 +31,7 @@ export default function SettingsView({
         <Library onRescanAll={onRescanAll} />
         <Browse />
         <ViewerSection />
+        <Ai />
         <Database />
         <Advanced />
         <About />
@@ -313,6 +314,87 @@ function ViewerSection() {
       </Row>
       <Row label="영상 반복">
         <Toggle k="loopVideo" />
+      </Row>
+    </Section>
+  );
+}
+
+type AiStatus = {
+  model_present: boolean;
+  model_bytes: number;
+  embedded: number;
+  total: number;
+};
+
+function Ai() {
+  const [st, setSt] = useState<AiStatus | null>(null);
+  const job = useJob((s) => s.job);
+  const busy = job !== null;
+  const reload = useCallback(() => {
+    invoke<AiStatus>("ai_status")
+      .then(setSt)
+      .catch(() => setSt(null));
+  }, []);
+  // 일이 끝날 때마다(받기·벡터) 다시 센다
+  useEffect(reload, [reload, busy]);
+
+  const download = async () => {
+    try {
+      await invoke("ai_model_download");
+    } catch (e) {
+      toast(String(e), "drop");
+    }
+  };
+  const embed = async () => {
+    try {
+      await invoke("ai_embed_start");
+    } catch (e) {
+      toast(String(e), "drop");
+    }
+  };
+  const left = st ? st.total - st.embedded : 0;
+
+  return (
+    <Section id="ai" title="AI">
+      <Row
+        label="모델"
+        hint={
+          st?.model_present
+            ? "CLIP ViT-B/32 — 사진을 512개 숫자로 요약합니다. 전부 이 맥 안에서 돕니다."
+            : `CLIP ViT-B/32 (${st ? fmtBytes(st.model_bytes) : "…"}) — 한 번만 받습니다. 그 뒤로는 네트워크가 필요 없습니다.`
+        }
+      >
+        {st?.model_present ? (
+          <span className="text-[12.5px] text-keep">받아 둠</span>
+        ) : (
+          <Btn tone="accent" disabled={busy} onClick={download}>
+            받기
+          </Btn>
+        )}
+      </Row>
+      <Row
+        label="사진 벡터"
+        hint={
+          st
+            ? left > 0
+              ? `${st.embedded.toLocaleString()} / ${st.total.toLocaleString()}장 — 남은 ${left.toLocaleString()}장은 초당 약 90장, ${Math.ceil(left / 90 / 60)}분쯤 걸립니다. 하다 말아도 한 것은 남습니다.`
+              : `${st.embedded.toLocaleString()}장 전부 있습니다. 새로 들어온 사진만 더 만들면 됩니다.`
+            : "…"
+        }
+      >
+        <Btn
+          tone="accent"
+          disabled={busy || !st?.model_present || left === 0}
+          onClick={embed}
+        >
+          {busy && job?.label === "AI 벡터" ? "만드는 중…" : "벡터 만들기"}
+        </Btn>
+      </Row>
+      <Row
+        label="비슷한 사진 찾기"
+        hint="사진을 우클릭해 「비슷한 사진 찾기」. 벡터가 있는 사진끼리 비교합니다."
+      >
+        <span />
       </Row>
     </Section>
   );

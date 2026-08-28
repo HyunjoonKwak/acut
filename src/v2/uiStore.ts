@@ -29,6 +29,8 @@ type Store = {
   dropped: string[];
   /** 창 위에 무언가를 끌고 있는 중 */
   dragging: boolean;
+  /** 「비슷한 사진」의 기준 사진 */
+  similarFor: number | null;
   set: (p: Partial<Omit<Store, "set">>) => void;
 };
 
@@ -46,6 +48,7 @@ export const useUi = create<Store>()((set) => ({
   renaming: null,
   dropped: [],
   dragging: false,
+  similarFor: null,
   set: (p) => set(p),
 }));
 

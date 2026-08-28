@@ -10,6 +10,7 @@ import Organize from "./Organize";
 import PhotoGrid from "./PhotoGrid";
 import Preview from "./Preview";
 import SettingsView from "./SettingsView";
+import Similar from "./Similar";
 import ScrollBar from "./ScrollBar";
 import RenameDialog from "./RenameDialog";
 import SelectionPanel from "./SelectionPanel";
@@ -370,6 +371,14 @@ export default function App() {
       />
       <Toasts />
       {ui.helping && <Shortcuts onClose={() => ui.set({ helping: false })} />}
+      {ui.similarFor !== null && (
+        <Similar
+          id={ui.similarFor}
+          onPick={(id) => ui.set({ similarFor: id })}
+          onMark={markOne}
+          onClose={() => ui.set({ similarFor: null })}
+        />
+      )}
       {ui.renaming !== null && (
         <RenameDialog
           name={rows.find((r) => r.id === ui.renaming)?.name ?? ""}

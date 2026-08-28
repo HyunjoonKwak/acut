@@ -46,3 +46,22 @@ test("끝나면 비운다", () => {
   useJob.getState().clear();
   assert.equal(useJob.getState().job, null);
 });
+
+test("알림마다 표본이 남고, 새 일이면 표본도 새로", () => {
+  reset();
+  const s = useJob.getState();
+  s.progress({ label: "AI 벡터", done: 0, total: 1000 }, 0);
+  s.progress({ label: "AI 벡터", done: 100, total: 1000 }, 5_000);
+  s.progress({ label: "AI 벡터", done: 90, total: 1000 }, 6_000); // 늦게 온 것 — 표본 없음
+  assert.deepEqual(
+    useJob.getState().samples.map((x) => x.n),
+    [0, 100],
+  );
+  s.progress({ label: "썸네일", done: 3, total: 1000 }, 7_000);
+  assert.deepEqual(
+    useJob.getState().samples.map((x) => x.n),
+    [3],
+  );
+  s.clear();
+  assert.equal(useJob.getState().samples.length, 0);
+});

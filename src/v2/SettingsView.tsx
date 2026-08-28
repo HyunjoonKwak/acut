@@ -6,6 +6,7 @@ import { useData } from "./dataStore";
 import { fmtBytes, fmtDateTime } from "./format";
 import { STYLES } from "./gridStyle";
 import { useJob } from "./jobStore";
+import { etaSec, fmtEta, rateOf } from "./rate";
 import { DEFAULT_PREFS, usePref, usePrefs, type Prefs } from "./prefs";
 import { toast } from "./toastStore";
 import { Btn } from "./ui";
@@ -331,6 +332,10 @@ function Ai() {
   const job = useJob((s) => s.job);
   const busy = job !== null;
   const embedding = job?.label === "AI 벡터";
+  // 최근 30초의 실제 속도 — 알림이 올 때마다 다시 센다
+  const rate = useJob((s) =>
+    s.job?.label === "AI 벡터" ? rateOf(s.samples, Date.now()) : null,
+  );
   const reload = useCallback(() => {
     invoke<AiStatus>("ai_status")
       .then(setSt)
@@ -369,7 +374,7 @@ function Ai() {
   const hint = !st
     ? "…"
     : embedding
-      ? `${done.toLocaleString()} / ${total.toLocaleString()}장 — 만드는 중. 남은 ${left.toLocaleString()}장, 초당 약 20장이면 ${Math.ceil(left / 20 / 60)}분. 멈춰도 한 것은 남습니다.`
+      ? `${done.toLocaleString()} / ${total.toLocaleString()}장 — 만드는 중. 남은 ${left.toLocaleString()}장${rate === null ? ", 속도 재는 중" : `, 초당 ${Math.round(rate)}장이면 ${fmtEta(etaSec(left, rate))}`}. 멈춰도 한 것은 남습니다.`
       : left > 0
         ? `${done.toLocaleString()} / ${total.toLocaleString()}장 — 남은 ${left.toLocaleString()}장. 하다 말아도 한 것은 남습니다.`
         : `${done.toLocaleString()}장 전부 있습니다. 새로 들어온 사진만 더 만들면 됩니다.`;

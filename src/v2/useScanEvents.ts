@@ -121,6 +121,16 @@ export function useScanEvents(cb: {
         p.failed > 0 ? "drop" : "ok",
       );
     });
+    on<{ done: number; total: number; faces: number }>("faces-progress", (p) =>
+      job().progress({ label: "얼굴 찾기", done: p.done, total: p.total }),
+    );
+    on<{ done: number; faces: number; persons: number }>("faces-done", (p) => {
+      job().clear();
+      toast(
+        `${p.done.toLocaleString()}장에서 얼굴 ${p.faces.toLocaleString()}개 — ${p.persons.toLocaleString()}명으로 묶었습니다`,
+        "ok",
+      );
+    });
     on<string>("ai-error", (e) => {
       job().clear();
       toast(`AI 실패 — ${e}`, "drop");

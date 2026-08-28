@@ -12,6 +12,7 @@ export type Source =
   | "smart"
   | "search"
   | "tag"
+  | "people"
   | "calendar"
   | "location"
   | "camera"
@@ -30,6 +31,7 @@ export const SOURCES: Entry[] = [
   { v: "smart", label: "스마트 앨범" },
   { v: "search", label: "검색" },
   { v: "tag", label: "태그" },
+  { v: "people", label: "사람" },
   { v: "calendar", label: "달력" },
   { v: "location", label: "위치" },
   { v: "camera", label: "카메라" },

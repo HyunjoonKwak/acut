@@ -158,6 +158,9 @@ pub struct Filter {
     /// N장»을 누르면 걸린다. 무엇이 안 되는지 눈으로 봐야 한다.
     #[serde(default)]
     pub no_thumb: bool,
+    /// 이 사람이 나온 사진만 (faces.person_id)
+    #[serde(default)]
+    pub person_id: Option<i64>,
 }
 
 /// 그리드에 머리글을 넣어 묶는 기준. Lap의 GROUP과 같다.
@@ -307,6 +310,10 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     }
     if f.no_thumb {
         w.push("NOT EXISTS (SELECT 1 FROM thumbs t WHERE t.file_id = fi.id AND t.state = 1)".into());
+    }
+    if let Some(pid) = f.person_id {
+        w.push("EXISTS (SELECT 1 FROM faces fa WHERE fa.file_id = fi.id AND fa.person_id = ?)".into());
+        p.push(Box::new(pid));
     }
     if let Some(q) = f.name_like.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         w.push("fi.name LIKE ? ESCAPE '\\'".into());

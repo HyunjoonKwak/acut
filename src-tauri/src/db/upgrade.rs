@@ -10,6 +10,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_library_id(c)?;
     backfill_libraries(c)?;
     add_trash_columns(c)?;
+    add_faces_at(c)?;
     Ok(())
 }
 
@@ -31,6 +32,14 @@ fn add_trash_columns(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_files_trashed ON files(trashed_at) WHERE trashed_at IS NOT NULL;",
     )
+}
+
+/// 얼굴을 찾아 본 시각 — 얼굴이 없어도 남아 다음에 다시 보지 않는다 (4단계)
+fn add_faces_at(c: &Connection) -> rusqlite::Result<()> {
+    if !has_column(c, "files", "faces_at")? {
+        c.execute_batch("ALTER TABLE files ADD COLUMN faces_at INTEGER")?;
+    }
+    c.execute_batch("CREATE INDEX IF NOT EXISTS idx_files_faces_at ON files(faces_at) WHERE faces_at IS NULL;")
 }
 
 fn has_column(c: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {

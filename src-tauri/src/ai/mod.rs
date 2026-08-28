@@ -7,7 +7,9 @@
 
 pub mod clip;
 pub mod embed;
+pub mod faces;
 pub mod models;
+pub mod people;
 pub mod similar;
 pub mod text;
 

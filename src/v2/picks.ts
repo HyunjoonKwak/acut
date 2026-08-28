@@ -32,6 +32,8 @@ export type Picks = {
   place: string | null;
   /** 썸네일이 없는 것만 — 못 만들었거나 아직 안 만든 것 */
   no_thumb: boolean;
+  /** 사이드바에서 고른 사람 (faces.person_id) */
+  person_id: number | null;
 };
 
 export const EMPTY: Picks = {
@@ -48,6 +50,7 @@ export const EMPTY: Picks = {
   tag_id: null,
   place: null,
   no_thumb: false,
+  person_id: null,
 };
 
 /**
@@ -70,6 +73,7 @@ const TYPES: Record<keyof Picks, "number" | "string" | "boolean"> = {
   tag_id: "number",
   place: "string",
   no_thumb: "boolean",
+  person_id: "number",
 };
 
 /** 아무 조건도 안 걸린 상태인가 — 툴바의 표시등이 이걸로 켜진다 */

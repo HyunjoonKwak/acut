@@ -954,12 +954,21 @@ pub struct AiStatus {
     /// 글로 찾기 모델(셋) 있나 / 받을 크기
     pub text_present: bool,
     pub text_bytes: u64,
+    /// 얼굴 모델(둘) 있나 / 받을 크기
+    pub face_present: bool,
+    pub face_bytes: u64,
+    /// 얼굴을 찾아 본 사진 / 찾을 수 있는 사진, 얼굴 수, 사람 수
+    pub faces_done: i64,
+    pub faces_total: i64,
+    pub faces: i64,
+    pub persons: i64,
 }
 
 #[tauri::command]
 pub fn ai_status(state: State<'_, AppState>) -> Result<AiStatus, String> {
     use crate::ai::models::{self, ModelId};
     let (embedded, total) = crate::ai::embed::counts(&state.db).map_err(err)?;
+    let (faces_done, faces_total, faces, persons) = crate::ai::people::counts(&state.db).map_err(err)?;
     Ok(AiStatus {
         model_present: models::present(&state.cache_base, ModelId::ClipVision),
         model_bytes: models::spec(ModelId::ClipVision).bytes,
@@ -968,6 +977,12 @@ pub fn ai_status(state: State<'_, AppState>) -> Result<AiStatus, String> {
         running: state.running.load(Ordering::Acquire),
         text_present: models::text_present(&state.cache_base),
         text_bytes: models::text_bytes(),
+        face_present: models::face_present(&state.cache_base),
+        face_bytes: models::face_bytes(),
+        faces_done,
+        faces_total,
+        faces,
+        persons,
     })
 }
 
@@ -979,6 +994,7 @@ pub fn ai_model_download(app: AppHandle, which: String) -> Result<(), String> {
     let ids: Vec<ModelId> = match which.as_str() {
         "vision" => vec![ModelId::ClipVision],
         "text" => models::TEXT_BUNDLE.to_vec(),
+        "face" => models::FACE_BUNDLE.to_vec(),
         _ => return Err(format!("모르는 모델: {which}")),
     };
     let state = app.state::<AppState>();
@@ -1091,6 +1107,122 @@ fn similar_rows(state: &AppState, hits: Vec<(i64, f32)>) -> Result<Vec<SimilarRo
 pub fn ai_similar(state: State<'_, AppState>, id: i64, limit: usize) -> Result<Vec<SimilarRow>, String> {
     let index = ai_index(&state)?;
     similar_rows(&state, index.similar(id, limit.clamp(1, 200)))
+}
+
+/// 얼굴을 찾고 사람으로 묶는다. 진행은 `faces-progress`, 끝나면 `faces-done`.
+#[tauri::command]
+pub fn ai_faces_start(app: AppHandle) -> Result<(), String> {
+    use crate::ai::models;
+    let state = app.state::<AppState>();
+    if !models::face_present(&state.cache_base) {
+        return Err("얼굴 모델이 없습니다 — 설정 › AI에서 받으세요".into());
+    }
+    let Some(guard) = job::try_start(&state.running, "에이컷 얼굴 찾기") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
+    let db = Arc::clone(&state.db);
+    let base = state.cache_base.clone();
+    let cancel = Arc::clone(&state.cancel);
+    cancel.store(false, Ordering::Relaxed);
+
+    std::thread::spawn(move || {
+        let _guard = guard;
+        let handle = app.clone();
+        let r = crate::ai::people::run(&db, &base, &base, cancel, |p| {
+            let _ = handle.emit("faces-progress", p);
+        })
+        .and_then(|p| crate::ai::people::cluster(&db).map(|c| (p, c)));
+        match r {
+            Ok((p, c)) => {
+                let _ = app.emit("faces-done", FacesDone { done: p.done, faces: p.faces, persons: c.persons });
+            }
+            Err(e) => {
+                let _ = app.emit("ai-error", e.to_string());
+            }
+        }
+    });
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FacesDone {
+    pub done: usize,
+    pub faces: usize,
+    pub persons: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PersonRow {
+    pub id: i64,
+    pub name: Option<String>,
+    pub count: i64,
+    /// 대표 얼굴 — 썸네일 주소(라이브러리/상대경로)와 그 안의 상자(비율)
+    pub cover_thumb: Option<String>,
+    pub cover_bbox: Option<serde_json::Value>,
+}
+
+/// 사람 목록 — 얼굴 많은 순. 대표 얼굴은 가장 크게 찍힌 것.
+#[tauri::command]
+pub fn people_list(state: State<'_, AppState>) -> Result<Vec<PersonRow>, String> {
+    state
+        .db
+        .read(|c| {
+            let mut st = c.prepare(
+                "SELECT p.id, p.name, COUNT(f.id),
+                        (SELECT fo.library_id || '/' || t.rel_path || '|' || f2.bbox
+                           FROM faces f2
+                           JOIN files fi ON fi.id = f2.file_id
+                           JOIN folders fo ON fo.id = fi.folder_id
+                           JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
+                          WHERE f2.person_id = p.id AND fi.trashed_at IS NULL
+                          ORDER BY json_extract(f2.bbox, '$.w') DESC LIMIT 1)
+                   FROM persons p
+                   LEFT JOIN faces f ON f.person_id = p.id
+                  GROUP BY p.id
+                  ORDER BY COUNT(f.id) DESC, p.id",
+            )?;
+            let it = st.query_map([], |r| {
+                let cover: Option<String> = r.get(3)?;
+                let (thumb, bbox) = match cover.and_then(|c| c.split_once('|').map(|(a, b)| (a.to_string(), b.to_string()))) {
+                    Some((t, b)) => (Some(t), serde_json::from_str(&b).ok()),
+                    None => (None, None),
+                };
+                Ok(PersonRow { id: r.get(0)?, name: r.get(1)?, count: r.get(2)?, cover_thumb: thumb, cover_bbox: bbox })
+            })?;
+            it.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn person_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<(), String> {
+    let name = name.trim().to_string();
+    state
+        .db
+        .transaction(|tx| {
+            tx.execute(
+                "UPDATE persons SET name = ?2 WHERE id = ?1",
+                rusqlite::params![id, if name.is_empty() { None } else { Some(name) }],
+            )?;
+            Ok(())
+        })
+        .map_err(err)
+}
+
+/// `from`의 얼굴을 전부 `into`로 옮기고 `from`은 지운다 — 같은 사람이 둘로 갈렸을 때
+#[tauri::command]
+pub fn person_merge(state: State<'_, AppState>, into: i64, from: i64) -> Result<(), String> {
+    if into == from {
+        return Ok(());
+    }
+    state
+        .db
+        .transaction(|tx| {
+            tx.execute("UPDATE faces SET person_id = ?1 WHERE person_id = ?2", [into, from])?;
+            tx.execute("DELETE FROM persons WHERE id = ?1", [from])?;
+            Ok(())
+        })
+        .map_err(err)
 }
 
 /// 글로 찾기 — «바닷가에서 뛰는 강아지» 같은 글에 가까운 사진들.

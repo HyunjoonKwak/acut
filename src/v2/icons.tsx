@@ -67,6 +67,16 @@ export const IconTag = (p: P) => (
   </S>
 );
 
+/** 사람 — 얼굴 둘 */
+export const IconPeople = (p: P) => (
+  <S {...p}>
+    <circle cx="9" cy="8.5" r="3.2" />
+    <path d="M3.5 19c0-3.2 2.5-5.3 5.5-5.3s5.5 2.1 5.5 5.3" />
+    <circle cx="16.5" cy="9.5" r="2.5" />
+    <path d="M15.5 13.6c2.9.2 5 2.1 5 5" />
+  </S>
+);
+
 /** 달력 */
 export const IconCalendar = (p: P) => (
   <S {...p}>

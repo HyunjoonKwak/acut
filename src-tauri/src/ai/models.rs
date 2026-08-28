@@ -17,6 +17,9 @@ pub enum ModelId {
     TextModel,
     TextTokenizer,
     TextDense,
+    /// 얼굴 — 찾기(YuNet)와 알아보기(SFace). OpenCV zoo, Apache-2.0.
+    FaceDetect,
+    FaceEmbed,
 }
 
 pub struct Spec {
@@ -52,6 +55,20 @@ pub const SPECS: &[Spec] = &[
         bytes: 2_000_000,
     },
     Spec {
+        id: ModelId::FaceDetect,
+        dir: "face",
+        file: "yunet.onnx",
+        url: "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+        bytes: 232_589,
+    },
+    Spec {
+        id: ModelId::FaceEmbed,
+        dir: "face",
+        file: "sface.onnx",
+        url: "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
+        bytes: 38_696_353,
+    },
+    Spec {
         id: ModelId::TextDense,
         dir: "clip-text-multi",
         file: "dense.safetensors",
@@ -71,6 +88,17 @@ pub fn text_bytes() -> u64 {
     TEXT_BUNDLE.iter().map(|&id| spec(id).bytes).sum()
 }
 
+/// 얼굴에 필요한 둘
+pub const FACE_BUNDLE: [ModelId; 2] = [ModelId::FaceDetect, ModelId::FaceEmbed];
+
+pub fn face_present(app_data: &Path) -> bool {
+    FACE_BUNDLE.iter().all(|&id| present(app_data, id))
+}
+
+pub fn face_bytes() -> u64 {
+    FACE_BUNDLE.iter().map(|&id| spec(id).bytes).sum()
+}
+
 pub fn spec(id: ModelId) -> &'static Spec {
     SPECS.iter().find(|s| s.id == id).expect("모델 사양")
 }
@@ -81,11 +109,10 @@ pub fn path(app_data: &Path, id: ModelId) -> PathBuf {
 }
 
 /// 다 받아졌나. 받다 만 파일(.part)은 없는 것으로 친다.
-/// 있고 1MB보다 큰가 — 받다 만 조각은 .part로 남으니 이름만 맞으면 완성본이다.
-/// 셋 가운데 가장 작은 Dense(1.6MB)도 이 문턱을 넘는다.
 pub fn present(app_data: &Path, id: ModelId) -> bool {
     let p = path(app_data, id);
-    p.is_file() && std::fs::metadata(&p).map(|m| m.len() > 1_000_000).unwrap_or(false)
+    // 받다 만 조각은 .part로 남으니 이름이 맞으면 완성본이다 — 크기가 절반은 넘어야 한다
+    p.is_file() && std::fs::metadata(&p).map(|m| m.len() > spec(id).bytes / 2).unwrap_or(false)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

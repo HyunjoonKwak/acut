@@ -328,6 +328,12 @@ type AiStatus = {
   running: boolean;
   text_present: boolean;
   text_bytes: number;
+  face_present: boolean;
+  face_bytes: number;
+  faces_done: number;
+  faces_total: number;
+  faces: number;
+  persons: number;
 };
 
 function Ai() {
@@ -357,7 +363,7 @@ function Ai() {
     return () => clearInterval(t);
   }, [reload]);
 
-  const download = async (which: "vision" | "text") => {
+  const download = async (which: "vision" | "text" | "face") => {
     try {
       await invoke("ai_model_download", { which });
     } catch (e) {
@@ -452,6 +458,46 @@ function Ai() {
           </div>
         </div>
       )}
+      <Row
+        label="얼굴 모델"
+        hint={
+          st?.face_present
+            ? "YuNet(찾기)·SFace(알아보기) — OpenCV zoo, Apache-2.0. 전부 이 맥 안에서 돕니다."
+            : `YuNet·SFace (${st ? fmtBytes(st.face_bytes) : "…"}) — 얼굴을 찾아 사람으로 묶습니다.`
+        }
+      >
+        {st?.face_present ? (
+          <span className="text-[12.5px] text-keep">받아 둠</span>
+        ) : (
+          <Btn tone="accent" disabled={busy} onClick={() => download("face")}>
+            받기
+          </Btn>
+        )}
+      </Row>
+      <Row
+        label="얼굴 찾기"
+        hint={
+          !st
+            ? "…"
+            : st.faces_total === 0
+              ? "썸네일이 있어야 찾습니다."
+              : `${st.faces_done.toLocaleString()} / ${st.faces_total.toLocaleString()}장에서 얼굴 ${st.faces.toLocaleString()}개, ${st.persons.toLocaleString()}명. 왼쪽 「사람」 갈래에서 이름을 붙이고 합칩니다.`
+        }
+      >
+        <Btn
+          tone="accent"
+          disabled={
+            busy ||
+            !st?.face_present ||
+            (st?.faces_total ?? 0) - (st?.faces_done ?? 0) === 0
+          }
+          onClick={() =>
+            invoke("ai_faces_start").catch((e) => toast(String(e), "drop"))
+          }
+        >
+          얼굴 찾기
+        </Btn>
+      </Row>
       <Row
         label="비슷한 사진 찾기"
         hint="사진을 우클릭해 「비슷한 사진 찾기」. 벡터가 있는 사진끼리 비교합니다."

@@ -5,6 +5,7 @@ import Calendar from "./Calendar";
 import FacetList from "./FacetList";
 import Rail from "./Rail";
 import SearchPanel from "./SearchPanel";
+import PeoplePanel from "./PeoplePanel";
 import SettingsNav from "./SettingsNav";
 import SmartPanel from "./SmartPanel";
 import TagPanel from "./TagPanel";
@@ -191,6 +192,12 @@ export default function Sidebar({
                 reload();
                 refreshTags();
               }}
+            />
+          )}
+          {source === "people" && (
+            <PeoplePanel
+              selected={picks.person_id}
+              onPick={(v) => patchPicks({ person_id: v })}
             />
           )}
           {source === "smart" && (

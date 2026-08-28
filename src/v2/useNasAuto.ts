@@ -29,12 +29,22 @@ const EVERY_MS = 30 * 60_000;
 export function useNasAuto() {
   const mode = usePrefs((s) => s.nasAuto);
   useEffect(() => {
-    if (mode === "off") return;
+    if (mode === "off") {
+      useData.getState().setNasStatus(null);
+      return;
+    }
     let live = true;
     const probe = async () => {
       try {
         const p = await invoke<Probe>("nas_probe");
-        if (!live || !p.online || p.library_id === null) return;
+        if (!live) return;
+        useData.getState().setNasStatus({
+          online: p.online,
+          hostname: p.hostname,
+          error: p.error,
+          at: Math.floor(Date.now() / 1000),
+        });
+        if (!p.online || p.library_id === null) return;
         if (p.new_files === 0) {
           useData.getState().setNasNew(null);
           return;
@@ -51,8 +61,14 @@ export function useNasAuto() {
             "ok",
           );
         }
-      } catch {
-        /* NAS가 없거나 꺼져 있다 — 조용히 */
+      } catch (e) {
+        if (live)
+          useData.getState().setNasStatus({
+            online: false,
+            hostname: "",
+            error: String(e),
+            at: Math.floor(Date.now() / 1000),
+          });
       }
     };
     const t0 = window.setTimeout(probe, FIRST_MS);

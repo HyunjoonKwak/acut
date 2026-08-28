@@ -77,6 +77,16 @@ export const IconPeople = (p: P) => (
   </S>
 );
 
+/** NAS — 서랍 둘 달린 상자 */
+export const IconNas = (p: P) => (
+  <S {...p}>
+    <rect x="4" y="4.5" width="16" height="6.5" rx="1.5" />
+    <rect x="4" y="13" width="16" height="6.5" rx="1.5" />
+    <circle cx="8" cy="7.75" r="0.9" />
+    <circle cx="8" cy="16.25" r="0.9" />
+  </S>
+);
+
 /** 달력 */
 export const IconCalendar = (p: P) => (
   <S {...p}>

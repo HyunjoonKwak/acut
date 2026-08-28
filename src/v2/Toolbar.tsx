@@ -1,4 +1,5 @@
 import Breadcrumb from "./Breadcrumb";
+import NasBadge from "./NasBadge";
 import FilterButton from "./FilterBar";
 import FilterChips from "./FilterChips";
 import GroupMenu from "./GroupMenu";
@@ -54,6 +55,8 @@ export default function Toolbar({
       />
 
       <div className="flex-1" />
+
+      <NasBadge />
 
       {libs.length > 0 && (
         // 창이 좁아져도 조작부는 줄어들지 않는다 — 먼저 줄어들 것은

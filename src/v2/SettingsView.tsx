@@ -330,13 +330,19 @@ function Ai() {
   const [st, setSt] = useState<AiStatus | null>(null);
   const job = useJob((s) => s.job);
   const busy = job !== null;
+  const embedding = job?.label === "AI 벡터";
   const reload = useCallback(() => {
     invoke<AiStatus>("ai_status")
       .then(setSt)
       .catch(() => setSt(null));
   }, []);
-  // 일이 끝날 때마다(받기·벡터) 다시 센다
-  useEffect(reload, [reload, busy]);
+  // 일이 시작·끝날 때, 그리고 도는 동안엔 10초마다 다시 센다
+  useEffect(() => {
+    reload();
+    if (!busy) return;
+    const t = setInterval(reload, 10_000);
+    return () => clearInterval(t);
+  }, [reload, busy]);
 
   const download = async () => {
     try {
@@ -352,7 +358,21 @@ function Ai() {
       toast(String(e), "drop");
     }
   };
-  const left = st ? st.total - st.embedded : 0;
+  const stop = () => invoke("scan_cancel").catch(() => {});
+
+  // 도는 중엔 상태바와 같은 숫자를 여기서도 — 끝날 때까지 «0장»으로 보이면 멎은 줄 안다
+  const done = embedding
+    ? (st?.embedded ?? 0) + (job?.done ?? 0)
+    : (st?.embedded ?? 0);
+  const total = st?.total ?? job?.total ?? 0;
+  const left = Math.max(0, total - done);
+  const hint = !st
+    ? "…"
+    : embedding
+      ? `${done.toLocaleString()} / ${total.toLocaleString()}장 — 만드는 중. 남은 ${left.toLocaleString()}장, 초당 약 20장이면 ${Math.ceil(left / 20 / 60)}분. 멈춰도 한 것은 남습니다.`
+      : left > 0
+        ? `${done.toLocaleString()} / ${total.toLocaleString()}장 — 남은 ${left.toLocaleString()}장. 하다 말아도 한 것은 남습니다.`
+        : `${done.toLocaleString()}장 전부 있습니다. 새로 들어온 사진만 더 만들면 됩니다.`;
 
   return (
     <Section id="ai" title="AI">
@@ -372,24 +392,31 @@ function Ai() {
           </Btn>
         )}
       </Row>
-      <Row
-        label="사진 벡터"
-        hint={
-          st
-            ? left > 0
-              ? `${st.embedded.toLocaleString()} / ${st.total.toLocaleString()}장 — 남은 ${left.toLocaleString()}장은 초당 약 90장, ${Math.ceil(left / 90 / 60)}분쯤 걸립니다. 하다 말아도 한 것은 남습니다.`
-              : `${st.embedded.toLocaleString()}장 전부 있습니다. 새로 들어온 사진만 더 만들면 됩니다.`
-            : "…"
-        }
-      >
-        <Btn
-          tone="accent"
-          disabled={busy || !st?.model_present || left === 0}
-          onClick={embed}
-        >
-          {busy && job?.label === "AI 벡터" ? "만드는 중…" : "벡터 만들기"}
-        </Btn>
+      <Row label="사진 벡터" hint={hint}>
+        {embedding ? (
+          <Btn tone="drop" onClick={stop}>
+            멈추기
+          </Btn>
+        ) : (
+          <Btn
+            tone="accent"
+            disabled={busy || !st?.model_present || left === 0}
+            onClick={embed}
+          >
+            벡터 만들기
+          </Btn>
+        )}
       </Row>
+      {embedding && total > 0 && (
+        <div className="px-4 pb-3">
+          <div className="h-1 rounded-full bg-raised overflow-hidden">
+            <div
+              className="h-full bg-accent transition-[width] duration-300"
+              style={{ width: `${Math.min(100, (done / total) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
       <Row
         label="비슷한 사진 찾기"
         hint="사진을 우클릭해 「비슷한 사진 찾기」. 벡터가 있는 사진끼리 비교합니다."

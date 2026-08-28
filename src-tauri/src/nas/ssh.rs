@@ -51,6 +51,22 @@ pub struct Status {
     pub error: Option<String>,
 }
 
+/// rsync가 남긴 stderr를 사람 말로. Synology의 /usr/bin/rsync는 setuid 래퍼라
+/// ssh 인증이 됐어도 DSM의 rsync 서비스·사용자 권한이 없으면 «Permission denied»를 낸다.
+pub fn explain(stderr: &str) -> String {
+    let t = stderr.trim();
+    if t.contains("Permission denied") {
+        return "NAS가 rsync를 거절했습니다 — DSM 제어판 › 파일 서비스 › rsync에서 «rsync 서비스 사용»을 켜고, 사용자에게 rsync 응용 프로그램 권한을 주세요. (ssh 접속 자체는 됩니다)".into();
+    }
+    if t.contains("Could not resolve hostname") {
+        return format!("ssh 설정에 그 호스트가 없습니다: {t}");
+    }
+    if t.contains("Connection timed out") || t.contains("Connection refused") || t.contains("No route to host") {
+        return format!("NAS에 닿지 않습니다 — 켜져 있고 같은 네트워크인지 보세요: {t}");
+    }
+    t.to_string()
+}
+
 fn ssh_base(cfg: &Config) -> Command {
     let mut c = Command::new("ssh");
     c.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", &cfg.host]);
@@ -193,7 +209,7 @@ pub fn pull(
             use std::io::Read;
             let _ = e.read_to_string(&mut err);
         }
-        return Err(std::io::Error::other(format!("rsync 실패 ({status}): {}", err.trim())));
+        return Err(std::io::Error::other(format!("rsync 실패 ({status}): {}", explain(&err))));
     }
     Ok(out)
 }
@@ -235,7 +251,7 @@ pub fn missing_on_nas(cfg: &Config, local: &Path, remote: &str) -> std::io::Resu
     if !out.status.success() {
         return Err(std::io::Error::other(format!(
             "rsync 실패: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
+            explain(&String::from_utf8_lossy(&out.stderr))
         )));
     }
     Ok(String::from_utf8_lossy(&out.stdout)
@@ -292,6 +308,14 @@ mod tests {
         );
         assert_eq!(parse_progress("  1,000  3%  1.0MB/s  0:00:01"), Some((3, 0, 0)));
         assert_eq!(parse_progress("2024/여행/a.jpg"), None);
+    }
+
+    #[test]
+    fn explains_the_synology_rsync_wrapper_refusal() {
+        let m = explain("Permission denied, please try again.\nrsync: connection unexpectedly closed");
+        assert!(m.contains("DSM 제어판"));
+        assert!(explain("ssh: Could not resolve hostname nasroot").contains("호스트가 없습니다"));
+        assert_eq!(explain("  odd  "), "odd");
     }
 
     #[test]

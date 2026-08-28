@@ -827,7 +827,7 @@ function Nas() {
         label="연결"
         hint={
           !st
-            ? "ssh 설정의 Host 이름으로 붙습니다 (포트·키는 ~/.ssh/config). 자격증명은 저장하지 않습니다."
+            ? "ssh 설정의 Host 이름으로 붙습니다 (포트·키는 ~/.ssh/config). 자격증명은 저장하지 않습니다. 내려받기·확인은 NAS의 rsync를 쓰므로 DSM 제어판 › 파일 서비스 › rsync를 켜 두어야 합니다."
             : st.online
               ? `${st.hostname} — 남은 ${st.free_bytes === null ? "?" : fmtBytes(st.free_bytes)}, 1차 구역 파일 ${st.zone1_files?.toLocaleString() ?? "?"}개`
               : `연결 실패 — ${st.error ?? ""}`

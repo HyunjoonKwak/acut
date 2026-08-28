@@ -53,6 +53,8 @@ pub struct AppState {
     pub ai_text: Mutex<Option<Arc<crate::ai::text::Text>>>,
     /// 백업 계획 — 「살펴보기」가 두고 「백업 시작」이 가져간다
     pub backup_plans: Mutex<Option<Vec<backup::Planned>>>,
+    /// DB가 준비된 순간까지 걸린 시간 — 시작 시간 재기(0단계 성능 목표 «1초»)
+    pub db_ready_ms: u64,
     /// 라이브러리 id → 실제 폴더.
     ///
     /// `thumb://`는 **썸네일 한 장마다** 이걸 부른다. 한 화면에 200장이면
@@ -72,6 +74,7 @@ impl AppState {
             ai_index: Mutex::new(None),
             ai_text: Mutex::new(None),
             backup_plans: Mutex::new(None),
+            db_ready_ms: crate::started().elapsed().as_millis() as u64,
             dirs: Mutex::new(HashMap::new()),
         }
     }
@@ -1159,6 +1162,29 @@ pub fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64) -> R
         }
     });
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct StartupInfo {
+    /// 프로세스 시작 → DB 준비
+    pub db_ms: u64,
+    /// 프로세스 시작 → 첫 그리드가 그려짐
+    pub first_grid_ms: u64,
+    pub at: i64,
+}
+
+/// 첫 그리드가 그려진 순간 화면이 부른다 — 시작 시간을 재서 설정에 남긴다.
+/// 성능 목표 «앱 시작 1초»를 눈대중이 아니라 숫자로 본다.
+#[tauri::command]
+pub fn startup_report(state: State<'_, AppState>) -> Result<StartupInfo, String> {
+    let info = StartupInfo {
+        db_ms: state.db_ready_ms,
+        first_grid_ms: crate::started().elapsed().as_millis() as u64,
+        at: chrono::Utc::now().timestamp(),
+    };
+    log::info!("시작 — DB {}ms · 첫 화면 {}ms", info.db_ms, info.first_grid_ms);
+    crate::db::settings::set(&state.db, "startup.last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
+    Ok(info)
 }
 
 /// 지도의 칸들 — 조건에 맞는 사진을 `precision`도 격자로 묶는다

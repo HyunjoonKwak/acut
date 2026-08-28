@@ -1122,14 +1122,32 @@ function Advanced() {
 }
 
 function About() {
+  const [startup, setStartup] = useState<{
+    db_ms: number;
+    first_grid_ms: number;
+    at: number;
+  } | null>(null);
   const [ver, setVer] = useState("");
   useEffect(() => {
+    invoke<string | null>("settings_get", { key: "startup.last" })
+      .then((v) => setStartup(v ? JSON.parse(v) : null))
+      .catch(() => {});
     getVersion()
       .then(setVer)
       .catch(() => setVer(""));
   }, []);
   return (
     <Section id="about" title="정보">
+      <Row
+        label="마지막 시작"
+        hint={
+          startup
+            ? `프로세스 시작 → DB 준비 ${startup.db_ms}ms · 첫 그리드 ${startup.first_grid_ms}ms (${fmtDateTime(startup.at)}). 목표는 1초.`
+            : "아직 잰 적 없습니다."
+        }
+      >
+        <span />
+      </Row>
       <Row
         label="에이컷"
         hint="대규모 로컬 라이브러리를 위한 오프라인 우선 사진 관리자. 사진은 원래 자리에 그대로 둡니다."

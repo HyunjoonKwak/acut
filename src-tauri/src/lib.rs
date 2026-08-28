@@ -12,10 +12,18 @@ mod nas;
 pub mod ops;
 mod scan;
 
+/// 프로세스가 시작된 순간 — 시작 시간을 재는 기준. run()의 첫 줄에서 박힌다.
+static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+pub fn started() -> std::time::Instant {
+    *STARTED.get_or_init(std::time::Instant::now)
+}
+
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = started();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -109,6 +117,7 @@ pub fn run() {
             api::map_cells,
             api::folder_size,
             api::folder_offload,
+            api::startup_report,
             api::nas::nas_config,
             api::nas::nas_config_set,
             api::nas::nas_check,

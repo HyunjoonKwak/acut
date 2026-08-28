@@ -136,6 +136,13 @@ export default function App() {
     onReload: refreshMeta,
     onSeek: () => resetScroll.current(),
   });
+  // 첫 그리드가 그려지면 한 번 — 시작 시간을 잰다 (설정 › 정보에 보인다)
+  const reported = useRef(false);
+  useEffect(() => {
+    if (reported.current || list.loading || libs.length === 0) return;
+    reported.current = true;
+    invoke("startup_report").catch(() => {});
+  }, [list.loading, libs.length]);
   const { rows, loadFirst, loadMore, markOne, patchRow } = list;
 
   const selected = useSelection((s) => s.selected);

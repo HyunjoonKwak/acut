@@ -75,6 +75,8 @@ base64 = "0.22"
 # coreml은 애플 실리콘의 신경엔진·GPU를 쓴다.
 ort = { version = "2.0.0-rc.13", features = ["download-binaries", "coreml", "ndarray"] }
 ndarray = "0.16"
+# 글로 찾기 — BERT WordPiece 토크나이저. onig(C) 대신 fancy-regex.
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 futures-util = "0.3"
 thiserror = "2.0"
 # 긴 일 동안 App Nap을 막는다 (NSProcessInfo beginActivity). tauri가 이미 같은 판을 쓴다.

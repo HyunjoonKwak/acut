@@ -326,6 +326,8 @@ type AiStatus = {
   embedded: number;
   total: number;
   running: boolean;
+  text_present: boolean;
+  text_bytes: number;
 };
 
 function Ai() {
@@ -355,9 +357,9 @@ function Ai() {
     return () => clearInterval(t);
   }, [reload]);
 
-  const download = async () => {
+  const download = async (which: "vision" | "text") => {
     try {
-      await invoke("ai_model_download");
+      await invoke("ai_model_download", { which });
     } catch (e) {
       toast(String(e), "drop");
     }
@@ -404,7 +406,23 @@ function Ai() {
         {st?.model_present ? (
           <span className="text-[12.5px] text-keep">받아 둠</span>
         ) : (
-          <Btn tone="accent" disabled={busy} onClick={download}>
+          <Btn tone="accent" disabled={busy} onClick={() => download("vision")}>
+            받기
+          </Btn>
+        )}
+      </Row>
+      <Row
+        label="글로 찾기 모델"
+        hint={
+          st?.text_present
+            ? "다국어 텍스트 모델 — «바닷가 강아지»처럼 글로 찾습니다. 찾기 갈래의 «AI로 찾기»에 씁니다."
+            : `다국어 텍스트 모델 (${st ? fmtBytes(st.text_bytes) : "…"}) — 한국어·영어로 사진을 찾습니다. 사진 벡터가 있어야 씁니다.`
+        }
+      >
+        {st?.text_present ? (
+          <span className="text-[12.5px] text-keep">받아 둠</span>
+        ) : (
+          <Btn tone="accent" disabled={busy} onClick={() => download("text")}>
             받기
           </Btn>
         )}

@@ -371,9 +371,17 @@ export default function App() {
       />
       <Toasts />
       {ui.helping && <Shortcuts onClose={() => ui.set({ helping: false })} />}
+      {ui.textSearch !== null && ui.similarFor === null && (
+        <Similar
+          query={{ text: ui.textSearch }}
+          onPick={(id) => ui.set({ similarFor: id })}
+          onMark={markOne}
+          onClose={() => ui.set({ textSearch: null })}
+        />
+      )}
       {ui.similarFor !== null && (
         <Similar
-          id={ui.similarFor}
+          query={{ id: ui.similarFor }}
           onPick={(id) => ui.set({ similarFor: id })}
           onMark={markOne}
           onClose={() => ui.set({ similarFor: null })}

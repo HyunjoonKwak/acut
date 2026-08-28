@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 pub enum ModelId {
     /// CLIP ViT-B/32 그림 쪽 — 비슷한 사진
     ClipVision,
+    /// 글로 찾기 — 다국어 텍스트 타워 (DistilBERT, arm64 int8)
+    TextModel,
+    TextTokenizer,
+    TextDense,
 }
 
 pub struct Spec {
@@ -25,13 +29,47 @@ pub struct Spec {
     pub bytes: u64,
 }
 
-pub const SPECS: &[Spec] = &[Spec {
-    id: ModelId::ClipVision,
-    dir: "clip-vit-b32",
-    file: "vision_model.onnx",
-    url: "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model.onnx",
-    bytes: 351_700_000,
-}];
+pub const SPECS: &[Spec] = &[
+    Spec {
+        id: ModelId::ClipVision,
+        dir: "clip-vit-b32",
+        file: "vision_model.onnx",
+        url: "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model.onnx",
+        bytes: 351_700_000,
+    },
+    Spec {
+        id: ModelId::TextModel,
+        dir: "clip-text-multi",
+        file: "model.onnx",
+        url: "https://huggingface.co/sentence-transformers/clip-ViT-B-32-multilingual-v1/resolve/main/onnx/model_qint8_arm64.onnx",
+        bytes: 135_300_000,
+    },
+    Spec {
+        id: ModelId::TextTokenizer,
+        dir: "clip-text-multi",
+        file: "tokenizer.json",
+        url: "https://huggingface.co/sentence-transformers/clip-ViT-B-32-multilingual-v1/resolve/main/tokenizer.json",
+        bytes: 2_000_000,
+    },
+    Spec {
+        id: ModelId::TextDense,
+        dir: "clip-text-multi",
+        file: "dense.safetensors",
+        url: "https://huggingface.co/sentence-transformers/clip-ViT-B-32-multilingual-v1/resolve/main/2_Dense/model.safetensors",
+        bytes: 1_600_000,
+    },
+];
+
+/// 글로 찾기에 필요한 셋 — 한 번에 받는다
+pub const TEXT_BUNDLE: [ModelId; 3] = [ModelId::TextModel, ModelId::TextTokenizer, ModelId::TextDense];
+
+pub fn text_present(app_data: &Path) -> bool {
+    TEXT_BUNDLE.iter().all(|&id| present(app_data, id))
+}
+
+pub fn text_bytes() -> u64 {
+    TEXT_BUNDLE.iter().map(|&id| spec(id).bytes).sum()
+}
 
 pub fn spec(id: ModelId) -> &'static Spec {
     SPECS.iter().find(|s| s.id == id).expect("모델 사양")
@@ -43,6 +81,8 @@ pub fn path(app_data: &Path, id: ModelId) -> PathBuf {
 }
 
 /// 다 받아졌나. 받다 만 파일(.part)은 없는 것으로 친다.
+/// 있고 1MB보다 큰가 — 받다 만 조각은 .part로 남으니 이름만 맞으면 완성본이다.
+/// 셋 가운데 가장 작은 Dense(1.6MB)도 이 문턱을 넘는다.
 pub fn present(app_data: &Path, id: ModelId) -> bool {
     let p = path(app_data, id);
     p.is_file() && std::fs::metadata(&p).map(|m| m.len() > 1_000_000).unwrap_or(false)
@@ -64,7 +104,7 @@ pub fn download(
     let s = spec(id);
     let dest = path(app_data, id);
     std::fs::create_dir_all(dest.parent().unwrap())?;
-    let part = dest.with_extension("onnx.part");
+    let part = dest.with_extension("part");
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| super::AiError::Other(e.to_string()))?;
     rt.block_on(async {

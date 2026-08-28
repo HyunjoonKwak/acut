@@ -12,13 +12,16 @@ type Hit = { file: FileRow; score: number };
  * 결과를 누르면 그것이 새 기준이 된다 — 꼬리를 물고 찾아간다. 두 번 누르면
  * 크게 본다(뷰어는 id만 있으면 되므로 목록에 없는 사진도 된다).
  */
+export type SimilarQuery = { id: number } | { text: string };
+
 export default function Similar({
-  id,
+  query,
   onPick,
   onMark,
   onClose,
 }: {
-  id: number;
+  /** 기준 — 사진 한 장 또는 글 한 줄 */
+  query: SimilarQuery;
   /** 결과를 새 기준으로 */
   onPick: (id: number) => void;
   onMark: (id: number, patch: Mark) => void;
@@ -26,29 +29,43 @@ export default function Similar({
 }) {
   // 결과를 «어느 기준에 대한 것인지»와 함께 둔다. 기준이 바뀌면 안 맞아
   // 저절로 «찾는 중»이 된다 — 효과 안에서 비울 일이 없다.
+  // 기준을 글자 하나로 — «어느 기준에 대한 결과인지» 견주는 열쇠
+  const key = "id" in query ? `id:${query.id}` : `text:${query.text}`;
+  const id = "id" in query ? query.id : null;
+  const text = "text" in query ? query.text : null;
   const [got, setGot] = useState<{
-    id: number;
+    key: string;
     hits: Hit[] | null;
     err: string | null;
   } | null>(null);
-  const hits = got?.id === id ? got.hits : null;
-  const err = got?.id === id ? got.err : null;
-  const [src, setSrc] = useState<FileRow | null>(null);
+  const hits = got?.key === key ? got.hits : null;
+  const err = got?.key === key ? got.err : null;
+  // 기준 사진 줄 — 어느 id의 것인지와 함께. 글 기준이면 없다.
+  const [srcGot, setSrcGot] = useState<{
+    id: number;
+    row: FileRow | null;
+  } | null>(null);
+  const src = id !== null && srcGot?.id === id ? srcGot.row : null;
   const [viewer, setViewer] = useState<number | null>(null);
 
   useEffect(() => {
     let live = true;
-    invoke<Hit[]>("ai_similar", { id, limit: 48 })
-      .then((h) => live && setGot({ id, hits: h, err: null }))
-      .catch((e) => live && setGot({ id, hits: null, err: String(e) }));
-    // 기준 사진 자신 — 목록 한 줄이면 충분하다
-    invoke<FileRow[]>("files_by_ids", { ids: [id] })
-      .then((r) => live && setSrc(r[0] ?? null))
-      .catch(() => {});
+    const ask =
+      id !== null
+        ? invoke<Hit[]>("ai_similar", { id, limit: 48 })
+        : invoke<Hit[]>("ai_text_search", { query: text, limit: 96 });
+    ask
+      .then((h) => live && setGot({ key, hits: h, err: null }))
+      .catch((e) => live && setGot({ key, hits: null, err: String(e) }));
+    // 기준 사진 자신 — 목록 한 줄이면 충분하다. 글이면 없다.
+    if (id !== null)
+      invoke<FileRow[]>("files_by_ids", { ids: [id] })
+        .then((r) => live && setSrcGot({ id, row: r[0] ?? null }))
+        .catch(() => {});
     return () => {
       live = false;
     };
-  }, [id]);
+  }, [key, id, text]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -64,7 +81,12 @@ export default function Similar({
   return (
     <div className="fixed inset-0 z-[60] bg-canvas flex flex-col">
       <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[12.5px]">
-        <span className="text-fg font-semibold">비슷한 사진</span>
+        <span className="text-fg font-semibold">
+          {text !== null ? "글로 찾기" : "비슷한 사진"}
+        </span>
+        {text !== null && (
+          <span className="text-fg-mute truncate">«{text}»</span>
+        )}
         {src && (
           <span className="flex items-center gap-2 text-fg-mute min-w-0">
             <img
@@ -96,7 +118,7 @@ export default function Similar({
         )}
         {hits && hits.length === 0 && (
           <div className="h-full flex items-center justify-center text-fg-mute text-[13px]">
-            비슷한 사진이 없습니다
+            {text !== null ? "맞는 사진이 없습니다" : "비슷한 사진이 없습니다"}
           </div>
         )}
         {hits && hits.length > 0 && (

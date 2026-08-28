@@ -9,6 +9,7 @@ pub mod clip;
 pub mod embed;
 pub mod models;
 pub mod similar;
+pub mod text;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AiError {

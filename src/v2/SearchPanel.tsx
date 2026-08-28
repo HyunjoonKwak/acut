@@ -1,6 +1,8 @@
 import { useDebouncedText } from "./useDebouncedText";
 import type { Picks } from "./picks";
 import FacetList from "./FacetList";
+import { useState } from "react";
+import { useUi } from "./uiStore";
 
 const KINDS = [
   { v: 0, label: "사진" },
@@ -66,9 +68,29 @@ export default function SearchPanel({
     if (next !== value.name_like) onChange({ ...value, name_like: next });
   });
 
+  // 글로 찾기 — Enter로 묻는다. 한 글자마다 모델을 돌리기엔 무겁다.
+  const [ai, setAi] = useState("");
+  const ask = () => {
+    const q = ai.trim();
+    if (q) useUi.getState().set({ textSearch: q });
+  };
+
   return (
     <>
       <div className="px-2">
+        <input
+          value={ai}
+          onChange={(e) => setAi(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") ask();
+          }}
+          placeholder="AI로 찾기 — «바닷가 강아지» ⏎"
+          title="글로 찾습니다. 한국어·영어 다 됩니다. 설정 › AI에서 글로 찾기 모델을 받아야 합니다."
+          className="w-full h-control px-2 rounded-md bg-canvas text-[12px] text-fg
+            placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
+        />
+      </div>
+      <div className="px-2 mt-1.5">
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}

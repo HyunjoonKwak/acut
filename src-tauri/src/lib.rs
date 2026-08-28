@@ -102,6 +102,7 @@ pub fn run() {
             api::ai_model_download,
             api::ai_embed_start,
             api::ai_similar,
+            api::ai_text_search,
             api::cache_usage,
             api::cache_clear,
             api::cache_migrate,

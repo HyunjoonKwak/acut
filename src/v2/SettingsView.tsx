@@ -325,6 +325,7 @@ type AiStatus = {
   model_bytes: number;
   embedded: number;
   total: number;
+  running: boolean;
 };
 
 function Ai() {
@@ -373,8 +374,12 @@ function Ai() {
 
   const rate = rateOf(samples, now);
   const growing = rate !== null && rate > 0;
+  // 뒷단이 «도는 중»이라 하면 그게 진실. 개수가 오르는 것과 방금 누른 것은 거들 뿐.
   const embedding =
-    growing || job?.label === "AI 벡터" || now - kicked < 15_000;
+    (st?.running ?? false) ||
+    growing ||
+    job?.label === "AI 벡터" ||
+    now - kicked < 15_000;
   const done = st?.embedded ?? 0;
   const total = st?.total ?? 0;
   const left = Math.max(0, total - done);

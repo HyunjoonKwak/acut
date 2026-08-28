@@ -14,7 +14,7 @@ pub const SIDE: usize = 224;
 pub const DIM: usize = 512;
 /// CLIP이 학습 때 쓴 평균·표준편차 (preprocessor_config.json)
 const MEAN: [f32; 3] = [0.481_454_66, 0.457_827_5, 0.408_210_73];
-const STD: [f32; 3] = [0.268_629_54, 0.261_302_58, 0.275_777_11];
+const STD: [f32; 3] = [0.268_63, 0.261_30, 0.275_78];
 
 pub struct Clip {
     session: Mutex<Session>,

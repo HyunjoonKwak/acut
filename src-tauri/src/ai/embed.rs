@@ -118,7 +118,12 @@ pub fn run(
 pub fn counts(db: &Db) -> Result<(i64, i64)> {
     Ok(db.read(|c| {
         c.query_row(
-            "SELECT COUNT(embedding), COUNT(*) FROM files WHERE trashed_at IS NULL",
+            // 전체는 «벡터를 만들 수 있는 것» — 썸네일이 없는 파일(못 만든 영상·깨진
+            // 사진)은 세지 않는다. 안 그러면 «21장 남음»이 영영 안 사라진다.
+            "SELECT COUNT(embedding), COUNT(*) FROM files f
+             WHERE trashed_at IS NULL
+               AND (embedding IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM thumbs t WHERE t.file_id = f.id AND t.state = 1))",
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )

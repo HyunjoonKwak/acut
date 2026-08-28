@@ -4,7 +4,7 @@
 //! 진행 상황을 이벤트로 흘린다. 조회는 즉시 돌아온다.
 
 use crate::api::{err, AppState};
-use crate::cull::{burst, dedup, junk};
+use crate::cull::{burst, dedup, junk, scene};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub const KIND_DUP: i32 = 0;
 pub const KIND_JUNK: i32 = 1;
 pub const KIND_BURST: i32 = 2;
+pub const KIND_SCENE: i32 = scene::KIND;
 
 #[derive(Debug, Serialize)]
 pub struct GroupRow {
@@ -74,12 +75,22 @@ pub fn cull_scan(app: AppHandle) -> Result<(), String> {
             }
         }
         // 3. 완전 중복 — 해시를 읽으므로 가장 오래 걸린다
-        let r = dedup::scan(&db, cancel, |p| {
+        let r = dedup::scan(&db, Arc::clone(&cancel), |p| {
             let _ = app.emit("cull-dedup-progress", p);
         });
         match r {
             Ok(p) => {
                 let _ = app.emit("cull-dedup", &p);
+            }
+            Err(e) => {
+                let _ = app.emit("cull-error", e.to_string());
+                return;
+            }
+        }
+        // 비슷한 장면 — 벡터가 있는 사진만. 없으면 photos 0으로 곧 끝난다.
+        match scene::scan(&db, scene::DEFAULT_THRESHOLD, cancel, |_| {}) {
+            Ok(p) => {
+                let _ = app.emit("cull-scene", &p);
                 let _ = app.emit("cull-done", ());
             }
             Err(e) => {

@@ -11,6 +11,7 @@ pub mod burst;
 pub mod dedup;
 pub mod hash;
 pub mod junk;
+pub mod scene;
 
 #[cfg(test)]
 mod real {

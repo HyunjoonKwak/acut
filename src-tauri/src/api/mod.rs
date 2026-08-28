@@ -7,6 +7,7 @@
 //! `convertFileSrc`로 바꿔 `<img src>`에 넣으면 된다 — 웹뷰가 파일을 직접 읽는다.
 
 pub mod cull;
+pub mod job;
 pub mod organize;
 pub mod photo_protocol;
 pub mod thumb_protocol;
@@ -227,22 +228,15 @@ pub fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     let cache_root = state.cache_root(lib.id);
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
-    let running = Arc::clone(&state.running);
     // 이미 도는 중이면 새로 시작하지 않는다 — 두 벌이 같은 캐시에 쓴다
-    if running.swap(true, Ordering::AcqRel) {
+    let Some(guard) = job::try_start(&state.running, "에이컷 스캔") else {
         return Err("이미 스캔 중입니다".into());
-    }
+    };
     cancel.store(false, Ordering::Relaxed);
 
     std::thread::spawn(move || {
         // 어떻게 끝나든 표시를 내린다
-        struct Done(Arc<AtomicBool>);
-        impl Drop for Done {
-            fn drop(&mut self) {
-                self.0.store(false, Ordering::Release);
-            }
-        }
-        let _done = Done(running);
+        let _guard = guard;
 
         let handle = app.clone();
         let r = scan::scan_folder(&db, lib.id, &dir, lib.area, |p| {
@@ -723,20 +717,13 @@ pub fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -> Resu
     let cache_root = state.cache_root(library_id);
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
-    let running = Arc::clone(&state.running);
-    if running.swap(true, Ordering::AcqRel) {
-        return Err("스캔이 도는 중입니다. 끝난 뒤 가져오세요".into());
-    }
+    let Some(guard) = job::try_start(&state.running, "에이컷 가져오기") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤 가져오세요".into());
+    };
     cancel.store(false, Ordering::Relaxed);
 
     std::thread::spawn(move || {
-        struct Done(Arc<AtomicBool>);
-        impl Drop for Done {
-            fn drop(&mut self) {
-                self.0.store(false, Ordering::Release);
-            }
-        }
-        let _done = Done(running);
+        let _guard = guard;
 
         // 스캔이 «새로 들어온 것»을 가려내는 기준. 복사 전에 찍어 둔다.
         let since = std::time::SystemTime::now()
@@ -959,6 +946,8 @@ pub struct AiStatus {
     /// 벡터가 있는 장수 / 전체 장수
     pub embedded: i64,
     pub total: i64,
+    /// 긴 일이 도는 중인가 — 화면이 새로 떠도 이걸로 다시 잡는다
+    pub running: bool,
 }
 
 #[tauri::command]
@@ -970,6 +959,7 @@ pub fn ai_status(state: State<'_, AppState>) -> Result<AiStatus, String> {
         model_bytes: models::spec(ModelId::ClipVision).bytes,
         embedded,
         total,
+        running: state.running.load(Ordering::Acquire),
     })
 }
 
@@ -997,10 +987,9 @@ pub fn ai_embed_start(app: AppHandle) -> Result<(), String> {
     if !models::present(&state.cache_base, ModelId::ClipVision) {
         return Err("모델이 없습니다 — 설정 › AI에서 받으세요".into());
     }
-    let running = Arc::clone(&state.running);
-    if running.swap(true, Ordering::AcqRel) {
-        return Err("스캔이 도는 중입니다. 끝난 뒤에 하세요".into());
-    }
+    let Some(guard) = job::try_start(&state.running, "에이컷 AI 벡터") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
     let db = Arc::clone(&state.db);
     let base = state.cache_base.clone();
     let cancel = Arc::clone(&state.cancel);
@@ -1008,13 +997,7 @@ pub fn ai_embed_start(app: AppHandle) -> Result<(), String> {
     let model = models::path(&base, ModelId::ClipVision);
 
     std::thread::spawn(move || {
-        struct Done(Arc<AtomicBool>);
-        impl Drop for Done {
-            fn drop(&mut self) {
-                self.0.store(false, Ordering::Release);
-            }
-        }
-        let _done = Done(running);
+        let _guard = guard;
         let handle = app.clone();
         let r = crate::ai::embed::run(&db, &model, &base, cancel, |p| {
             let _ = handle.emit("ai-progress", p);

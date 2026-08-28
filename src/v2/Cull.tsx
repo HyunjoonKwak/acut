@@ -34,6 +34,7 @@ const KINDS = [
   { id: 0, label: "완전 중복", hint: "바이트가 같은 파일" },
   { id: 2, label: "같은 순간", hint: "연달아 찍은 것" },
   { id: 1, label: "잡동사니", hint: "스크린샷·다운로드본" },
+  { id: 3, label: "비슷한 장면", hint: "AI가 본 닮은 사진 (벡터 필요)" },
 ];
 
 export default function Cull({ onClose }: { onClose: () => void }) {
@@ -124,6 +125,16 @@ export default function Cull({ onClose }: { onClose: () => void }) {
     );
     listen<{ hashed: number; candidates: number }>("cull-dedup-progress", (e) =>
       setBusy(`중복 확인 ${e.payload.hashed}/${e.payload.candidates}`),
+    ).then((f) => un.push(f));
+    listen("cull-dedup", () => setBusy("중복 완료 — 비슷한 장면 찾는 중")).then(
+      (f) => un.push(f),
+    );
+    listen<{ photos: number; groups: number }>("cull-scene", (e) =>
+      setBusy(
+        e.payload.photos === 0
+          ? "비슷한 장면은 벡터가 있어야 찾습니다 — 설정 › AI"
+          : `비슷한 장면 ${e.payload.groups}그룹`,
+      ),
     ).then((f) => un.push(f));
     listen("cull-done", () => {
       setBusy("");

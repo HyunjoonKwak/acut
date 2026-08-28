@@ -1,35 +1,38 @@
 @import "tailwindcss";
 
+/*
+ * 색은 Lap(daisyUI 5 «dark» 테마)의 톤에 맞췄다 — 살짝 파란 기운의 회색,
+ * 강조는 보랏빛 파랑. 값은 daisyUI의 oklch를 sRGB로 옮긴 것이고 층은 우리
+ * 화면 구조(바탕 → 레일 → 크롬 → 패널 → 올렸을 때)에 맞춰 나눴다.
+ *
+ * 어두운 테마 하나뿐이다. 밝은 테마는 아직 없다.
+ */
 @theme {
-  /* ── 바탕 ──────────────────────────────────────────────────────────
-     사진이 주인공이다. 크롬은 뒤로 물러나야 하고, 그리드 바탕이 가장
-     어두워야 사진이 떠 보인다. 위로 갈수록 밝아진다. */
-  --color-canvas: #0e1213; /* 그리드 바탕 — 가장 어둡다 */
-  --color-chrome: #171b1d; /* 툴바·사이드바·상태바 */
-  --color-rail: #121718; /* 레일 — 크롬보다 한 겹 뒤 */
-  --color-raised: #1e2426; /* 메뉴·패널·입력칸 */
-  --color-hover: #262d30;
-  --color-line: #252c2e; /* 경계선 */
-  --color-line-strong: #36403f; /* 링·구분이 필요한 테두리 */
+  /* 바탕 — 뒤에서 앞으로 */
+  --color-canvas: #15191e; /* 그리드 바탕 (daisyUI base-300) */
+  --color-rail: #12151a; /* 레일 — 바탕보다 한 겹 뒤 */
+  --color-chrome: #191e24; /* 툴바·사이드바·상태바 (base-200) */
+  --color-raised: #1d232a; /* 메뉴·패널·입력칸 (base-100) */
+  --color-hover: #293037; /* 올렸을 때 */
+  --color-line: #2b3239; /* 경계선 */
+  --color-line-strong: #3c434a; /* 링·구분이 필요한 테두리 */
 
-  /* ── 글자 ────────────────────────────────────────────────────────── */
-  --color-fg: #e8edee;
-  --color-fg-dim: #98a5a8; /* 보조 설명 */
-  --color-fg-mute: #6b7779; /* 숫자·라벨 */
-  --color-fg-faint: #46514f; /* 꺼진 것 */
+  /* 글자 — 네 단계 (base-content를 바탕에 섞은 것) */
+  --color-fg: #ecf9ff;
+  --color-fg-dim: #a4afb5; /* 보조 설명 */
+  --color-fg-mute: #767e84; /* 숫자·라벨 */
+  --color-fg-faint: #50575d; /* 꺼진 것 */
 
-  /* ── 뜻이 있는 색 ─────────────────────────────────────────────────
-     세 개뿐이다. 늘리면 의미가 흐려진다. */
-  --color-accent: #49b8b4; /* 지금 고른 것·진행 */
-  --color-accent-fg: #06201f;
-  --color-keep: #f0b429; /* 남김·별점 */
-  --color-keep-fg: #231a00;
-  --color-drop: #e2685c; /* 제외·되돌릴 수 없는 일 */
-  --color-drop-fg: #2a0d09;
-  --color-focus: #6c6ce8; /* 키보드 포커스 */
+  /* 뜻이 있는 색 — daisyUI primary / warning / error / info */
+  --color-accent: #605dff; /* 지금 고른 것·진행 */
+  --color-accent-fg: #f1f0ff;
+  --color-keep: #fcb700; /* 남김·별점 */
+  --color-keep-fg: #2d2100;
+  --color-drop: #ff627d; /* 제외·되돌릴 수 없는 일 */
+  --color-drop-fg: #2e1216;
+  --color-focus: #00bafe; /* 키보드 초점 — 고른 것(accent)과 달라야 한다 */
 
-  /* ── 크기 ──────────────────────────────────────────────────────────
-     컨트롤 높이는 한 가지다. 8종류를 쓰면 줄이 안 맞는다. */
+  /* 조작 요소 한 줄 높이 */
   --spacing-control: 1.75rem; /* 28px */
 }
 
@@ -41,9 +44,15 @@
   }
 
   body {
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: var(--color-bg-primary);
-    color: var(--color-text-primary);
+    /* macOS에서 SF Pro + Apple SD Gothic Neo. Lap과 같다. */
+    font-family:
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      Roboto,
+      sans-serif;
+    background: var(--color-canvas);
+    color: var(--color-fg);
     overflow: hidden;
     height: 100vh;
     -webkit-font-smoothing: antialiased;
@@ -54,91 +63,5 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-  }
-}
-
-@keyframes shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(200%); }
-}
-
-@keyframes mark-pulse {
-  0% { transform: scale(0.8); opacity: 0; }
-  50% { transform: scale(1.1); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
-}
-
-@keyframes slide-in {
-  from { transform: translateX(8px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
-}
-
-.animate-mark-pulse {
-  animation: mark-pulse 0.3s ease-out;
-}
-
-.animate-slide-in {
-  animation: slide-in 0.2s ease-out;
-}
-
-@keyframes fade-in {
-  from { opacity: 0; transform: translateX(-4px) translateY(-50%); }
-  to { opacity: 1; transform: translateX(0) translateY(-50%); }
-}
-
-.animate-fade-in {
-  animation: fade-in 0.15s ease-out forwards;
-}
-
-/* Thin scrollbar for thumbnail strip */
-.scrollbar-thin::-webkit-scrollbar { height: 4px; }
-.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-.scrollbar-thin::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
-.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
-
-/* Explicit dark theme via data-theme attribute */
-[data-theme="dark"] {
-  --color-bg-primary: #111111;
-  --color-bg-secondary: #1a1a1a;
-  --color-bg-elevated: #1e1e1e;
-  --color-text-primary: #f0f0f0;
-  --color-text-secondary: #999999;
-  --color-accent: #3b82f6;
-  --color-accent-hover: #60a5fa;
-  --color-border: #2a2a2a;
-  --color-danger: #f87171;
-  --color-success: #4ade80;
-  --color-warning: #fbbf24;
-}
-
-/* Explicit light theme via data-theme attribute */
-[data-theme="light"] {
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f5f5f5;
-  --color-bg-elevated: #ffffff;
-  --color-text-primary: #1a1a1a;
-  --color-text-secondary: #666666;
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-border: #e5e7eb;
-  --color-danger: #ef4444;
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
-}
-
-/* System preference fallback (when no data-theme is set) */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    --color-bg-primary: #111111;
-    --color-bg-secondary: #1a1a1a;
-    --color-bg-elevated: #1e1e1e;
-    --color-text-primary: #f0f0f0;
-    --color-text-secondary: #999999;
-    --color-accent: #3b82f6;
-    --color-accent-hover: #60a5fa;
-    --color-border: #2a2a2a;
-    --color-danger: #f87171;
-    --color-success: #4ade80;
-    --color-warning: #fbbf24;
   }
 }

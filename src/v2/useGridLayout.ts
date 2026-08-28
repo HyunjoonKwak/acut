@@ -37,20 +37,30 @@ export function useGridLayout(
     selected: number | null;
   },
 ) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(0);
   const [viewH, setViewH] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
 
-  useEffect(() => {
-    const el = scrollRef.current;
+  /// 스크롤 요소. **콜백 ref**로 잡는다 — useEffect + useRef로 하면 요소가
+  /// 없을 때(설정 화면·필름스트립이 그리드를 떼어 둔 동안) 효과가 한 번 돌고
+  /// 끝나, 돌아와도 폭이 0으로 남아 칸이 0px가 된다. 실제로 그렇게 사진이
+  /// 안 보였다. 요소가 붙을 때마다 다시 잰다.
+  const elRef = useRef<HTMLDivElement | null>(null);
+  const obs = useRef<ResizeObserver | null>(null);
+  const scrollRef = useCallback((el: HTMLDivElement | null) => {
+    obs.current?.disconnect();
+    obs.current = null;
+    elRef.current = el;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       setViewH(el.clientHeight);
       setViewW(el.clientWidth);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    obs.current = ro;
+    setViewH(el.clientHeight);
+    setViewW(el.clientWidth);
+    setScrollTop(el.scrollTop);
   }, []);
 
   const { thumbSize, gridStyle } = opts;
@@ -115,7 +125,7 @@ export function useGridLayout(
 
   const virt = useVirtualizer({
     count: masonry ? 0 : grid.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => elRef.current,
     // 머리글과 사진 줄은 높이가 다르다
     estimateSize: (i) => {
       if (grid[i]?.kind === "header") return HEADER_H;
@@ -153,7 +163,7 @@ export function useGridLayout(
     if (selected === null) return;
     if (masonry) {
       const b = masonry.boxes.find((x) => x.file.id === selected);
-      const el = scrollRef.current;
+      const el = elRef.current;
       if (!b || !el) return;
       if (b.y < el.scrollTop) el.scrollTo({ top: b.y - GAP });
       else if (b.y + b.h > el.scrollTop + el.clientHeight)
@@ -175,7 +185,7 @@ export function useGridLayout(
     [],
   );
   const resetScroll = useCallback(() => {
-    scrollRef.current?.scrollTo({ top: 0 });
+    elRef.current?.scrollTo({ top: 0 });
     setScrollTop(0);
   }, []);
 

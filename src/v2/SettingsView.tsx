@@ -6,7 +6,7 @@ import { useData } from "./dataStore";
 import { fmtBytes, fmtDateTime } from "./format";
 import { STYLES } from "./gridStyle";
 import { useJob } from "./jobStore";
-import { etaSec, fmtEta, rateOf } from "./rate";
+import { etaSec, fmtEta, pushSample, rateOf, type Sample } from "./rate";
 import { DEFAULT_PREFS, usePref, usePrefs, type Prefs } from "./prefs";
 import { toast } from "./toastStore";
 import { Btn } from "./ui";
@@ -329,25 +329,30 @@ type AiStatus = {
 
 function Ai() {
   const [st, setSt] = useState<AiStatus | null>(null);
+  // 개수 표본 — DB가 진실이다. 이벤트는 화면이 새로 뜨면 놓치지만 개수는 안 놓친다.
+  const [samples, setSamples] = useState<Sample[]>([]);
   const job = useJob((s) => s.job);
   const busy = job !== null;
-  const embedding = job?.label === "AI 벡터";
-  // 최근 30초의 실제 속도 — 알림이 올 때마다 다시 센다
-  const rate = useJob((s) =>
-    s.job?.label === "AI 벡터" ? rateOf(s.samples, Date.now()) : null,
-  );
+  // 누른 직후 — 개수가 움직이기 전 몇 초 동안도 «만드는 중»으로
+  const [kicked, setKicked] = useState(0);
+  // 마지막으로 센 시각 — 그리는 동안 시계를 읽지 않는다
+  const [now, setNow] = useState(0);
   const reload = useCallback(() => {
     invoke<AiStatus>("ai_status")
-      .then(setSt)
+      .then((s) => {
+        const t = Date.now();
+        setSt(s);
+        setNow(t);
+        setSamples((prev) => pushSample(prev, { t, n: s.embedded }));
+      })
       .catch(() => setSt(null));
   }, []);
-  // 일이 시작·끝날 때, 그리고 도는 동안엔 10초마다 다시 센다
+  // 3초마다 다시 센다 — 개수가 오르면 도는 것이고, 안 오르면 멎은 것이다
   useEffect(() => {
     reload();
-    if (!busy) return;
-    const t = setInterval(reload, 10_000);
+    const t = setInterval(reload, 3_000);
     return () => clearInterval(t);
-  }, [reload, busy]);
+  }, [reload]);
 
   const download = async () => {
     try {
@@ -359,22 +364,24 @@ function Ai() {
   const embed = async () => {
     try {
       await invoke("ai_embed_start");
+      setKicked(Date.now());
     } catch (e) {
       toast(String(e), "drop");
     }
   };
   const stop = () => invoke("scan_cancel").catch(() => {});
 
-  // 도는 중엔 상태바와 같은 숫자를 여기서도 — 끝날 때까지 «0장»으로 보이면 멎은 줄 안다
-  const done = embedding
-    ? (st?.embedded ?? 0) + (job?.done ?? 0)
-    : (st?.embedded ?? 0);
-  const total = st?.total ?? job?.total ?? 0;
+  const rate = rateOf(samples, now);
+  const growing = rate !== null && rate > 0;
+  const embedding =
+    growing || job?.label === "AI 벡터" || now - kicked < 15_000;
+  const done = st?.embedded ?? 0;
+  const total = st?.total ?? 0;
   const left = Math.max(0, total - done);
   const hint = !st
     ? "…"
     : embedding
-      ? `${done.toLocaleString()} / ${total.toLocaleString()}장 — 만드는 중. 남은 ${left.toLocaleString()}장${rate === null ? ", 속도 재는 중" : `, 초당 ${Math.round(rate)}장이면 ${fmtEta(etaSec(left, rate))}`}. 멈춰도 한 것은 남습니다.`
+      ? `${done.toLocaleString()} / ${total.toLocaleString()}장 — 만드는 중. 남은 ${left.toLocaleString()}장${growing ? `, 초당 ${Math.round(rate)}장이면 ${fmtEta(etaSec(left, rate))}` : ", 속도 재는 중"}. 멈춰도 한 것은 남습니다.`
       : left > 0
         ? `${done.toLocaleString()} / ${total.toLocaleString()}장 — 남은 ${left.toLocaleString()}장. 하다 말아도 한 것은 남습니다.`
         : `${done.toLocaleString()}장 전부 있습니다. 새로 들어온 사진만 더 만들면 됩니다.`;

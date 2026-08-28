@@ -161,6 +161,9 @@ pub struct Filter {
     /// 이 사람이 나온 사진만 (faces.person_id)
     #[serde(default)]
     pub person_id: Option<i64>,
+    /// 지도에서 고른 영역 — `남,서,북,동` (도). 지도 갈래에서 칸이나 보이는 영역을 누르면 걸린다.
+    #[serde(default)]
+    pub bbox: Option<String>,
 }
 
 /// 그리드에 머리글을 넣어 묶는 기준. Lap의 GROUP과 같다.
@@ -188,6 +191,15 @@ pub struct Page {
 
 /// LIKE 와일드카드를 이스케이프한다. `_`가 임의 문자로 동작하면
 /// `IMG_1234` 검색이 엉뚱한 것까지 잡는다.
+/// `남,서,북,동` → [남, 서, 북, 동]. 네 수가 아니면 None — 조건이 조용히 빠지지 않게 부르는 쪽이 안다.
+pub fn parse_bbox(s: &str) -> Option<[f64; 4]> {
+    let v: Vec<f64> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    if v.len() != 4 || v[0] > v[2] || v[1] > v[3] {
+        return None;
+    }
+    Some([v[0], v[1], v[2], v[3]])
+}
+
 fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
@@ -310,6 +322,13 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     }
     if f.no_thumb {
         w.push("NOT EXISTS (SELECT 1 FROM thumbs t WHERE t.file_id = fi.id AND t.state = 1)".into());
+    }
+    if let Some(b) = f.bbox.as_deref().and_then(parse_bbox) {
+        w.push("fi.gps_lat >= ? AND fi.gps_lat <= ? AND fi.gps_lon >= ? AND fi.gps_lon <= ?".into());
+        p.push(Box::new(b[0]));
+        p.push(Box::new(b[2]));
+        p.push(Box::new(b[1]));
+        p.push(Box::new(b[3]));
     }
     if let Some(pid) = f.person_id {
         w.push("EXISTS (SELECT 1 FROM faces fa WHERE fa.file_id = fi.id AND fa.person_id = ?)".into());
@@ -706,6 +725,70 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
 }
 
 /// 필터에 걸리는 전체 개수와 용량. 페이지마다 세지 않고 필터가 바뀔 때만 호출한다.
+/// 지도의 칸 하나 — 이 칸에 든 사진 수와 대표 썸네일
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MapCell {
+    pub lat: f64,
+    pub lon: f64,
+    pub n: i64,
+    pub library_id: Option<i64>,
+    pub thumb: Option<String>,
+}
+
+/// 조건에 맞는 사진을 `precision`도 격자로 묶는다 — 지도가 확대될수록 잘게.
+/// 칸마다 평균 좌표, 장수, 대표 한 장. 많은 칸부터 4,000개까지.
+pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
+    let p = precision.clamp(0.0001, 10.0);
+    let (where_sql, params) = build_where(f, None);
+    let join = if needs_folder_join(f) {
+        "JOIN folders fo ON fo.id = fi.folder_id"
+    } else {
+        ""
+    };
+    // +90/+180으로 양수로 만든 뒤 자른다 — CAST는 0쪽으로 자르므로 음수면 칸이 어긋난다
+    let sql = format!(
+        "SELECT AVG(fi.gps_lat), AVG(fi.gps_lon), COUNT(*), MAX(fi.id)
+           FROM files fi {join} {where_sql} AND fi.gps_lat IS NOT NULL AND fi.gps_lon IS NOT NULL
+          GROUP BY CAST((fi.gps_lat + 90.0) / {p} AS INTEGER), CAST((fi.gps_lon + 180.0) / {p} AS INTEGER)
+          ORDER BY 3 DESC LIMIT 4000"
+    );
+    let cells: Vec<(f64, f64, i64, i64)> = db.read(|c| {
+        let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        let mut st = c.prepare(&sql)?;
+        let it = st.query_map(refs.as_slice(), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })?;
+    // 대표 썸네일 — 칸마다 한 장, 한 번에 묻는다
+    let ids: Vec<i64> = cells.iter().map(|c| c.3).collect();
+    let covers: std::collections::HashMap<i64, (i64, String)> = if ids.is_empty() {
+        Default::default()
+    } else {
+        let marks = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT fi.id, fo.library_id, t.rel_path FROM files fi
+               JOIN folders fo ON fo.id = fi.folder_id
+               JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
+              WHERE fi.id IN ({marks})"
+        );
+        db.read(|c| {
+            let refs: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|i| i as &dyn rusqlite::ToSql).collect();
+            let mut st = c.prepare(&sql)?;
+            let it = st.query_map(refs.as_slice(), |r| Ok((r.get::<_, i64>(0)?, (r.get(1)?, r.get(2)?))))?;
+            it.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()
+        })?
+    };
+    Ok(cells
+        .into_iter()
+        .map(|(lat, lon, n, id)| {
+            let (library_id, thumb) = match covers.get(&id) {
+                Some((l, t)) => (Some(*l), Some(t.clone())),
+                None => (None, None),
+            };
+            MapCell { lat, lon, n, library_id, thumb }
+        })
+        .collect())
+}
+
 pub fn summary(db: &Db, f: &Filter) -> Result<(i64, i64)> {
     let (where_sql, params) = build_where(f, None);
     let join = if needs_folder_join(f) {
@@ -1358,6 +1441,32 @@ mod tests {
     }
 
     /// 상태바의 «썸네일 없음 N장»과 그걸 눌렀을 때 뜨는 장수가 같아야 한다
+    #[test]
+    fn bbox_parses_four_numbers_in_order() {
+        assert_eq!(parse_bbox("37.4,126.8,37.6,127.1"), Some([37.4, 126.8, 37.6, 127.1]));
+        assert_eq!(parse_bbox("37.6,126.8,37.4,127.1"), None); // 남이 북보다 크다
+        assert_eq!(parse_bbox("1,2,3"), None);
+    }
+
+    #[test]
+    fn map_cells_group_by_grid_and_respect_the_bbox() {
+        let (_d, db) = seeded();
+        db.transaction(|tx| {
+            // 서울 둘, 부산 하나
+            tx.execute("UPDATE files SET gps_lat = 37.55, gps_lon = 126.98 WHERE id IN (1, 2)", [])?;
+            tx.execute("UPDATE files SET gps_lat = 35.18, gps_lon = 129.08 WHERE id = 3", [])?;
+            Ok(())
+        })
+        .unwrap();
+        let cells = map_cells(&db, &Filter::default(), 1.0).unwrap();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].n, 2);
+        assert!((cells[0].lat - 37.55).abs() < 1e-6);
+        let seoul = Filter { bbox: Some("37,126,38,128".into()), ..Default::default() };
+        assert_eq!(summary(&db, &seoul).unwrap().0, 2);
+        assert_eq!(map_cells(&db, &seoul, 0.1).unwrap().len(), 1);
+    }
+
     #[test]
     fn no_thumb_filter_matches_the_pending_count() {
         let (_d, db) = seeded();

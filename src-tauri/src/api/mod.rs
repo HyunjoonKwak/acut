@@ -1109,6 +1109,12 @@ pub fn ai_similar(state: State<'_, AppState>, id: i64, limit: usize) -> Result<V
     similar_rows(&state, index.similar(id, limit.clamp(1, 200)))
 }
 
+/// 지도의 칸들 — 조건에 맞는 사진을 `precision`도 격자로 묶는다
+#[tauri::command]
+pub fn map_cells(state: State<'_, AppState>, filter: Filter, precision: f64) -> Result<Vec<query::MapCell>, String> {
+    query::map_cells(&state.db, &filter, precision).map_err(err)
+}
+
 /// 얼굴을 찾고 사람으로 묶는다. 진행은 `faces-progress`, 끝나면 `faces-done`.
 #[tauri::command]
 pub fn ai_faces_start(app: AppHandle) -> Result<(), String> {

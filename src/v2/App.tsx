@@ -7,6 +7,7 @@ import Cull from "./Cull";
 import Filmstrip from "./Filmstrip";
 import Import from "./Import";
 import Organize from "./Organize";
+import MapView from "./MapView";
 import PhotoGrid from "./PhotoGrid";
 import Preview from "./Preview";
 import SettingsView from "./SettingsView";
@@ -313,20 +314,24 @@ export default function App() {
               {stripPos === "bottom" && STRIP}
             </>
           ) : (
-            <PhotoGrid
-              loading={list.loading}
-              empty={libs.length === 0}
-              layout={layout}
-              baseIndex={list.baseIndex}
-              buckets={buckets}
-              caption={caption}
-              gridStyle={gridStyle}
-              group={group}
-              onPick={pick}
-              onOpen={openAt}
-              onContext={openContext}
-              onSeek={list.seekTo}
-            />
+            <>
+              {/* 위치 갈래 — 지도 위, 그리드 아래. 칸을 누르면 그 자리의 사진만 남는다 */}
+              {source === "location" && <MapView filter={filter} />}
+              <PhotoGrid
+                loading={list.loading}
+                empty={libs.length === 0}
+                layout={layout}
+                baseIndex={list.baseIndex}
+                buckets={buckets}
+                caption={caption}
+                gridStyle={gridStyle}
+                group={group}
+                onPick={pick}
+                onOpen={openAt}
+                onContext={openContext}
+                onSeek={list.seekTo}
+              />
+            </>
           )}
 
           {ui.organizing && libId !== null && (

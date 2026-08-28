@@ -87,3 +87,40 @@
     flex-direction: column;
   }
 }
+
+/* 지도 마커 — 썸네일 동그라미에 장수 (MapView.tsx) */
+.acut-pin {
+  border-radius: 9999px;
+  background-color: var(--color-raised);
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 0 0 2px var(--color-fg), 0 2px 8px rgb(0 0 0 / 0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  cursor: pointer;
+}
+.acut-pin span {
+  transform: translateY(40%);
+  padding: 0 5px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: var(--color-canvas);
+}
+.leaflet-control-attribution {
+  background: rgb(0 0 0 / 0.5) !important;
+  color: var(--color-fg-mute) !important;
+  font-size: 9.5px !important;
+}
+.leaflet-control-attribution a {
+  color: var(--color-fg-dim) !important;
+}

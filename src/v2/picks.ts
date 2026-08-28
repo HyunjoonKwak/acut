@@ -34,6 +34,8 @@ export type Picks = {
   no_thumb: boolean;
   /** 사이드바에서 고른 사람 (faces.person_id) */
   person_id: number | null;
+  /** 지도에서 고른 영역 `남,서,북,동` */
+  bbox: string | null;
 };
 
 export const EMPTY: Picks = {
@@ -51,6 +53,7 @@ export const EMPTY: Picks = {
   place: null,
   no_thumb: false,
   person_id: null,
+  bbox: null,
 };
 
 /**
@@ -74,6 +77,7 @@ const TYPES: Record<keyof Picks, "number" | "string" | "boolean"> = {
   place: "string",
   no_thumb: "boolean",
   person_id: "number",
+  bbox: "string",
 };
 
 /** 아무 조건도 안 걸린 상태인가 — 툴바의 표시등이 이걸로 켜진다 */

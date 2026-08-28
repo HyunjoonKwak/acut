@@ -105,6 +105,7 @@ pub fn run() {
             api::ai_text_search,
             api::ai_faces_start,
             api::people_list,
+            api::map_cells,
             api::person_rename,
             api::person_merge,
             api::cache_usage,

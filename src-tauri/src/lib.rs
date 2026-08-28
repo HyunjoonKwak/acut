@@ -87,6 +87,7 @@ pub fn run() {
             api::settings_get,
             api::settings_set,
             api::settings_remove,
+            api::db_info,
             api::db_backup,
             api::db_backups,
             api::db_restore,

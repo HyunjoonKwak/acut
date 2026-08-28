@@ -34,6 +34,32 @@ export type Prefs = {
   libId: number | null;
   /** 폴더 감시 — 파인더로 넣은 사진이 저절로 나타난다 */
   watch: boolean;
+
+  // ── 일반 ──
+  /** 글꼴 — 프리텐다드(앱에 든 것) / 시스템(SF Pro + Apple SD Gothic Neo) */
+  font: "pretendard" | "system";
+  /** 커서를 올리면 뜨는 이름표 */
+  tooltips: boolean;
+  statusBar: boolean;
+
+  // ── 탐색 ──
+  /** 이름줄 첫째 줄 · 둘째 줄 (카드 보기) */
+  caption1: "name" | "date";
+  caption2: "dateSize" | "date" | "size" | "camera" | "none";
+  /** 타일 왼쪽 아래 배지 */
+  badge: "none" | "format" | "iso" | "shutter" | "aperture" | "focal";
+  /** 두 번 누르면 */
+  dblClick: "viewer" | "app";
+  /** 필름스트립 띠 자리 */
+  stripPos: "top" | "bottom";
+
+  // ── 뷰어 ──
+  /** 휠 — 확대 / 다음 장 */
+  wheel: "zoom" | "next";
+  viewerBg: "canvas" | "black" | "gray";
+  slideshowSec: number;
+  autoplay: boolean;
+  loopVideo: boolean;
 };
 
 export const DEFAULT_PREFS: Prefs = {
@@ -48,6 +74,19 @@ export const DEFAULT_PREFS: Prefs = {
   group: "none",
   libId: null,
   watch: true,
+  font: "pretendard",
+  tooltips: true,
+  statusBar: true,
+  caption1: "name",
+  caption2: "dateSize",
+  badge: "format",
+  dblClick: "viewer",
+  stripPos: "top",
+  wheel: "zoom",
+  viewerBg: "canvas",
+  slideshowSec: 3,
+  autoplay: true,
+  loopVideo: false,
 };
 
 type Store = Prefs & {

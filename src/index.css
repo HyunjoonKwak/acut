@@ -1,6 +1,19 @@
 @import "tailwindcss";
 
 /*
+ * 프리텐다드 — 한글·영문·숫자가 같은 굵기로 보이고 tnum(고정폭 숫자)이 된다.
+ * 가변 굵기 하나(2MB)를 앱에 넣는다. SIL OFL 1.1.
+ * 설정에서 «시스템 글꼴»을 고르면 data-font="system"으로 되돌린다.
+ */
+@font-face {
+  font-family: "Pretendard Variable";
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: block;
+  src: url("./assets/fonts/PretendardVariable.woff2") format("woff2-variations");
+}
+
+/*
  * 색은 Lap(daisyUI 5 «dark» 테마)의 톤에 맞췄다 — 살짝 파란 기운의 회색,
  * 강조는 보랏빛 파랑. 값은 daisyUI의 oklch를 sRGB로 옮긴 것이고 층은 우리
  * 화면 구조(바탕 → 레일 → 크롬 → 패널 → 올렸을 때)에 맞춰 나눴다.
@@ -34,6 +47,21 @@
 
   /* 조작 요소 한 줄 높이 */
   --spacing-control: 1.75rem; /* 28px */
+
+  /* 글꼴 — 프리텐다드가 기본, 없거나 껐으면 시스템 */
+  --font-sans:
+    "Pretendard Variable", Pretendard, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
+}
+
+/* 설정 › 글꼴: 시스템 */
+:root[data-font="system"] {
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Apple SD Gothic Neo",
+    sans-serif;
 }
 
 @layer base {
@@ -44,13 +72,7 @@
   }
 
   body {
-    /* macOS에서 SF Pro + Apple SD Gothic Neo. Lap과 같다. */
-    font-family:
-      system-ui,
-      -apple-system,
-      "Segoe UI",
-      Roboto,
-      sans-serif;
+    font-family: var(--font-sans);
     background: var(--color-canvas);
     color: var(--color-fg);
     overflow: hidden;

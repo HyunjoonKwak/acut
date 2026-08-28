@@ -798,6 +798,16 @@ fn backup_dir(state: &AppState) -> PathBuf {
     state.cache_base.join("backups")
 }
 
+/// 지금 쓰는 DB 파일 — 어디에 있고 얼마나 큰가.
+#[tauri::command]
+pub fn db_info(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let p = state.db.path().to_path_buf();
+    let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+    // WAL이 아직 안 합쳐진 만큼도 센다 — 켜 둔 동안은 여기에 쌓인다
+    let wal = std::fs::metadata(p.with_extension("db-wal")).map(|m| m.len()).unwrap_or(0);
+    Ok(serde_json::json!({ "path": p.to_string_lossy(), "bytes": bytes + wal }))
+}
+
 /// DB 사본을 한 벌 만든다. 켜 둔 채로 해도 된다.
 #[tauri::command]
 pub fn db_backup(state: State<'_, AppState>) -> Result<crate::db::backup::Backup, String> {

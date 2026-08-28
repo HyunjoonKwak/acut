@@ -9,6 +9,7 @@ import Import from "./Import";
 import Organize from "./Organize";
 import PhotoGrid from "./PhotoGrid";
 import Preview from "./Preview";
+import SettingsView from "./SettingsView";
 import ScrollBar from "./ScrollBar";
 import RenameDialog from "./RenameDialog";
 import SelectionPanel from "./SelectionPanel";
@@ -47,6 +48,13 @@ export default function App() {
   const [caption] = usePref("caption");
   const [filmstrip] = usePref("filmstrip");
   const [watch] = usePref("watch");
+  const [source] = usePref("source");
+  const [font] = usePref("font");
+  const [statusBar] = usePref("statusBar");
+  // 글꼴 — CSS가 data-font를 본다
+  useEffect(() => {
+    document.documentElement.dataset.font = font;
+  }, [font]);
 
   const filter = useFilter();
   const facetFilter = useMemo(() => facetOf(filter), [filter]);
@@ -255,7 +263,11 @@ export default function App() {
         {/* 콘텐츠 영역 — 뷰어는 이 안만 덮는다. 왼쪽 폴더 목록은 계속 보인다.
             세로로 나눈다: 위는 필름스트립, 아래는 그리드와 타임라인. */}
         <div className="flex-1 flex flex-col min-w-0 relative">
-          {filmstrip ? (
+          {source === "settings" ? (
+            <SettingsView
+              onRescanAll={() => scan.rescan(libs.map((l) => l.id))}
+            />
+          ) : filmstrip ? (
             /* 필름스트립 — 위는 띠, 아래는 고른 한 장 (Lap의 Content.vue) */
             <>
               <Filmstrip
@@ -389,21 +401,23 @@ export default function App() {
       )}
 
       {/* 상태바 — 지금 보고 있는 사진의 정보 (Lap의 StatusBar 구성) */}
-      <StatusBar
-        index={focusAt >= 0 ? list.baseIndex + focusAt : -1}
-        total={matched || (stats?.files ?? 0)}
-        totalBytes={stats?.bytes ?? 0}
-        file={focusAt >= 0 ? rows[focusAt] : null}
-        exif={focusExif}
-      >
-        <StatusActions
-          stopJob={scan.stopJob}
-          restoreAll={ops.restoreAll}
-          emptyTrash={ops.emptyTrash}
-          cleanExcluded={ops.cleanExcluded}
-          undoLast={ops.undoLast}
-        />
-      </StatusBar>
+      {statusBar && (
+        <StatusBar
+          index={focusAt >= 0 ? list.baseIndex + focusAt : -1}
+          total={matched || (stats?.files ?? 0)}
+          totalBytes={stats?.bytes ?? 0}
+          file={focusAt >= 0 ? rows[focusAt] : null}
+          exif={focusExif}
+        >
+          <StatusActions
+            stopJob={scan.stopJob}
+            restoreAll={ops.restoreAll}
+            emptyTrash={ops.emptyTrash}
+            cleanExcluded={ops.cleanExcluded}
+            undoLast={ops.undoLast}
+          />
+        </StatusBar>
+      )}
     </div>
   );
 }

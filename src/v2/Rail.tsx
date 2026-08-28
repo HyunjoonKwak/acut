@@ -12,6 +12,7 @@ import {
   IconTrash,
 } from "./icons";
 import { FOOT, SOURCES, type Entry, type Source } from "./railItems";
+import { usePref } from "./prefs";
 
 const ICON: Record<Source, (p: { className?: string }) => React.ReactElement> =
   {
@@ -49,6 +50,7 @@ export default function Rail({
   trashCount: number;
 }) {
   const [hover, setHover] = useState<Source | null>(null);
+  const [tooltips] = usePref("tooltips");
 
   const item = (s: Entry) => {
     const on = value === s.v && open;
@@ -82,7 +84,7 @@ export default function Rail({
           </span>
         )}
 
-        {hover === s.v && (
+        {tooltips && hover === s.v && (
           <span
             className="absolute left-full ml-1.5 z-50 px-2 py-1 rounded-md bg-raised text-fg
               text-[12px] whitespace-nowrap shadow-lg ring-1 ring-line-strong pointer-events-none"

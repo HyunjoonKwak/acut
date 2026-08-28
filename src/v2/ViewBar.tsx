@@ -9,6 +9,7 @@ import {
 } from "./icons";
 import { hasCaption, type GridStyle } from "./gridStyle";
 import { next } from "./cycle";
+import { usePref } from "./prefs";
 
 /**
  * 보기 방식 — 툴바의 버튼 셋.
@@ -28,6 +29,8 @@ const STYLES: { v: GridStyle; label: string; Icon: IconOf }[] = [
 ];
 
 function Tip({ children }: { children: React.ReactNode }) {
+  const [tooltips] = usePref("tooltips");
+  if (!tooltips) return null;
   return (
     <span
       className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 px-2 py-1 rounded-md

@@ -5,7 +5,7 @@ import Calendar from "./Calendar";
 import FacetList from "./FacetList";
 import Rail from "./Rail";
 import SearchPanel from "./SearchPanel";
-import SettingsPanel from "./SettingsPanel";
+import SettingsNav from "./SettingsNav";
 import SmartPanel from "./SmartPanel";
 import TagPanel from "./TagPanel";
 import { useData } from "./dataStore";
@@ -46,8 +46,6 @@ export default function Sidebar({
 
   const libs = useData((s) => s.libs);
   const trash = useData((s) => s.trash);
-  const cache = useData((s) => s.cache);
-  const refreshCache = useData((s) => s.refreshCache);
   const refreshTags = useData((s) => s.refreshTags);
   const sel = useView((s) => s.sel);
   const picks = useView((s) => s.picks);
@@ -210,13 +208,7 @@ export default function Sidebar({
               facetFilter={facetFilter}
             />
           )}
-          {source === "settings" && (
-            <SettingsPanel
-              thumbBytes={cache?.bytes ?? null}
-              onRefresh={refreshCache}
-              onRescanAll={() => rescan(libs.map((l) => l.id))}
-            />
-          )}
+          {source === "settings" && <SettingsNav />}
           {source === "trash" && (
             <div className="px-3 py-2 text-[12px] text-fg-dim">
               버린 사진 {(trash?.files ?? 0).toLocaleString()}장

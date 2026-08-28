@@ -4,6 +4,7 @@ import { fmtBytes, fmtDateTime, fmtDuration } from "./format";
 import TagEditor from "./TagEditor";
 import Histogram from "./Histogram";
 import RenameDialog from "./RenameDialog";
+import { usePref } from "./prefs";
 import CommentBox from "./CommentBox";
 
 type Detail = {
@@ -59,6 +60,11 @@ export default function Viewer({
   onRename?: (id: number, name: string) => Promise<string>;
 }) {
   const [renaming, setRenaming] = useState(false);
+  const [wheelMode] = usePref("wheel");
+  const [viewerBg] = usePref("viewerBg");
+  const [slideshowSec] = usePref("slideshowSec");
+  const [autoplay] = usePref("autoplay");
+  const [loopVideo] = usePref("loopVideo");
   const id = ids[index];
   const player = useRef<HTMLVideoElement>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -89,6 +95,11 @@ export default function Viewer({
   );
   /// 커서 자리를 기준으로 휠 확대. 나란히 보기와 같은 손맛.
   const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    // 설정 «휠: 앞뒤 사진» — 내리면 다음, 올리면 이전
+    if (wheelMode === "next") {
+      if (Math.abs(e.deltaY) > 4) step(e.deltaY > 0 ? 1 : -1);
+      return;
+    }
     if (isVideo) return;
     const r = e.currentTarget.getBoundingClientRect();
     const fx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
@@ -117,9 +128,9 @@ export default function Viewer({
     const t = setInterval(() => {
       if (index + 1 < ids.length) onIndex(index + 1);
       else setPlaying(false);
-    }, 3000);
+    }, slideshowSec * 1000);
     return () => clearInterval(t);
-  }, [playing, index, ids.length, onIndex]);
+  }, [playing, index, ids.length, onIndex, slideshowSec]);
 
   useEffect(() => {
     if (id == null) return;
@@ -228,7 +239,7 @@ export default function Viewer({
     <div
       className={`${
         fullScreen ? "fixed inset-0 z-50" : "absolute inset-0 z-30"
-      } bg-canvas flex flex-col`}
+      } flex flex-col ${viewerBg === "black" ? "bg-black" : viewerBg === "gray" ? "bg-[#3a3f46]" : "bg-canvas"}`}
     >
       {/* 상단 */}
       <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[12.5px]">
@@ -341,7 +352,8 @@ export default function Viewer({
               src={`video://localhost/${id}`}
               poster={src}
               controls
-              autoPlay
+              autoPlay={autoplay}
+              loop={loopVideo}
               playsInline
               onLoadedData={() => setLoadedId(id)}
               onError={() => setFailedId(id)}

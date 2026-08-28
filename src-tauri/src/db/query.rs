@@ -36,6 +36,12 @@ pub struct FileRow {
     pub library_id: Option<i64>,
     /// 캐시 루트 기준 상대경로. 없으면 아직 생성 전이다.
     pub thumb: Option<String>,
+    /// 타일 배지용 — 설정에서 ISO·셔터·조리개·초점거리 중 하나를 고른다
+    pub iso: Option<i64>,
+    pub aperture: Option<f64>,
+    pub shutter: Option<String>,
+    pub focal_mm: Option<f64>,
+    pub cam_model: Option<String>,
 }
 
 /// 무엇으로 정렬할까. Lap의 정렬 목록과 같다.
@@ -349,7 +355,8 @@ pub fn page(
         "SELECT fi.id, fi.name, fi.taken_at, fi.taken_at_source, fi.kind, fi.size,
                 fi.width, fi.height, fi.rating, fi.culling_flag, fi.favorite,
                 fi.duration_ms, fi.created_at, fi.modified_at, fo.library_id, t.rel_path,
-                {group_expr}
+                {group_expr},
+                fi.iso, fi.aperture, fi.shutter, fi.focal_mm, fi.cam_model
          FROM files fi
          JOIN folders fo ON fo.id = fi.folder_id
          LEFT JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
@@ -380,6 +387,11 @@ pub fn page(
                 modified_at: r.get(13)?,
                 library_id: r.get(14)?,
                 thumb: r.get(15)?,
+                iso: r.get(17)?,
+                aperture: r.get(18)?,
+                shutter: r.get(19)?,
+                focal_mm: r.get(20)?,
+                cam_model: r.get(21)?,
                 group: r.get(16)?,
             })
         })?;

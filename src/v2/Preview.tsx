@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { fmtDuration } from "./format";
 import type { FileRow } from "./types";
+import { usePref } from "./prefs";
 
 /**
  * 필름스트립 아래 — 고른 한 장을 크게.
@@ -18,6 +19,8 @@ export default function Preview({
   onOpen: () => void;
 }) {
   const [failedId, setFailedId] = useState<number | null>(null);
+  const [autoplay] = usePref("autoplay");
+  const [loopVideo] = usePref("loopVideo");
   if (!file) {
     return (
       <div className="flex-1 flex items-center justify-center text-fg-mute text-[13px]">
@@ -45,6 +48,8 @@ export default function Preview({
           src={`video://localhost/${file.id}`}
           poster={src}
           controls
+          autoPlay={autoplay}
+          loop={loopVideo}
           playsInline
           onError={() => setFailedId(file.id)}
           className="max-w-full max-h-full rounded"

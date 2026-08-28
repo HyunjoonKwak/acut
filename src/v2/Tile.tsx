@@ -5,7 +5,9 @@ import {
   claimHoverPreview,
   releaseHoverPreview,
 } from "./hoverPreview";
-import { fmtBytes, fmtDate, fmtDuration } from "./format";
+import { fmtDuration } from "./format";
+import { usePref } from "./prefs";
+import { badgeText, captionText } from "./tileText";
 
 export type TileFile = {
   id: number;
@@ -17,6 +19,11 @@ export type TileFile = {
   favorite: boolean;
   taken_at: number;
   duration_ms: number | null;
+  iso?: number | null;
+  aperture?: number | null;
+  shutter?: string | null;
+  focal_mm?: number | null;
+  cam_model?: string | null;
 };
 
 /**
@@ -54,6 +61,10 @@ export default function Tile({
 }) {
   const [playing, setPlaying] = useState(false);
   const [ready, setReady] = useState(false);
+  const [badge] = usePref("badge");
+  const [caption1] = usePref("caption1");
+  const [caption2] = usePref("caption2");
+  const extra = badgeText(file, badge);
   const timer = useRef<number | null>(null);
   const video = useRef<HTMLVideoElement>(null);
   /// 미리보기 잠금의 열쇠 — 이 타일이 사는 동안 같은 객체
@@ -176,14 +187,19 @@ export default function Tile({
 
         {/* 아래 — 미디어 배지 (Lap: bottom badges). 형식과 길이 */}
         <div className="absolute bottom-1 left-1 flex items-center gap-1">
-          {file.kind === 2 && (
+          {badge === "format" && file.kind === 2 && (
             <span className="px-1 h-4 rounded bg-black/55 text-keep text-[9px] flex items-center font-semibold">
               RAW
             </span>
           )}
-          {isVideo && !ready && (
+          {badge === "format" && isVideo && !ready && (
             <span className="px-1 h-4 rounded bg-black/55 text-fg text-[9px] flex items-center gap-0.5">
               ▶{file.duration_ms ? fmtDuration(file.duration_ms) : ""}
+            </span>
+          )}
+          {extra && (
+            <span className="px-1 h-4 rounded bg-black/55 text-fg text-[9px] flex items-center tabular-nums">
+              {extra}
             </span>
           )}
         </div>
@@ -194,13 +210,13 @@ export default function Tile({
       {caption && (
         <div className="mt-1 leading-[1.25]">
           <div className="text-[11px] text-fg-dim truncate" title={file.name}>
-            {file.name}
+            {captionText(file, caption1)}
           </div>
-          <div className="text-[10px] text-fg-mute truncate tabular-nums">
-            {fmtDate(file.taken_at)}
-            <span className="text-fg-faint"> · </span>
-            {fmtBytes(file.size)}
-          </div>
+          {caption2 !== "none" && (
+            <div className="text-[10px] text-fg-mute truncate tabular-nums">
+              {captionText(file, caption2)}
+            </div>
+          )}
         </div>
       )}
     </button>

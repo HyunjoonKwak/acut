@@ -21,6 +21,12 @@ export type FileRow = {
   library_id: number | null;
   /** 캐시 루트 기준 상대경로. null이면 아직 생성 전 */
   thumb: string | null;
+  /** 타일 배지·이름줄용 EXIF */
+  iso: number | null;
+  aperture: number | null;
+  shutter: string | null;
+  focal_mm: number | null;
+  cam_model: string | null;
 };
 
 export type Cursor = { num: number | null; text: string | null; id: number };

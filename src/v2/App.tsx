@@ -51,6 +51,8 @@ export default function App() {
   const [source] = usePref("source");
   const [font] = usePref("font");
   const [statusBar] = usePref("statusBar");
+  const [dblClick] = usePref("dblClick");
+  const [stripPos] = usePref("stripPos");
   // 글꼴 — CSS가 data-font를 본다
   useEffect(() => {
     document.documentElement.dataset.font = font;
@@ -245,6 +247,30 @@ export default function App() {
     (i: number) => useUi.getState().set({ viewerAt: i }),
     [],
   );
+  /// 두 번 눌렀을 때 — 설정에 따라 크게 보기 또는 기본 앱으로. 키보드
+  /// Space·Enter는 늘 크게 보기다 (useGridKeys).
+  const openAt = useCallback(
+    (i: number) => {
+      const r = rows[i];
+      if (dblClick === "app" && r)
+        invoke("open_in_default_app", { id: r.id }).catch(() => {});
+      else openViewer(i);
+    },
+    [rows, dblClick, openViewer],
+  );
+
+  /// 필름스트립 띠 — 설정에 따라 위 또는 아래에 놓는다
+  const STRIP = (
+    <Filmstrip
+      position={stripPos}
+      files={rows}
+      thumbUrl={thumbUrl}
+      selectedId={selected}
+      onPick={pick}
+      onOpen={openAt}
+      onNearEnd={loadMore}
+    />
+  );
 
   return (
     <div className="h-screen flex flex-col bg-canvas text-fg text-[13px]">
@@ -270,18 +296,11 @@ export default function App() {
           ) : filmstrip ? (
             /* 필름스트립 — 위는 띠, 아래는 고른 한 장 (Lap의 Content.vue) */
             <>
-              <Filmstrip
-                files={rows}
-                thumbUrl={thumbUrl}
-                selectedId={selected}
-                onPick={pick}
-                onOpen={openViewer}
-                onNearEnd={loadMore}
-              />
+              {stripPos === "top" && STRIP}
               <div className="flex-1 flex min-h-0 min-w-0 relative">
                 <Preview
                   file={focusAt >= 0 ? rows[focusAt] : null}
-                  onOpen={() => focusAt >= 0 && openViewer(focusAt)}
+                  onOpen={() => focusAt >= 0 && openAt(focusAt)}
                 />
                 <ScrollBar
                   buckets={buckets}
@@ -290,6 +309,7 @@ export default function App() {
                   onSeek={list.seekTo}
                 />
               </div>
+              {stripPos === "bottom" && STRIP}
             </>
           ) : (
             <PhotoGrid
@@ -302,7 +322,7 @@ export default function App() {
               gridStyle={gridStyle}
               group={group}
               onPick={pick}
-              onOpen={openViewer}
+              onOpen={openAt}
               onContext={openContext}
               onSeek={list.seekTo}
             />

@@ -23,6 +23,11 @@ const row = (id: number, size: number): FileRow => ({
   group: null,
   library_id: 1,
   thumb: null,
+  iso: null,
+  aperture: null,
+  shutter: null,
+  focal_mm: null,
+  cam_model: null,
 });
 const rows = [row(1, 1000), row(2, 2000), row(3, 4000)];
 

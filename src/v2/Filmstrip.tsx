@@ -36,7 +36,10 @@ export default function Filmstrip<T extends StripFile>({
   onPick,
   onOpen,
   onNearEnd,
+  position = "top",
 }: {
+  /** 위에 있으면 아래쪽에, 아래에 있으면 위쪽에 선을 긋는다 */
+  position?: "top" | "bottom";
   files: T[];
   thumbUrl: (f: T) => string | null;
   selectedId: number | null;
@@ -75,7 +78,7 @@ export default function Filmstrip<T extends StripFile>({
   return (
     <div
       ref={box}
-      className="shrink-0 overflow-x-auto overflow-y-hidden bg-chrome border-b border-line px-2 py-2"
+      className={`shrink-0 overflow-x-auto overflow-y-hidden bg-chrome px-2 py-2 border-line ${position === "top" ? "border-b" : "border-t"}`}
       style={{ height: STRIP_H }}
     >
       <div

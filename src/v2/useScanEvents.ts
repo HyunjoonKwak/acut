@@ -153,6 +153,25 @@ export function useScanEvents(cb: {
         r.errors > 0 ? "drop" : "ok",
       );
     });
+    on<{ done: number; total: number }>("offload-progress", (p) =>
+      job().progress({ label: "옮기는 중", done: p.done, total: p.total }),
+    );
+    on<{ folders: number; files: number; bytes: number }>(
+      "offload-done",
+      async (o) => {
+        job().clear();
+        toast(
+          `${o.files.toLocaleString()}장(${o.folders}개 폴더)을 옮겼습니다`,
+          "ok",
+        );
+        await useData.getState().refreshLibs();
+        ref.current.refreshMeta();
+      },
+    );
+    on<string>("offload-error", (e) => {
+      job().clear();
+      toast(`옮기기 실패 — ${e}`, "drop");
+    });
     on<string>("ai-error", (e) => {
       job().clear();
       toast(`AI 실패 — ${e}`, "drop");

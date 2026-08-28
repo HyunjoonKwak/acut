@@ -1124,6 +1124,42 @@ pub fn ai_similar(state: State<'_, AppState>, id: i64, limit: usize) -> Result<V
     similar_rows(&state, index.similar(id, limit.clamp(1, 200)))
 }
 
+/// 폴더 한 갈래의 크기 — 옮기기 전에 보여 준다
+#[tauri::command]
+pub fn folder_size(state: State<'_, AppState>, folder_id: i64) -> Result<crate::ops::offload::FolderSize, String> {
+    crate::ops::offload::folder_size(&state.db, folder_id).map_err(err)
+}
+
+/// 폴더 한 갈래를 다른 라이브러리(디스크)로. 진행은 `offload-progress`, 끝나면 `offload-done`.
+#[tauri::command]
+pub fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let Some(guard) = job::try_start(&state.running, "에이컷 옮기기") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
+    let db = Arc::clone(&state.db);
+    let base = state.cache_base.clone();
+    let cancel = Arc::clone(&state.cancel);
+    cancel.store(false, Ordering::Relaxed);
+    std::thread::spawn(move || {
+        let _guard = guard;
+        let handle = app.clone();
+        let r = crate::ops::offload::move_folder(&db, &base, folder_id, dest_library_id, &cancel, |p| {
+            let _ = handle.emit("offload-progress", p);
+        });
+        app.state::<AppState>().forget_dirs();
+        match r {
+            Ok(o) => {
+                let _ = app.emit("offload-done", &o);
+            }
+            Err(e) => {
+                let _ = app.emit("offload-error", e.to_string());
+            }
+        }
+    });
+    Ok(())
+}
+
 /// 지도의 칸들 — 조건에 맞는 사진을 `precision`도 격자로 묶는다
 #[tauri::command]
 pub fn map_cells(state: State<'_, AppState>, filter: Filter, precision: f64) -> Result<Vec<query::MapCell>, String> {

@@ -9,6 +9,7 @@
 
 pub mod import;
 pub mod naming;
+pub mod offload;
 pub mod organize;
 pub mod rename;
 pub mod trash;

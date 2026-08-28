@@ -35,6 +35,7 @@ export default function AlbumTree({
   const setViewTrash = useView((s) => s.setViewTrash);
   const [libId, setLibId] = usePref("libId");
   const menuFor = useUi((s) => s.menuFor);
+  const folderMenu = useUi((s) => s.folderMenu);
   const busy = useJob((s) => s.job !== null);
   const setUi = useUi((s) => s.set);
   const openImport = () => setUi({ importing: true });
@@ -156,6 +157,42 @@ export default function AlbumTree({
                         className="px-1.5 text-fg-mute hover:text-fg"
                       >
                         ⋯
+                      </button>
+                    </div>
+                  )}
+                  {/* 폴더 줄 — 다른 디스크로 옮기기. 라이브러리 자체는 못 옮긴다 */}
+                  {!root && f.id !== null && (
+                    <div className="absolute right-1 hidden group-hover:flex bg-raised rounded">
+                      <button
+                        onClick={() =>
+                          setUi({
+                            folderMenu: folderMenu === f.path ? null : f.path,
+                          })
+                        }
+                        title="더 보기"
+                        className="px-1.5 text-fg-mute hover:text-fg"
+                      >
+                        ⋯
+                      </button>
+                    </div>
+                  )}
+                  {!root && f.id !== null && folderMenu === f.path && (
+                    <div className="absolute right-1 top-7 z-20 bg-raised rounded-md ring-1 ring-line-strong shadow-lg py-1">
+                      <button
+                        onClick={() =>
+                          setUi({
+                            folderMenu: null,
+                            offload: {
+                              folderId: f.id!,
+                              name: f.name,
+                              libraryId: f.library_id,
+                            },
+                          })
+                        }
+                        disabled={busy}
+                        className="block w-full text-left px-3 py-1.5 text-[12px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                      >
+                        다른 디스크로 옮기기…
                       </button>
                     </div>
                   )}

@@ -7,6 +7,7 @@ import Cull from "./Cull";
 import Filmstrip from "./Filmstrip";
 import Import from "./Import";
 import AreaPickDialog from "./AreaPickDialog";
+import OffloadDialog from "./OffloadDialog";
 import Organize from "./Organize";
 import MapView from "./MapView";
 import PhotoGrid from "./PhotoGrid";
@@ -400,6 +401,14 @@ export default function App() {
             await renameFile(ui.renaming!, n);
           }}
           onClose={() => ui.set({ renaming: null })}
+        />
+      )}
+      {ui.offload !== null && (
+        <OffloadDialog
+          folderId={ui.offload.folderId}
+          name={ui.offload.name}
+          libraryId={ui.offload.libraryId}
+          onClose={() => ui.set({ offload: null })}
         />
       )}
       {ui.areaPick !== null && (

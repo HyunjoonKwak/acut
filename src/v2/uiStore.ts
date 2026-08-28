@@ -25,6 +25,10 @@ type Store = {
   ctxIds: number[];
   /** 「⋯」를 연 라이브러리 (앨범 트리) */
   menuFor: number | null;
+  /** 「⋯」를 연 폴더 (앨범 트리) — 트리 경로 */
+  folderMenu: string | null;
+  /** 다른 디스크로 옮기는 중인 폴더 */
+  offload: { folderId: number; name: string; libraryId: number } | null;
   /** 이름을 바꾸는 중인 사진 */
   renaming: number | null;
   /** 파인더에서 끌어다 놓은 것들 — 가져오기 상자의 시작점 */
@@ -50,6 +54,8 @@ export const useUi = create<Store>()((set) => ({
   ctxAt: null,
   ctxIds: [],
   menuFor: null,
+  folderMenu: null,
+  offload: null,
   renaming: null,
   dropped: [],
   dragging: false,

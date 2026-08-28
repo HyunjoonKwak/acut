@@ -107,6 +107,8 @@ pub fn run() {
             api::ai_faces_start,
             api::people_list,
             api::map_cells,
+            api::folder_size,
+            api::folder_offload,
             api::backup::backup_target,
             api::backup::backup_set_target,
             api::backup::backup_plan,

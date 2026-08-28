@@ -40,6 +40,8 @@
   --color-accent: #605dff; /* 지금 고른 것·진행 */
   --color-accent-fg: #f1f0ff;
   --color-keep: #fcb700; /* 남김·별점 */
+  /* 됨·연결됨 — 남김(호박색)과 헷갈리지 않는 초록 */
+  --color-ok: #3ecf8e;
   --color-keep-fg: #2d2100;
   --color-drop: #ff627d; /* 제외·되돌릴 수 없는 일 */
   --color-drop-fg: #2e1216;
@@ -94,7 +96,9 @@
   background-color: var(--color-raised);
   background-size: cover;
   background-position: center;
-  box-shadow: 0 0 0 2px var(--color-fg), 0 2px 8px rgb(0 0 0 / 0.5);
+  box-shadow:
+    0 0 0 2px var(--color-fg),
+    0 2px 8px rgb(0 0 0 / 0.5);
   display: flex;
   align-items: flex-end;
   justify-content: center;

@@ -854,7 +854,7 @@ function Nas() {
             style={{
               background:
                 st.online && st.rsync_ok
-                  ? "var(--color-keep)"
+                  ? "var(--color-ok)"
                   : "var(--color-drop)",
             }}
           />

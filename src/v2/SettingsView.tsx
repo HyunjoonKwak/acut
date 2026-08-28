@@ -1126,6 +1126,7 @@ function About() {
     db_ms: number;
     first_grid_ms: number;
     at: number;
+    marks?: Record<string, number>;
   } | null>(null);
   const [ver, setVer] = useState("");
   useEffect(() => {
@@ -1142,7 +1143,13 @@ function About() {
         label="마지막 시작"
         hint={
           startup
-            ? `프로세스 시작 → DB 준비 ${startup.db_ms}ms · 첫 그리드 ${startup.first_grid_ms}ms (${fmtDateTime(startup.at)}). 목표는 1초.`
+            ? `프로세스 시작 → DB 준비 ${startup.db_ms}ms · 첫 그리드 ${startup.first_grid_ms}ms (${fmtDateTime(startup.at)}). 목표는 1초.${
+                startup.marks
+                  ? ` 웹뷰 기준: ${Object.entries(startup.marks)
+                      .map(([k, v]) => `${k} ${v}`)
+                      .join(" · ")}`
+                  : ""
+              }`
             : "아직 잰 적 없습니다."
         }
       >

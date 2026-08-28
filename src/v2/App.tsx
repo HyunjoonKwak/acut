@@ -31,6 +31,7 @@ import { useSelection } from "./selectionStore";
 import { thumbUrl, type Mark } from "./types";
 import { toast } from "./toastStore";
 import { useUi } from "./uiStore";
+import { mark, startupMarks } from "./startupMarks";
 import { useGridKeys } from "./useGridKeys";
 import { useGridLayout } from "./useGridLayout";
 import { useOps } from "./useOps";
@@ -79,17 +80,29 @@ export default function App() {
   useEffect(() => {
     const d = useData.getState();
     (async () => {
-      try {
-        const [moved] = await invoke<[number, number]>("cache_migrate");
-        if (moved > 0)
-          d.setBusy(`썸네일 ${moved.toLocaleString()}장을 옮겼습니다`);
-      } catch {
-        /* 옮길 것이 없으면 그냥 넘어간다 */
-      }
-      d.refreshLibs();
+      await d.refreshLibs();
+      mark("libs");
       d.refreshCache();
       d.refreshTags();
     })();
+  }, []);
+  // 옛 캐시 옮기기는 첫 화면 뒤에 — 외부 SSD를 깨우느라 콜드 스타트에서 1.7초를
+  // 먹었다(실측). 옮길 것이 있으면 그때 알린다.
+  useEffect(() => {
+    const t = window.setTimeout(async () => {
+      try {
+        const [moved] = await invoke<[number, number]>("cache_migrate");
+        if (moved > 0) {
+          useData
+            .getState()
+            .setBusy(`썸네일 ${moved.toLocaleString()}장을 옮겼습니다`);
+          useData.getState().refreshCache();
+        }
+      } catch {
+        /* 옮길 것이 없으면 그냥 넘어간다 */
+      }
+    }, 3000);
+    return () => window.clearTimeout(t);
   }, []);
   // 폴더 트리는 라이브러리 목록이 바뀔 때만. libId에 매달지 않는다 — 폴더를
   // 누르면 그 라이브러리로 옮겨가는데 그때 트리를 다시 읽으면 방금 누른
@@ -141,7 +154,8 @@ export default function App() {
   useEffect(() => {
     if (reported.current || list.loading || libs.length === 0) return;
     reported.current = true;
-    invoke("startup_report").catch(() => {});
+    mark("grid");
+    invoke("startup_report", { marks: startupMarks() }).catch(() => {});
   }, [list.loading, libs.length]);
   const { rows, loadFirst, loadMore, markOne, patchRow } = list;
 

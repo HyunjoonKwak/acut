@@ -47,7 +47,7 @@ pub struct MemberRow {
 
 /// 세 갈래를 순서대로 돌린다. 가벼운 것부터 — 결과가 빨리 보이게.
 #[tauri::command]
-pub fn cull_scan(app: AppHandle) -> Result<(), String> {
+pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
@@ -103,7 +103,7 @@ pub fn cull_scan(app: AppHandle) -> Result<(), String> {
 
 /// 그룹 목록. 확보 용량이 큰 것부터 — 효과가 큰 것을 먼저 보게 한다.
 #[tauri::command]
-pub fn cull_groups(
+pub async fn cull_groups(
     state: State<'_, AppState>,
     kind: i32,
     limit: usize,
@@ -145,7 +145,7 @@ pub fn cull_groups(
 
 /// 그룹 하나의 구성원. 대표가 맨 앞에 온다.
 #[tauri::command]
-pub fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<Vec<MemberRow>, String> {
+pub async fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<Vec<MemberRow>, String> {
     state
         .db
         .read(|c| {
@@ -181,7 +181,7 @@ pub fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<Vec<Mem
 
 /// 대표를 바꾼다. 한 그룹에 대표는 하나뿐이다.
 #[tauri::command]
-pub fn cull_set_best(
+pub async fn cull_set_best(
     state: State<'_, AppState>,
     group_id: i64,
     file_id: i64,
@@ -211,7 +211,7 @@ pub struct ApplyResult {
 /// **파일을 지우지는 않는다.** `culling_flag`만 바꾼다. 실제 삭제는 사용자가
 /// 따로 확인한 뒤에 한다. 잘못 눌러도 되돌릴 수 있어야 한다.
 #[tauri::command]
-pub fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<ApplyResult, String> {
+pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<ApplyResult, String> {
     if group_ids.is_empty() {
         return Ok(ApplyResult { kept: 0, rejected: 0 });
     }
@@ -252,7 +252,7 @@ pub fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<App
 
 /// 그룹을 보류한다 — 목록에서 빠지되 판정은 하지 않는다.
 #[tauri::command]
-pub fn cull_skip(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<usize, String> {
+pub async fn cull_skip(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<usize, String> {
     state
         .db
         .transaction(|tx| {
@@ -275,7 +275,7 @@ pub struct CullSummary {
 
 /// 세 갈래의 현재 상태. 화면 상단에 "중복 1,956 · 같은순간 5,700" 식으로 쓴다.
 #[tauri::command]
-pub fn cull_summary(state: State<'_, AppState>) -> Result<Vec<CullSummary>, String> {
+pub async fn cull_summary(state: State<'_, AppState>) -> Result<Vec<CullSummary>, String> {
     state
         .db
         .read(|c| {

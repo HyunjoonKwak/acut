@@ -19,6 +19,10 @@ pub fn started() -> std::time::Instant {
     *STARTED.get_or_init(std::time::Instant::now)
 }
 
+/// 웹뷰가 페이지를 읽기 시작한·끝낸 시각(ms, run() 기준) — 시작 시간을 나눠 보기 위해
+pub static PAGE_MS: [std::sync::atomic::AtomicU64; 2] =
+    [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -40,6 +44,14 @@ pub fn run() {
             // 미리보기를 그 자리에서 만들 수 있으므로 블로킹이다. 별도 스레드로.
             let app = ctx.app_handle().clone();
             std::thread::spawn(move || api::photo_protocol::handle(&app, req, responder));
+        })
+        .on_page_load(|_webview, payload| {
+            let ms = started().elapsed().as_millis() as u64;
+            let slot = match payload.event() {
+                tauri::webview::PageLoadEvent::Started => 0,
+                tauri::webview::PageLoadEvent::Finished => 1,
+            };
+            PAGE_MS[slot].store(ms, std::sync::atomic::Ordering::Relaxed);
         })
         .setup(|app| {
             if cfg!(debug_assertions) {

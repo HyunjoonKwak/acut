@@ -6,7 +6,7 @@ use tauri::State;
 
 /// 고른 사진들에 붙일 이벤트 이름 후보.
 #[tauri::command]
-pub fn organize_suggest(
+pub async fn organize_suggest(
     state: State<'_, AppState>,
     ids: Vec<i64>,
 ) -> Result<Vec<naming::Suggestion>, String> {
@@ -15,7 +15,7 @@ pub fn organize_suggest(
 
 /// 고른 사진들의 촬영일 중 가장 이른 날 — 폴더 이름의 앞자리가 된다.
 #[tauri::command]
-pub fn organize_date(state: State<'_, AppState>, ids: Vec<i64>) -> Result<String, String> {
+pub async fn organize_date(state: State<'_, AppState>, ids: Vec<i64>) -> Result<String, String> {
     if ids.is_empty() {
         return Ok(String::new());
     }
@@ -37,7 +37,7 @@ pub fn organize_date(state: State<'_, AppState>, ids: Vec<i64>) -> Result<String
 
 /// 미리보기 — 실제로 어디로 가는지 보여 준 뒤에 옮긴다.
 #[tauri::command]
-pub fn organize_preview(
+pub async fn organize_preview(
     state: State<'_, AppState>,
     library_id: i64,
     date: String,
@@ -48,7 +48,7 @@ pub fn organize_preview(
 }
 
 #[tauri::command]
-pub fn organize_move(
+pub async fn organize_move(
     state: State<'_, AppState>,
     ids: Vec<i64>,
     library_id: i64,
@@ -67,7 +67,7 @@ pub fn organize_move(
 
 /// 최근 작업 묶음. 되돌리기 목록에 쓴다.
 #[tauri::command]
-pub fn batches_recent(
+pub async fn batches_recent(
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<Vec<undo::Batch>, String> {
@@ -75,6 +75,6 @@ pub fn batches_recent(
 }
 
 #[tauri::command]
-pub fn batch_undo(state: State<'_, AppState>, batch_id: i64) -> Result<Outcome, String> {
+pub async fn batch_undo(state: State<'_, AppState>, batch_id: i64) -> Result<Outcome, String> {
     undo::undo(&state.db, batch_id).map_err(err)
 }

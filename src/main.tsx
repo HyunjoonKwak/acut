@@ -5,6 +5,9 @@ import "./index.css";
 import App from "./v2/App.tsx";
 import { ConfirmProvider } from "./v2/confirm.tsx";
 import Hydrated from "./v2/Hydrated.tsx";
+import { mark } from "./v2/startupMarks.ts";
+
+mark("script");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

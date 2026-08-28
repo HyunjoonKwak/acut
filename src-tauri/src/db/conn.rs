@@ -181,6 +181,22 @@ mod tests {
         assert_eq!(n, 17, "테이블 17개가 만들어져야 한다 (schema.sql 16 + upgrade의 nas_pulls)");
     }
 
+    /// 실제 DB 사본을 여는 데 얼마나 걸리나 — 시작 시간의 첫 구간.
+    /// `ACUT_DB_COPY=… cargo test --release --lib db::conn::tests::real_open -- --ignored --nocapture`
+    #[test]
+    #[ignore = "실제 DB 사본 필요"]
+    fn real_open_time() {
+        let Ok(p) = std::env::var("ACUT_DB_COPY") else { return };
+        for i in 0..3 {
+            let t = std::time::Instant::now();
+            let db = Db::open(&p).unwrap();
+            let open = t.elapsed();
+            let t2 = std::time::Instant::now();
+            let n: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))).unwrap();
+            eprintln!("열기 {i}: {:.0}ms · COUNT(files)={n} {:.0}ms", open.as_secs_f64() * 1000.0, t2.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+
     #[test]
     fn foreign_keys_are_on_for_every_connection() {
         let (_d, db) = temp_db();

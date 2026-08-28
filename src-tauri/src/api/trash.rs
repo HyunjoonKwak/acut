@@ -15,7 +15,7 @@ pub struct Pending {
 }
 
 #[tauri::command]
-pub fn trash_pending(
+pub async fn trash_pending(
     state: State<'_, AppState>,
     library_id: Option<i64>,
 ) -> Result<Pending, String> {
@@ -36,7 +36,7 @@ pub fn trash_pending(
 
 /// 휴지통에 든 것들.
 #[tauri::command]
-pub fn trash_summary(
+pub async fn trash_summary(
     state: State<'_, AppState>,
     library_id: Option<i64>,
 ) -> Result<trash::Summary, String> {
@@ -45,7 +45,7 @@ pub fn trash_summary(
 
 /// 제외로 판정한 것을 전부 휴지통으로 옮긴다.
 #[tauri::command]
-pub fn trash_apply(
+pub async fn trash_apply(
     state: State<'_, AppState>,
     library_id: Option<i64>,
 ) -> Result<trash::Outcome, String> {
@@ -55,7 +55,7 @@ pub fn trash_apply(
 
 /// 고른 것만 휴지통으로.
 #[tauri::command]
-pub fn trash_files(
+pub async fn trash_files(
     state: State<'_, AppState>,
     ids: Vec<i64>,
 ) -> Result<trash::Outcome, String> {
@@ -64,7 +64,7 @@ pub fn trash_files(
 
 /// 휴지통에서 제자리로. `ids`가 비어 있으면 전부.
 #[tauri::command]
-pub fn trash_restore(
+pub async fn trash_restore(
     state: State<'_, AppState>,
     library_id: Option<i64>,
     ids: Vec<i64>,
@@ -79,7 +79,7 @@ pub fn trash_restore(
 
 /// 휴지통을 비운다. **되돌릴 수 없다.** `ids`가 비어 있으면 전부.
 #[tauri::command]
-pub fn trash_empty(
+pub async fn trash_empty(
     state: State<'_, AppState>,
     library_id: Option<i64>,
     ids: Vec<i64>,

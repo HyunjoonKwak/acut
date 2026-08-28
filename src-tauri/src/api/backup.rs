@@ -125,14 +125,14 @@ fn info(state: &AppState) -> Result<TargetInfo, String> {
 }
 
 #[tauri::command]
-pub fn backup_target(state: State<'_, AppState>) -> Result<TargetInfo, String> {
+pub async fn backup_target(state: State<'_, AppState>) -> Result<TargetInfo, String> {
     info(&state)
 }
 
 /// 백업 폴더를 정한다. 라이브러리 안이거나 라이브러리를 품으면 거절한다 —
 /// 자기 자신 안으로 복사하면 끝이 없다.
 #[tauri::command]
-pub fn backup_set_target(state: State<'_, AppState>, path: String) -> Result<TargetInfo, String> {
+pub async fn backup_set_target(state: State<'_, AppState>, path: String) -> Result<TargetInfo, String> {
     let dir = PathBuf::from(&path);
     if !dir.is_dir() {
         return Err(format!("폴더가 아닙니다: {path}"));
@@ -240,7 +240,7 @@ fn verify(plan: &SyncPlan, errors: &mut Vec<String>) -> usize {
 
 /// 살펴본 계획대로 복사한다. 진행은 `backup-progress`, 끝나면 `backup-done`.
 #[tauri::command]
-pub fn backup_run(app: AppHandle) -> Result<(), String> {
+pub async fn backup_run(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let planned = state
         .backup_plans

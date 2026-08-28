@@ -27,12 +27,12 @@ fn load(state: &AppState) -> Result<Config, String> {
 }
 
 #[tauri::command]
-pub fn nas_config(state: State<'_, AppState>) -> Result<Config, String> {
+pub async fn nas_config(state: State<'_, AppState>) -> Result<Config, String> {
     load(&state)
 }
 
 #[tauri::command]
-pub fn nas_config_set(state: State<'_, AppState>, config: Config) -> Result<Config, String> {
+pub async fn nas_config_set(state: State<'_, AppState>, config: Config) -> Result<Config, String> {
     let c = Config {
         host: config.host.trim().to_string(),
         zone1: config.zone1.trim().trim_end_matches('/').to_string(),
@@ -66,7 +66,7 @@ pub struct PullDone {
 
 /// 1차 구역을 작업대 라이브러리의 `NAS-1차/`로. 진행은 `nas-pull-progress`, 끝나면 `nas-pull-done`.
 #[tauri::command]
-pub fn nas_pull_start(app: AppHandle, library_id: i64) -> Result<(), String> {
+pub async fn nas_pull_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     let state = app.state::<AppState>();
     let cfg = load(&state)?;
     let lib = libraries::get(&state.db, library_id).map_err(err)?.ok_or("등록되지 않은 라이브러리입니다")?;
@@ -216,7 +216,7 @@ pub struct PurgePlan {
 /// 1차 구역에서 비워도 되는 것 — 우리가 받았고, 작업대에서 사라졌고,
 /// 올라간 것이 확인됐거나(nas_state) 버린 것(휴지통).
 #[tauri::command]
-pub fn nas_purge_plan(state: State<'_, AppState>, library_id: i64) -> Result<PurgePlan, String> {
+pub async fn nas_purge_plan(state: State<'_, AppState>, library_id: i64) -> Result<PurgePlan, String> {
     let lib = libraries::get(&state.db, library_id).map_err(err)?.ok_or("등록되지 않은 라이브러리입니다")?;
     if lib.area != 0 {
         return Err("작업대 라이브러리를 고르세요".into());
@@ -343,7 +343,7 @@ pub async fn nas_purge_run(app: AppHandle, rels: Vec<String>) -> Result<Purged, 
 
 /// 사이드카 내보내기. 진행은 `xmp-progress`, 끝나면 `xmp-done`.
 #[tauri::command]
-pub fn xmp_export(app: AppHandle, library_id: Option<i64>) -> Result<(), String> {
+pub async fn xmp_export(app: AppHandle, library_id: Option<i64>) -> Result<(), String> {
     let state = app.state::<AppState>();
     let Some(guard) = job::try_start(&state.running, "에이컷 XMP") else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());

@@ -127,13 +127,13 @@ pub(crate) fn err<E: std::fmt::Display>(e: E) -> String {
 
 /// 등록된 것 전부. 디스크가 빠진 것도 포함한다.
 #[tauri::command]
-pub fn libraries_list(state: State<'_, AppState>) -> Result<Vec<LibRow>, String> {
+pub async fn libraries_list(state: State<'_, AppState>) -> Result<Vec<LibRow>, String> {
     crate::db::libraries::list(&state.db).map_err(err)
 }
 
 /// 폴더를 라이브러리로 등록한다. 스캔은 하지 않는다 (`scan_start`가 한다).
 #[tauri::command]
-pub fn library_add(state: State<'_, AppState>, path: String, area: i32) -> Result<LibRow, String> {
+pub async fn library_add(state: State<'_, AppState>, path: String, area: i32) -> Result<LibRow, String> {
     let dir = PathBuf::from(&path);
     if !dir.is_dir() {
         return Err(format!("폴더가 아닙니다: {path}"));
@@ -146,7 +146,7 @@ pub fn library_add(state: State<'_, AppState>, path: String, area: i32) -> Resul
 /// 등록을 지운다. **원본 사진과 디스크의 캐시 파일은 건드리지 않는다.**
 /// 라이브러리의 영역(역할)을 바꾼다 — 0 작업대 · 1 내사진 · 2 공용 · 3 기타
 #[tauri::command]
-pub fn library_set_area(state: State<'_, AppState>, id: i64, area: i32) -> Result<(), String> {
+pub async fn library_set_area(state: State<'_, AppState>, id: i64, area: i32) -> Result<(), String> {
     if !(0..=3).contains(&area) {
         return Err(format!("모르는 영역: {area}"));
     }
@@ -154,7 +154,7 @@ pub fn library_set_area(state: State<'_, AppState>, id: i64, area: i32) -> Resul
 }
 
 #[tauri::command]
-pub fn library_remove(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+pub async fn library_remove(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let r = crate::db::libraries::remove(&state.db, id).map_err(err);
     state.forget_dirs();
     r
@@ -173,7 +173,7 @@ pub struct VolumeRow {
 }
 
 #[tauri::command]
-pub fn volumes_list(state: State<'_, AppState>) -> Result<Vec<VolumeRow>, String> {
+pub async fn volumes_list(state: State<'_, AppState>) -> Result<Vec<VolumeRow>, String> {
     let rows: Vec<(String, String, String, Option<i64>, Option<i64>)> = state
         .db
         .read(|c| {
@@ -211,7 +211,7 @@ pub fn volumes_list(state: State<'_, AppState>) -> Result<Vec<VolumeRow>, String
 /// 앱을 켤 때 한 번 부른다. 이미 만들어 둔 12만 장을 버리지 않기 위해서다 —
 /// 다시 만들려면 390GB를 또 읽어야 한다.
 #[tauri::command]
-pub fn cache_migrate(app: AppHandle) -> Result<(usize, usize), String> {
+pub async fn cache_migrate(app: AppHandle) -> Result<(usize, usize), String> {
     let state = app.state::<AppState>();
     let libs = crate::db::libraries::list(&state.db).map_err(err)?;
     let base = state.cache_base.clone();
@@ -237,7 +237,7 @@ pub fn cache_migrate(app: AppHandle) -> Result<(usize, usize), String> {
 ///
 /// 블로킹 작업이라 별도 스레드에서 돈다. 커맨드 자체는 바로 돌아온다.
 #[tauri::command]
-pub fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
+pub async fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     let state = app.state::<AppState>();
     let lib = crate::db::libraries::get(&state.db, library_id)
         .map_err(err)?
@@ -300,7 +300,7 @@ pub fn scan_cancel(state: State<'_, AppState>) {
 
 /// 한 페이지. `cursor`가 없으면 첫 페이지.
 #[tauri::command]
-pub fn files_page(
+pub async fn files_page(
     state: State<'_, AppState>,
     filter: Filter,
     cursor: Option<Cursor>,
@@ -320,7 +320,7 @@ pub struct Summary {
 
 /// 월별 분포 — 우측 스크러버용.
 #[tauri::command]
-pub fn files_timeline(
+pub async fn files_timeline(
     state: State<'_, AppState>,
     filter: Filter,
 ) -> Result<Vec<query::Bucket>, String> {
@@ -329,7 +329,7 @@ pub fn files_timeline(
 
 /// 스크롤바 손잡이가 멈춘 자리를 커서로 바꾼다. 그 뒤는 다시 keyset이다.
 #[tauri::command]
-pub fn files_cursor_at(
+pub async fn files_cursor_at(
     state: State<'_, AppState>,
     filter: Filter,
     index: i64,
@@ -339,7 +339,7 @@ pub fn files_cursor_at(
 
 /// 사이드바가 훑어볼 갈래별 장수.
 #[tauri::command]
-pub fn files_facets(
+pub async fn files_facets(
     state: State<'_, AppState>,
     filter: Filter,
     kind: query::FacetKind,
@@ -348,7 +348,7 @@ pub fn files_facets(
 }
 
 #[tauri::command]
-pub fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result<Summary, String> {
+pub async fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result<Summary, String> {
     let (count, bytes) = query::summary(&state.db, &filter).map_err(err)?;
     Ok(Summary { count, bytes })
 }
@@ -359,7 +359,7 @@ pub fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result<Summa
 ///
 /// 스캐너는 파일이 든 폴더만 기록하므로 중간 마디는 [`tree::build`]가 만든다.
 #[tauri::command]
-pub fn folders_list(
+pub async fn folders_list(
     state: State<'_, AppState>,
     library_id: Option<i64>,
 ) -> Result<Vec<tree::Node>, String> {
@@ -431,7 +431,7 @@ pub struct LibraryStats {
 /// 1초쯤 걸린다. 폴더를 누를 때마다 그걸 하면 앱이 멈춘 것처럼 보인다.
 /// 캐시 용량은 [`cache_usage`]로 따로, 가끔만 부른다.
 #[tauri::command]
-pub fn library_stats(
+pub async fn library_stats(
     state: State<'_, AppState>,
     library_id: Option<i64>,
 ) -> Result<LibraryStats, String> {
@@ -482,7 +482,7 @@ pub struct CacheUsage {
 ///
 /// 폴더를 통째로 훑으므로 느리다. 앱 시작과 썸네일 생성이 끝났을 때만 부른다.
 #[tauri::command]
-pub fn cache_usage(
+pub async fn cache_usage(
     state: State<'_, AppState>,
     library_id: Option<i64>,
 ) -> Result<CacheUsage, String> {
@@ -506,7 +506,7 @@ pub fn cache_usage(
 /// 사진은 건드리지 않는다. 다음에 볼 때 다시 만들어지므로 되돌릴 것이 없다.
 /// 캐시가 망가졌을 때(빈 그림, 옛 방향)의 마지막 수단이다.
 #[tauri::command]
-pub fn cache_clear(state: State<'_, AppState>, library_id: Option<i64>) -> Result<(), String> {
+pub async fn cache_clear(state: State<'_, AppState>, library_id: Option<i64>) -> Result<(), String> {
     let libs = crate::db::libraries::list(&state.db).map_err(err)?;
     for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
         for root in [
@@ -535,7 +535,7 @@ pub fn cache_clear(state: State<'_, AppState>, library_id: Option<i64>) -> Resul
 /// 우리가 못 하는 일(이름 바꾸기·다른 앱으로 열기)은 Finder에 맡기는 게 낫다.
 /// `open -R`은 파일을 **고른 상태로** 폴더를 연다.
 #[tauri::command]
-pub fn reveal_in_finder(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+pub async fn reveal_in_finder(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let (uuid, rel): (String, String) = state
         .db
         .read(|c| {
@@ -564,7 +564,7 @@ pub fn reveal_in_finder(state: State<'_, AppState>, id: i64) -> Result<(), Strin
 
 /// 파일 하나의 상세 (인스펙터용).
 #[tauri::command]
-pub fn file_detail(state: State<'_, AppState>, id: i64) -> Result<serde_json::Value, String> {
+pub async fn file_detail(state: State<'_, AppState>, id: i64) -> Result<serde_json::Value, String> {
     state
         .db
         .read(|c| {
@@ -611,7 +611,7 @@ pub fn file_detail(state: State<'_, AppState>, id: i64) -> Result<serde_json::Va
 
 /// 평점·선별 플래그·즐겨찾기를 한 번에 바꾼다. 여러 장을 동시에 처리한다.
 #[tauri::command]
-pub fn files_mark(
+pub async fn files_mark(
     state: State<'_, AppState>,
     ids: Vec<i64>,
     rating: Option<i32>,
@@ -699,7 +699,7 @@ mod tests {
 
 /// 가져올 폴더를 훑어 무엇이 몇 장 들어갈지 미리 본다. 복사는 하지 않는다.
 #[tauri::command]
-pub fn import_preview(
+pub async fn import_preview(
     state: State<'_, AppState>,
     sources: Vec<String>,
     library_id: i64,
@@ -728,7 +728,7 @@ fn source_paths(sources: &[String]) -> Result<Vec<PathBuf>, String> {
 /// 몇 장 들이는 데 몇 분이 걸린다. 스캐너는 이미 아는 파일을 건너뛰므로
 /// 새로 들어온 것만 읽는다.
 #[tauri::command]
-pub fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -> Result<(), String> {
+pub async fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -> Result<(), String> {
     let state = app.state::<AppState>();
     let paths = source_paths(&sources)?;
     let lib = crate::db::libraries::get(&state.db, library_id)
@@ -790,17 +790,17 @@ pub fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -> Resu
 // ── 설정 ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn settings_get(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
+pub async fn settings_get(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
     crate::db::settings::get(&state.db, &key).map_err(err)
 }
 
 #[tauri::command]
-pub fn settings_set(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+pub async fn settings_set(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
     crate::db::settings::set(&state.db, &key, &value).map_err(err)
 }
 
 #[tauri::command]
-pub fn settings_remove(state: State<'_, AppState>, key: String) -> Result<(), String> {
+pub async fn settings_remove(state: State<'_, AppState>, key: String) -> Result<(), String> {
     crate::db::settings::remove(&state.db, &key).map_err(err)
 }
 
@@ -812,7 +812,7 @@ fn backup_dir(state: &AppState) -> PathBuf {
 
 /// 지금 쓰는 DB 파일 — 어디에 있고 얼마나 큰가.
 #[tauri::command]
-pub fn db_info(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn db_info(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let p = state.db.path().to_path_buf();
     let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
     // WAL이 아직 안 합쳐진 만큼도 센다 — 켜 둔 동안은 여기에 쌓인다
@@ -822,7 +822,7 @@ pub fn db_info(state: State<'_, AppState>) -> Result<serde_json::Value, String> 
 
 /// DB 사본을 한 벌 만든다. 켜 둔 채로 해도 된다.
 #[tauri::command]
-pub fn db_backup(state: State<'_, AppState>) -> Result<crate::db::backup::Backup, String> {
+pub async fn db_backup(state: State<'_, AppState>) -> Result<crate::db::backup::Backup, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -831,14 +831,14 @@ pub fn db_backup(state: State<'_, AppState>) -> Result<crate::db::backup::Backup
 }
 
 #[tauri::command]
-pub fn db_backups(state: State<'_, AppState>) -> Result<Vec<crate::db::backup::Backup>, String> {
+pub async fn db_backups(state: State<'_, AppState>) -> Result<Vec<crate::db::backup::Backup>, String> {
     crate::db::backup::list(&backup_dir(&state)).map_err(err)
 }
 
 /// 사본으로 되돌린다. 먼저 지금 상태를 한 벌 떠 두고, 되돌린 뒤 프론트가
 /// 화면을 다시 읽는다 (설정까지 바뀌므로 통째로 새로고침).
 #[tauri::command]
-pub fn db_restore(state: State<'_, AppState>, path: String) -> Result<crate::db::backup::Backup, String> {
+pub async fn db_restore(state: State<'_, AppState>, path: String) -> Result<crate::db::backup::Backup, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -856,7 +856,7 @@ pub fn db_restore(state: State<'_, AppState>, path: String) -> Result<crate::db:
 
 /// 백업 폴더를 Finder에서 연다.
 #[tauri::command]
-pub fn db_backups_reveal(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn db_backups_reveal(state: State<'_, AppState>) -> Result<(), String> {
     let dir = backup_dir(&state);
     std::fs::create_dir_all(&dir).map_err(err)?;
     std::process::Command::new("open")
@@ -868,7 +868,7 @@ pub fn db_backups_reveal(state: State<'_, AppState>) -> Result<(), String> {
 
 /// 파일을 기본 앱으로 연다 — 뷰어가 못 트는 영상은 QuickTime이 튼다.
 #[tauri::command]
-pub fn open_in_default_app(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+pub async fn open_in_default_app(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let (uuid, rel): (String, String) = state
         .db
         .read(|c| {
@@ -894,7 +894,7 @@ pub fn open_in_default_app(state: State<'_, AppState>, id: i64) -> Result<(), St
 
 /// 한 장의 코멘트. 비우면 NULL로.
 #[tauri::command]
-pub fn file_comment(state: State<'_, AppState>, id: i64, text: String) -> Result<(), String> {
+pub async fn file_comment(state: State<'_, AppState>, id: i64, text: String) -> Result<(), String> {
     let t = crate::scan::nfc(text.trim());
     let v: Option<String> = if t.is_empty() { None } else { Some(t) };
     state
@@ -906,7 +906,7 @@ pub fn file_comment(state: State<'_, AppState>, id: i64, text: String) -> Result
 
 /// 이름을 바꾼다. 같은 이름이 있으면 거절한다. 새 이름을 돌려준다.
 #[tauri::command]
-pub fn file_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<String, String> {
+pub async fn file_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<String, String> {
     crate::ops::rename::rename(&state.db, id, &name).map_err(err)
 }
 
@@ -916,7 +916,7 @@ pub fn file_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<
 ///
 /// 라이브러리를 더하거나 뺀 뒤에도 이걸 다시 부른다 — 지금 목록에 맞춘다.
 #[tauri::command]
-pub fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String> {
+pub async fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String> {
     let state = app.state::<AppState>();
     let w = Arc::clone(&state.watch);
     if !enabled {
@@ -954,7 +954,7 @@ pub fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String> {
 
 /// 주어진 id들의 행 — 준 순서대로. 목록에 없는 사진 한 줄이 필요할 때.
 #[tauri::command]
-pub fn files_by_ids(state: State<'_, AppState>, ids: Vec<i64>) -> Result<Vec<query::FileRow>, String> {
+pub async fn files_by_ids(state: State<'_, AppState>, ids: Vec<i64>) -> Result<Vec<query::FileRow>, String> {
     query::by_ids(&state.db, &ids).map_err(err)
 }
 
@@ -984,7 +984,7 @@ pub struct AiStatus {
 }
 
 #[tauri::command]
-pub fn ai_status(state: State<'_, AppState>) -> Result<AiStatus, String> {
+pub async fn ai_status(state: State<'_, AppState>) -> Result<AiStatus, String> {
     use crate::ai::models::{self, ModelId};
     let (embedded, total) = crate::ai::embed::counts(&state.db).map_err(err)?;
     let (faces_done, faces_total, faces, persons) = crate::ai::people::counts(&state.db).map_err(err)?;
@@ -1008,7 +1008,7 @@ pub fn ai_status(state: State<'_, AppState>) -> Result<AiStatus, String> {
 /// 모델을 받는다 — `which`는 "vision"(사진 벡터) 또는 "text"(글로 찾기, 파일 셋).
 /// 진행은 `ai-download`(셋이면 합산), 끝나면 `ai-download-done`(오류 글 또는 null).
 #[tauri::command]
-pub fn ai_model_download(app: AppHandle, which: String) -> Result<(), String> {
+pub async fn ai_model_download(app: AppHandle, which: String) -> Result<(), String> {
     use crate::ai::models::{self, DownloadProgress, ModelId};
     let ids: Vec<ModelId> = match which.as_str() {
         "vision" => vec![ModelId::ClipVision],
@@ -1051,7 +1051,7 @@ pub fn ai_model_download(app: AppHandle, which: String) -> Result<(), String> {
 /// 벡터를 채운다. 스캔과 같은 running 스위치를 쓴다 — 같은 DB에 둘이 쓰지 않는다.
 /// 진행은 `ai-progress`, 끝나면 `ai-done`.
 #[tauri::command]
-pub fn ai_embed_start(app: AppHandle) -> Result<(), String> {
+pub async fn ai_embed_start(app: AppHandle) -> Result<(), String> {
     use crate::ai::models::{self, ModelId};
     let state = app.state::<AppState>();
     if !models::present(&state.cache_base, ModelId::ClipVision) {
@@ -1123,20 +1123,20 @@ fn similar_rows(state: &AppState, hits: Vec<(i64, f32)>) -> Result<Vec<SimilarRo
 
 /// 이 사진과 비슷한 것들 — 가까운 순.
 #[tauri::command]
-pub fn ai_similar(state: State<'_, AppState>, id: i64, limit: usize) -> Result<Vec<SimilarRow>, String> {
+pub async fn ai_similar(state: State<'_, AppState>, id: i64, limit: usize) -> Result<Vec<SimilarRow>, String> {
     let index = ai_index(&state)?;
     similar_rows(&state, index.similar(id, limit.clamp(1, 200)))
 }
 
 /// 폴더 한 갈래의 크기 — 옮기기 전에 보여 준다
 #[tauri::command]
-pub fn folder_size(state: State<'_, AppState>, folder_id: i64) -> Result<crate::ops::offload::FolderSize, String> {
+pub async fn folder_size(state: State<'_, AppState>, folder_id: i64) -> Result<crate::ops::offload::FolderSize, String> {
     crate::ops::offload::folder_size(&state.db, folder_id).map_err(err)
 }
 
 /// 폴더 한 갈래를 다른 라이브러리(디스크)로. 진행은 `offload-progress`, 끝나면 `offload-done`.
 #[tauri::command]
-pub fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64) -> Result<(), String> {
+pub async fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64) -> Result<(), String> {
     let state = app.state::<AppState>();
     let Some(guard) = job::try_start(&state.running, "에이컷 옮기기") else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
@@ -1171,31 +1171,42 @@ pub struct StartupInfo {
     /// 프로세스 시작 → 첫 그리드가 그려짐
     pub first_grid_ms: u64,
     pub at: i64,
+    /// 웹뷰 기준 표식(ms) — script·hydrated·migrated·libs·grid
+    #[serde(default)]
+    pub marks: serde_json::Value,
+    /// run() 기준 — 웹뷰가 페이지를 읽기 시작한·끝낸 시각
+    #[serde(default)]
+    pub page_started_ms: u64,
+    #[serde(default)]
+    pub page_finished_ms: u64,
 }
 
 /// 첫 그리드가 그려진 순간 화면이 부른다 — 시작 시간을 재서 설정에 남긴다.
 /// 성능 목표 «앱 시작 1초»를 눈대중이 아니라 숫자로 본다.
 #[tauri::command]
-pub fn startup_report(state: State<'_, AppState>) -> Result<StartupInfo, String> {
+pub async fn startup_report(state: State<'_, AppState>, marks: serde_json::Value) -> Result<StartupInfo, String> {
     let info = StartupInfo {
         db_ms: state.db_ready_ms,
         first_grid_ms: crate::started().elapsed().as_millis() as u64,
         at: chrono::Utc::now().timestamp(),
+        marks,
+        page_started_ms: crate::PAGE_MS[0].load(Ordering::Relaxed),
+        page_finished_ms: crate::PAGE_MS[1].load(Ordering::Relaxed),
     };
-    log::info!("시작 — DB {}ms · 첫 화면 {}ms", info.db_ms, info.first_grid_ms);
+    log::info!("시작 — DB {}ms · 첫 화면 {}ms · {}", info.db_ms, info.first_grid_ms, info.marks);
     crate::db::settings::set(&state.db, "startup.last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
     Ok(info)
 }
 
 /// 지도의 칸들 — 조건에 맞는 사진을 `precision`도 격자로 묶는다
 #[tauri::command]
-pub fn map_cells(state: State<'_, AppState>, filter: Filter, precision: f64) -> Result<Vec<query::MapCell>, String> {
+pub async fn map_cells(state: State<'_, AppState>, filter: Filter, precision: f64) -> Result<Vec<query::MapCell>, String> {
     query::map_cells(&state.db, &filter, precision).map_err(err)
 }
 
 /// 얼굴을 찾고 사람으로 묶는다. 진행은 `faces-progress`, 끝나면 `faces-done`.
 #[tauri::command]
-pub fn ai_faces_start(app: AppHandle) -> Result<(), String> {
+pub async fn ai_faces_start(app: AppHandle) -> Result<(), String> {
     use crate::ai::models;
     let state = app.state::<AppState>();
     if !models::face_present(&state.cache_base) {
@@ -1247,7 +1258,7 @@ pub struct PersonRow {
 
 /// 사람 목록 — 얼굴 많은 순. 대표 얼굴은 가장 크게 찍힌 것.
 #[tauri::command]
-pub fn people_list(state: State<'_, AppState>) -> Result<Vec<PersonRow>, String> {
+pub async fn people_list(state: State<'_, AppState>) -> Result<Vec<PersonRow>, String> {
     state
         .db
         .read(|c| {
@@ -1279,7 +1290,7 @@ pub fn people_list(state: State<'_, AppState>) -> Result<Vec<PersonRow>, String>
 }
 
 #[tauri::command]
-pub fn person_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<(), String> {
+pub async fn person_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<(), String> {
     let name = name.trim().to_string();
     state
         .db
@@ -1295,7 +1306,7 @@ pub fn person_rename(state: State<'_, AppState>, id: i64, name: String) -> Resul
 
 /// `from`의 얼굴을 전부 `into`로 옮기고 `from`은 지운다 — 같은 사람이 둘로 갈렸을 때
 #[tauri::command]
-pub fn person_merge(state: State<'_, AppState>, into: i64, from: i64) -> Result<(), String> {
+pub async fn person_merge(state: State<'_, AppState>, into: i64, from: i64) -> Result<(), String> {
     if into == from {
         return Ok(());
     }
@@ -1311,7 +1322,7 @@ pub fn person_merge(state: State<'_, AppState>, into: i64, from: i64) -> Result<
 
 /// 글로 찾기 — «바닷가에서 뛰는 강아지» 같은 글에 가까운 사진들.
 #[tauri::command]
-pub fn ai_text_search(state: State<'_, AppState>, query: String, limit: usize) -> Result<Vec<SimilarRow>, String> {
+pub async fn ai_text_search(state: State<'_, AppState>, query: String, limit: usize) -> Result<Vec<SimilarRow>, String> {
     let q = query.trim();
     if q.is_empty() {
         return Ok(Vec::new());

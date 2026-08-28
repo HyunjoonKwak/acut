@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { mark } from "./startupMarks";
 import { usePrefs } from "./prefs";
 
 /**
@@ -17,5 +18,6 @@ export default function Hydrated({ children }: { children: React.ReactNode }) {
     return un;
   }, []);
   if (!ready) return <div className="h-screen bg-canvas" />;
+  mark("hydrated");
   return <>{children}</>;
 }

@@ -121,7 +121,16 @@ pub fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
     match std::fs::rename(from, to) {
         Ok(()) => Ok(()),
         Err(_) => {
-            std::fs::copy(from, to)?;
+            // 다른 볼륨 — 복사한 뒤 크기가 맞는지 보고서야 원본을 지운다.
+            // 디스크가 차서 반만 써진 사본을 두고 원본을 지우면 사진이 사라진다.
+            let want = std::fs::metadata(from)?.len();
+            let got = std::fs::copy(from, to)?;
+            if got != want || std::fs::metadata(to).map(|m| m.len()).unwrap_or(0) != want {
+                let _ = std::fs::remove_file(to);
+                return Err(std::io::Error::other(format!(
+                    "복사가 끝까지 안 됐습니다 ({got} / {want} bytes) — 디스크가 찼나요?"
+                )));
+            }
             std::fs::remove_file(from)
         }
     }

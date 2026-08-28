@@ -6,6 +6,7 @@ import ContextMenu from "./ContextMenu";
 import Cull from "./Cull";
 import Filmstrip from "./Filmstrip";
 import Import from "./Import";
+import AreaPickDialog from "./AreaPickDialog";
 import Organize from "./Organize";
 import MapView from "./MapView";
 import PhotoGrid from "./PhotoGrid";
@@ -399,6 +400,17 @@ export default function App() {
             await renameFile(ui.renaming!, n);
           }}
           onClose={() => ui.set({ renaming: null })}
+        />
+      )}
+      {ui.areaPick !== null && (
+        <AreaPickDialog
+          path={ui.areaPick}
+          onPick={(area) => {
+            const p = ui.areaPick!;
+            ui.set({ areaPick: null });
+            scan.registerLibrary(p, area);
+          }}
+          onClose={() => ui.set({ areaPick: null })}
         />
       )}
       {ui.importing && (

@@ -13,6 +13,8 @@ type Store = {
   /** 뷰어를 창 전체로 — 기본은 사이드바를 남겨 둔다 */
   viewerFull: boolean;
   organizing: boolean;
+  /** 라이브러리 등록 중 — 영역을 고르는 폴더 */
+  areaPick: string | null;
   /** 나란히 보기 — 골라 둔 것 중 앞의 넷. null이면 닫힌 상태 */
   comparing: number[] | null;
   helping: boolean;
@@ -40,6 +42,7 @@ export const useUi = create<Store>()((set) => ({
   viewerAt: null,
   viewerFull: false,
   organizing: false,
+  areaPick: null,
   comparing: null,
   helping: false,
   importing: false,

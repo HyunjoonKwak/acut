@@ -136,6 +136,15 @@ pub fn library_add(state: State<'_, AppState>, path: String, area: i32) -> Resul
 }
 
 /// 등록을 지운다. **원본 사진과 디스크의 캐시 파일은 건드리지 않는다.**
+/// 라이브러리의 영역(역할)을 바꾼다 — 0 작업대 · 1 내사진 · 2 공용 · 3 기타
+#[tauri::command]
+pub fn library_set_area(state: State<'_, AppState>, id: i64, area: i32) -> Result<(), String> {
+    if !(0..=3).contains(&area) {
+        return Err(format!("모르는 영역: {area}"));
+    }
+    crate::db::libraries::set_area(&state.db, id, area).map_err(err)
+}
+
 #[tauri::command]
 pub fn library_remove(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let r = crate::db::libraries::remove(&state.db, id).map_err(err);

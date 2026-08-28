@@ -82,6 +82,7 @@ pub fn run() {
             api::libraries_list,
             api::library_add,
             api::library_remove,
+            api::library_set_area,
             api::library_stats,
             api::import_preview,
             api::import_run,

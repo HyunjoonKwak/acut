@@ -176,6 +176,15 @@ pub fn add(db: &Db, dir: &std::path::Path, area: i32) -> std::result::Result<Lib
 
 /// 등록을 지운다. 폴더·파일·썸네일 기록도 함께 사라진다 (CASCADE).
 /// **원본 사진과 디스크의 캐시 파일은 건드리지 않는다.**
+/// 역할을 바꾼다 — 폴더 행의 area도 같이. 정리 대화상자가 폴더의 area를 본다.
+pub fn set_area(db: &Db, id: i64, area: i32) -> Result<()> {
+    db.transaction(|tx| {
+        tx.execute("UPDATE libraries SET area = ?2 WHERE id = ?1", rusqlite::params![id, area])?;
+        tx.execute("UPDATE folders SET area = ?2 WHERE library_id = ?1", rusqlite::params![id, area])?;
+        Ok(())
+    })
+}
+
 pub fn remove(db: &Db, id: i64) -> Result<()> {
     db.write(|c| c.execute("DELETE FROM libraries WHERE id = ?1", [id]))?;
     Ok(())

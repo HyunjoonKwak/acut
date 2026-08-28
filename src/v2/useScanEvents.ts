@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useData } from "./dataStore";
+import { useUi } from "./uiStore";
 import { useJob } from "./jobStore";
 import { usePrefs } from "./prefs";
 import { toast } from "./toastStore";
@@ -193,12 +194,17 @@ export function useScanEvents(cb: {
     await useData.getState().refreshLibs();
   }, []);
 
+  /// 폴더를 고른 뒤 영역을 묻는다 — 등록은 registerLibrary가
   const addLibrary = useCallback(async () => {
     const picked = await openDialog({ directory: true, multiple: false });
     if (typeof picked !== "string") return;
+    useUi.getState().set({ areaPick: picked });
+  }, []);
+
+  const registerLibrary = useCallback(async (picked: string, area: number) => {
     const { refreshLibs, setOpen, setScanMsg } = useData.getState();
     try {
-      const l = await invoke<Library>("library_add", { path: picked, area: 1 });
+      const l = await invoke<Library>("library_add", { path: picked, area });
       await refreshLibs();
       usePrefs.getState().set("libId", l.id);
       useView.getState().setSel(null);
@@ -215,5 +221,5 @@ export function useScanEvents(cb: {
     }
   }, []);
 
-  return { rescan, stopJob, addLibrary };
+  return { rescan, stopJob, addLibrary, registerLibrary };
 }

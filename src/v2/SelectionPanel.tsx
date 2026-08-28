@@ -3,6 +3,8 @@ import { usePref } from "./prefs";
 import { useSelection } from "./selectionStore";
 import { Sep } from "./ui";
 import { useUi } from "./uiStore";
+import { useData } from "./dataStore";
+import { areaLabel, nextArea } from "./areaItems";
 import type { FileRow, Mark } from "./types";
 
 /**
@@ -25,6 +27,9 @@ export default function SelectionPanel({
   const clearPicked = useSelection((s) => s.clearPicked);
   const setUi = useUi((s) => s.set);
   const [libId] = usePref("libId");
+  const libs = useData((s) => s.libs);
+  // 지금 라이브러리의 흐름상 다음 칸 — 작업대면 «내사진으로», 내사진이면 «공용으로»
+  const next = nextArea(libs.find((l) => l.id === libId)?.area ?? 3);
   if (picked.size === 0) return null;
 
   const bytes = rows
@@ -81,7 +86,7 @@ export default function SelectionPanel({
         }
         className="h-control px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
       >
-        정리
+        {next === null ? "정리" : `${areaLabel(next)}으로 정리`}
       </button>
       <button
         onClick={async () => {

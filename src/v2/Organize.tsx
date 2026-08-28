@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useData } from "./dataStore";
+import { AREAS, nextArea } from "./areaItems";
 
 type Suggestion = { title: string; why: string; score: number };
 type Outcome = {
@@ -28,6 +30,16 @@ export default function Organize({
   onDone: (o: Outcome) => void;
   onClose: () => void;
 }) {
+  const libs = useData((s) => s.libs);
+  // 목적지 — 흐름의 다음 칸이 기본. 작업대에서 정리하면 내사진, 내사진에서면 공용.
+  // 그 영역에 라이브러리가 없으면 지금 라이브러리에 그대로.
+  const [dest, setDest] = useState<number>(() => {
+    const cur = libs.find((l) => l.id === libraryId);
+    const want = cur ? nextArea(cur.area) : null;
+    const next =
+      want === null ? null : libs.find((l) => l.area === want && l.online);
+    return next?.id ?? libraryId;
+  });
   const [date, setDate] = useState("");
   const [title, setTitle] = useState("");
   const [tips, setTips] = useState<Suggestion[]>([]);
@@ -58,7 +70,7 @@ export default function Organize({
     try {
       const o = await invoke<Outcome>("organize_move", {
         ids,
-        libraryId,
+        libraryId: dest,
         date,
         title,
       });
@@ -70,7 +82,7 @@ export default function Organize({
     } finally {
       setBusy(false);
     }
-  }, [ids, libraryId, date, title, onDone, onClose]);
+  }, [ids, dest, date, title, onDone, onClose]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -89,6 +101,37 @@ export default function Organize({
           <span className="text-[12px] text-fg-mute">
             {ids.length.toLocaleString()}장을 이벤트 폴더로 옮깁니다
           </span>
+        </div>
+
+        {/* 어디로 — 영역별 라이브러리. 물리적 위치가 곧 처리 단계라 이게 먼저다 */}
+        <div className="mb-3">
+          <div className="text-[10.5px] uppercase tracking-wider text-fg-mute mb-1.5">
+            어디로
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {AREAS.map((a) =>
+              libs
+                .filter((l) => l.area === a.v)
+                .map((l) => (
+                  <button
+                    key={l.id}
+                    onClick={() => l.online && setDest(l.id)}
+                    disabled={!l.online}
+                    title={
+                      l.online ? a.hint : "디스크가 연결되어 있지 않습니다"
+                    }
+                    className={`h-6 px-2 rounded text-[12px] disabled:opacity-40 ${
+                      dest === l.id
+                        ? "bg-accent text-accent-fg"
+                        : "text-fg-dim ring-1 ring-line hover:text-white"
+                    }`}
+                  >
+                    <span className="text-fg-mute mr-1">{a.label}</span>
+                    {l.name}
+                  </button>
+                )),
+            )}
+          </div>
         </div>
 
         <div className="flex gap-2 mb-3">

@@ -6,8 +6,7 @@ import { fmtBytes } from "./format";
 import { useJob } from "./jobStore";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
-import Cleanup from "./Cleanup";
-import type { Library } from "./types";
+import FolderSets from "./FolderSets";
 
 type Group = {
   id: number;
@@ -41,27 +40,15 @@ type Summary = {
 };
 
 const KINDS = [
-  { id: -1, label: "정리", hint: "NAS에 이미 있는 것은 지우고, 없는 것은 옮긴다" },
-  { id: -2, label: "공용 안 겹침", hint: "내사진·공용 안에서 같은 사진이 두 폴더에 — 어느 쪽을 남길지" },
+  { id: -3, label: "폴더 비교", hint: "내용이 완전히 같은 폴더들 — 하나만 남기고 나머지 지우기" },
+  { id: 0, label: "개별 비교", hint: "바이트가 같은 사진 무리 — 한 장씩 보며" },
   { id: 2, label: "같은 순간", hint: "연달아 찍은 것" },
   { id: 1, label: "잡동사니", hint: "스크린샷·다운로드본" },
   { id: 3, label: "비슷한 장면", hint: "AI가 본 닮은 사진 (벡터 필요)" },
 ];
 
-export default function Cull({
-  onClose,
-  libs,
-  onOrganize,
-}: {
-  onClose: () => void;
-  /** 정리할 수 있는 라이브러리 — 정착 구역이 아닌 것 */
-  libs: Library[];
-  /** «공용으로 정리…» — 격자로 나가 그 사진들을 골라 정리 대화상자를 연다 */
-  onOrganize: (ids: number[], libraryId: number) => void;
-}) {
-  const [kind, setKind] = useState(-1); // 정리가 먼저 — 가장 자주 하는 일
-  /// 공용 안 겹침 무리 수 — 탭에 보인다
-  const [pairs, setPairs] = useState(0);
+export default function Cull({ onClose }: { onClose: () => void }) {
+  const [kind, setKind] = useState(-3); // 폴더 비교가 먼저 — 가장 크게 비운다
   const [groups, setGroups] = useState<Group[]>([]);
   const [idx, setIdx] = useState(0);
   /// 구성원 — 어느 그룹의 것인지와 함께. 그룹이 바뀌면 안 맞아 빈 목록이 된다.
@@ -108,24 +95,18 @@ export default function Cull({
 
   const loadSummary = useCallback(async () => {
     setSummary(await invoke<Summary[]>("cull_summary"));
-    // 공용 안 겹침은 라이브러리와 무관하다 — 아무 id나 준다
-    const c = await invoke<{ settled_groups: number }>("cleanup_summary", {
-      libraryId: libs[0]?.id ?? 0,
-    });
-    setPairs(c.settled_groups);
-  }, [libs]);
+  }, []);
 
   const loadGroups = useCallback(async (k: number) => {
-    if (k === -1) {
-      setGroups([]); // 정리 화면은 무리가 아니라 폴더로 본다
+    if (k === -3) {
+      setGroups([]); // 폴더 비교는 무리가 아니라 폴더로 본다
       setIdx(0);
       return;
     }
     const g = await invoke<Group[]>("cull_groups", {
-      kind: k === -2 ? 0 : k,
+      kind: k,
       limit: 200,
       offset: 0,
-      settled: k === -2,
     });
     setGroups(g);
     setIdx(0);
@@ -352,7 +333,7 @@ export default function Cull({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (viewerAt !== null) return; // 크게 보기가 열려 있으면 뷰어가 키를 가져간다
-      if (kind === -1 && e.key !== "Escape") return; // 정리 화면은 제 손잡이가 있다
+      if (kind === -3 && e.key !== "Escape") return; // 폴더 비교는 제 손잡이가 있다
       if (e.key === " ") {
         e.preventDefault();
         apply();
@@ -412,16 +393,16 @@ export default function Cull({
               }`}
             >
               {k.label}
-              {k.id !== -1 && (
+              {k.id !== -3 && (
                 <span className="tabular-nums text-fg-mute">
                   {" "}
-                  {k.id === -2 ? pairs : (s?.groups ?? 0)}
+                  {s?.groups ?? 0}
                 </span>
               )}
             </button>
           );
         })}
-        {!scanning && kind === 1 && groups.length > 0 && (
+        {!scanning && (kind === 0 || kind === 1) && groups.length > 0 && (
           <button
             onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "")}
             title="미결 무리를 한꺼번에 확정 — 공용·내사진 안의 사본이 있는 무리는 건너뜁니다"
@@ -469,9 +450,9 @@ export default function Cull({
         </button>
       </div>
 
-      {kind === -1 ? (
+      {kind === -3 ? (
         <div className="flex-1 min-h-0">
-          <Cleanup libs={libs} onOrganize={onOrganize} onChanged={loadSummary} />
+          <FolderSets onChanged={loadSummary} />
         </div>
       ) : (
         <>
@@ -588,7 +569,7 @@ export default function Cull({
                       {m.library} · {m.folder || "/"}
                     </div>
                   </button>
-                  {kind === -2 && (
+                  {kind === 0 && (
                     <div className="flex gap-1.5 mt-1.5">
                       <button
                         onClick={() => keepThis(m)}

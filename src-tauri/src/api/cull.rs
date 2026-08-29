@@ -4,7 +4,7 @@
 //! 진행 상황을 이벤트로 흘린다. 조회는 즉시 돌아온다.
 
 use crate::api::{err, AppState};
-use crate::cull::{apply, burst, cleanup, dedup, junk, scene};
+use crate::cull::{apply, burst, cleanup, dedup, folders, junk, scene};
 use super::job;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -330,6 +330,25 @@ pub async fn cull_apply_pair(state: State<'_, AppState>, keep_folder_id: i64, dr
 pub async fn cull_dup_folders(state: State<'_, AppState>, kind: i32) -> Result<Vec<apply::DupFolder>, String> {
     // 임시 표 없이 CTE만 쓰므로 읽기 연결로 충분하다
     state.db.read(|c| apply::dup_folders(c, kind, 300)).map_err(err)
+}
+
+/// 폴더 비교 — 내용이 완전히 같은 폴더 묶음들.
+#[tauri::command]
+pub async fn cull_folder_sets(state: State<'_, AppState>) -> Result<Vec<folders::FolderSet>, String> {
+    state.db.read(|c| folders::identical_sets(c, 500)).map_err(err)
+}
+
+/// 폴더 묶음 하나 — keep 을 남기고 drops 에 지우기 표시.
+#[tauri::command]
+pub async fn cull_folder_set_apply(
+    state: State<'_, AppState>,
+    keep_folder_id: i64,
+    drop_folder_ids: Vec<i64>,
+) -> Result<apply::ApplyAll, String> {
+    state
+        .db
+        .transaction(|tx| folders::apply_set(tx, keep_folder_id, &drop_folder_ids))
+        .map_err(err)
 }
 
 /// 그룹을 보류한다 — 목록에서 빠지되 판정은 하지 않는다.

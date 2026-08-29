@@ -175,16 +175,36 @@ pub struct Pulled {
     pub cancelled: bool,
 }
 
+/// 파일을 견주고 옮기는 방식 — `-a`가 아니다. 목적지가 exFAT(옛 백업 SSD)이면
+/// 권한·소유자를 못 맞춰 파일마다 stderr에 한 줄씩 남기고, 시각은 2초 단위라
+/// 매번 «바뀌었다»고 본다. 재귀·링크·시각만 맞추고 2초 오차는 눈감는다.
+/// `--iconv=utf-8-mac,utf-8`: 맥은 한글 이름을 자모 분리(NFD)로 두고 NAS는 NFC라, 그냥
+/// 견주면 같은 이름이 다른 파일이 된다 (실측: 2,460장 가운데 1,592장이 «NAS에 없음»).
+const COPY_FLAGS: [&str; 6] = ["-rlt", "--no-perms", "--no-owner", "--no-group", "--modify-window=2", "--iconv=utf-8-mac,utf-8"];
+
+/// 우리 쪽 기록은 전부 NFC — DB의 파일·폴더 이름과 같은 꼴
+fn nfc(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    s.nfc().collect()
+}
+/// 받다 만 파일은 여기에 — 완성된 것만 제 이름으로 보인다
+pub const PARTIAL_DIR: &str = ".rsync-partial";
+
 /// rsync가 쓸 ssh 명령 — rsync용 포트로
 fn rsync_ssh(cfg: &Config) -> String {
     format!("ssh -p {} -o BatchMode=yes -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new", cfg.rsync_port)
 }
+
+/// 사용자가 뭐라 적었든 늘 빼는 것 — macOS가 exFAT에 만드는 `._` 사이드카(실측: 2,460장에
+/// 2,460개가 «NAS에 없는 것»으로 잡혔다)와 받다 만 파일 폴더.
+const ALWAYS_EXCLUDE: [&str; 2] = ["._*", PARTIAL_DIR];
 
 fn excludes(cfg: &Config) -> Vec<String> {
     cfg.exclude
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
+        .chain(ALWAYS_EXCLUDE.iter().copied())
         .flat_map(|p| ["--exclude".to_string(), p.to_string()])
         .collect()
 }
@@ -231,6 +251,23 @@ fn exclude_file(already: &[String]) -> std::io::Result<Option<std::path::PathBuf
     Ok(Some(p))
 }
 
+/// 지금 폴더에 있는 완성 파일들 — 상대경로와 크기. 받다 만 것(.rsync-partial)은 뺀다.
+/// 원장에 넣을 때 쓴다: 멈췄다 이어받아도, 처음부터 있었어도, 있으면 «받은 것»이다.
+pub fn present_files(dest: &Path) -> Vec<(String, u64)> {
+    walkdir::WalkDir::new(dest)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| e.file_name().to_string_lossy() != PARTIAL_DIR)
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() && !e.file_name().to_string_lossy().starts_with("._"))
+        .filter_map(|e| {
+            let rel = nfc(&e.path().strip_prefix(dest).ok()?.to_string_lossy());
+            let size = e.metadata().ok()?.len();
+            Some((rel, size))
+        })
+        .collect()
+}
+
 /// 1차 구역에 «받은 적 없는 것»이 몇 개·몇 바이트나 — rsync 시험 실행(-n --stats).
 pub fn count_new(cfg: &Config, dest: &Path, already: &[String]) -> std::io::Result<(usize, u64)> {
     let (_, ok) = rsync_version();
@@ -240,7 +277,7 @@ pub fn count_new(cfg: &Config, dest: &Path, already: &[String]) -> std::io::Resu
     let src = format!("{}:{}/", cfg.host, cfg.zone1.trim_end_matches('/'));
     let excl = exclude_file(already)?;
     let mut cmd = Command::new(rsync_bin());
-    cmd.args(["-n", "-a", "--stats", "-e", &rsync_ssh(cfg)]);
+    cmd.args(COPY_FLAGS).args(["-n", "--stats", "-e", &rsync_ssh(cfg)]);
     cmd.args(excludes(cfg));
     if let Some(p) = &excl {
         cmd.arg(format!("--exclude-from={}", p.display()));
@@ -303,7 +340,15 @@ pub fn pull(
         return Err(std::io::Error::other("이 맥의 rsync가 macOS 내장 openrsync라 쓸 수 없습니다 — 터미널에서 `brew install rsync` 뒤 다시 하세요"));
     }
     let mut cmd = Command::new(rsync_bin());
-    cmd.args(["-a", "--partial", "--no-inc-recursive", "--info=progress2", "--out-format=%n", "-e", &rsync_ssh(cfg)]);
+    cmd.args(COPY_FLAGS).args([
+        "--partial",
+        &format!("--partial-dir={PARTIAL_DIR}"),
+        "--no-inc-recursive",
+        "--info=progress2",
+        "--out-format=%n",
+        "-e",
+        &rsync_ssh(cfg),
+    ]);
     cmd.args(excludes(cfg));
     if let Some(p) = &excl {
         cmd.arg(format!("--exclude-from={}", p.display()));
@@ -312,6 +357,16 @@ pub fn pull(
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     let stdout = child.stdout.take().unwrap();
+    // stderr는 다른 스레드가 비운다. 안 읽으면 파이프(64KB)가 차는 순간 rsync가
+    // 멎고, 우리는 stdout을 기다리며 같이 멎는다 — 실측: exFAT에서 5,358장에서.
+    let stderr = child.stderr.take().unwrap();
+    let err_thread = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut s = String::new();
+        let mut r = stderr;
+        let _ = r.read_to_string(&mut s);
+        s
+    });
     let mut out = Pulled::default();
     let mut p = PullProgress::default();
     // rsync는 진행 줄을 \r로 덮어쓴다 — \r과 \n 둘 다 줄 끝으로 본다
@@ -340,6 +395,7 @@ pub fn pull(
             }
             on_progress(&p);
         } else if !line.ends_with('/') {
+            let line = nfc(&line);
             p.current = line.clone();
             out.files.push(line);
         }
@@ -348,12 +404,8 @@ pub fn pull(
     if let Some(p) = excl {
         let _ = std::fs::remove_file(p);
     }
+    let err = err_thread.join().unwrap_or_default();
     if !status.success() && !out.cancelled {
-        let mut err = String::new();
-        if let Some(mut e) = child.stderr.take() {
-            use std::io::Read;
-            let _ = e.read_to_string(&mut err);
-        }
         return Err(std::io::Error::other(format!("rsync 실패 ({status}): {}", explain(&err))));
     }
     Ok(out)
@@ -392,7 +444,8 @@ pub fn missing_on_nas(cfg: &Config, local: &Path, remote: &str) -> std::io::Resu
         return Err(std::io::Error::other("이 맥의 rsync가 macOS 내장 openrsync라 쓸 수 없습니다 — 터미널에서 `brew install rsync` 뒤 다시 하세요"));
     }
     let out = Command::new(rsync_bin())
-        .args(["-n", "-a", "--size-only", "--out-format=%n", "-e", &rsync_ssh(cfg)])
+        .args(COPY_FLAGS)
+        .args(["-n", "--size-only", "--out-format=%n", "-e", &rsync_ssh(cfg)])
         .args(excludes(cfg))
         .arg(format!("{}/", local.to_string_lossy()))
         .arg(format!("{}:{}/", cfg.host, remote.trim_end_matches('/')))
@@ -407,7 +460,7 @@ pub fn missing_on_nas(cfg: &Config, local: &Path, remote: &str) -> std::io::Resu
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.ends_with('/') && *l != "./")
-        .map(str::to_string)
+        .map(nfc)
         .collect())
 }
 
@@ -473,7 +526,16 @@ mod tests {
     fn real_pull_small_folder() {
         let Ok(dir) = std::env::var("ACUT_NAS_DIR") else { return };
         let cfg = Config { zone1: dir, ..Default::default() };
-        let d = tempfile::tempdir().unwrap();
+        // ACUT_PULL_DEST가 있으면 거기에(예: exFAT 볼륨 시험), 없으면 임시 폴더에
+        let tmp = tempfile::tempdir().unwrap();
+        let dest_override = std::env::var("ACUT_PULL_DEST").ok().map(std::path::PathBuf::from);
+        let d = dest_override.clone().unwrap_or_else(|| tmp.path().to_path_buf());
+        struct D(std::path::PathBuf);
+        impl Drop for D { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        let _cleanup = dest_override.map(D);
+        let d = D2(d);
+        struct D2(std::path::PathBuf);
+        impl D2 { fn path(&self) -> &Path { &self.0 } }
         let cancel = AtomicBool::new(false);
         let last = std::cell::RefCell::new(PullProgress::default());
         let t = std::time::Instant::now();
@@ -484,11 +546,14 @@ mod tests {
             eprintln!("  {f}");
         }
         assert!(!r.cancelled);
+        let have = present_files(d.path()).len();
+        eprintln!("지금 있는 파일 {have}개 (이번에 옮긴 {}개 + 이미 있던 것)", r.files.len());
+        assert!(have >= r.files.len());
         // 두 번째는 받을 것이 없다 — 증분
         let r2 = pull(&cfg, d.path(), &[], &cancel, |_| {}).unwrap();
         assert_eq!(r2.files.len(), 0);
         // 원장에 있는 것은 로컬에서 지워도 다시 받지 않는다
-        let first = r.files[0].clone();
+        let first = present_files(d.path())[0].0.clone();
         std::fs::remove_file(d.path().join(&first)).unwrap();
         let (n, _) = count_new(&cfg, d.path(), &[first.clone()]).unwrap();
         assert_eq!(n, 0, "원장에 있는 {first}는 새것이 아니다");
@@ -524,9 +589,32 @@ mod tests {
     }
 
     #[test]
+    fn present_files_skips_the_partial_dir() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("a")).unwrap();
+        std::fs::create_dir_all(d.path().join(PARTIAL_DIR)).unwrap();
+        std::fs::write(d.path().join("a/x.jpg"), b"xx").unwrap();
+        std::fs::write(d.path().join("a/._x.jpg"), b"sidecar").unwrap();
+        std::fs::write(d.path().join(PARTIAL_DIR).join("y.jpg"), b"half").unwrap();
+        let mut got = present_files(d.path());
+        got.sort();
+        assert_eq!(got, vec![("a/x.jpg".to_string(), 2)]);
+    }
+
+    #[test]
+    fn names_are_kept_in_nfc() {
+        let nfd = "한글".chars().flat_map(|c| { use unicode_normalization::UnicodeNormalization; c.nfd().collect::<Vec<_>>() }).collect::<String>();
+        assert_ne!(nfd, "한글");
+        assert_eq!(nfc(&nfd), "한글");
+    }
+
+    #[test]
     fn excludes_become_rsync_flags() {
         let cfg = Config { exclude: "@eaDir, #trash,,".into(), ..Default::default() };
-        assert_eq!(excludes(&cfg), vec!["--exclude", "@eaDir", "--exclude", "#trash"]);
+        assert_eq!(
+            excludes(&cfg),
+            vec!["--exclude", "@eaDir", "--exclude", "#trash", "--exclude", "._*", "--exclude", PARTIAL_DIR]
+        );
     }
 
     #[test]

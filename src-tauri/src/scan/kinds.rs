@@ -39,8 +39,9 @@ pub fn is_skipped_dir(name: &str) -> bool {
             | ".DS_Store"
             | "$RECYCLE.BIN"
             | "System Volume Information"
-            // 우리 자신의 캐시
+            // 우리 자신의 캐시, NAS에서 받다 만 파일(nas/ssh.rs PARTIAL_DIR)
             | ".acut"
+            | ".rsync-partial"
     ) || name.starts_with(".git")
 }
 

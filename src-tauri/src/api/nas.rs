@@ -141,15 +141,17 @@ pub async fn nas_pull_start(app: AppHandle, library_id: i64) -> Result<(), Strin
         match r {
             Ok(pulled) => {
                 // 원장 — 무엇을 언제 받았나. 비울 때 이걸로 «우리가 받은 것»만 고른다.
+                // 원장 — 이번에 옮긴 것만이 아니라 지금 폴더에 있는 완성 파일 전부.
+                // 멈췄다 이어받은 것도, 원장이 생기기 전에 받은 것도 «받은 것»이다.
                 let now = chrono::Utc::now().timestamp();
+                let present = ssh::present_files(&dest);
                 let _ = db.transaction(|tx| {
                     let mut ins = tx.prepare(
                         "INSERT INTO nas_pulls(rel_path, size, pulled_at) VALUES(?1, ?2, ?3)
-                         ON CONFLICT(rel_path) DO UPDATE SET size = excluded.size, pulled_at = excluded.pulled_at",
+                         ON CONFLICT(rel_path) DO UPDATE SET size = excluded.size",
                     )?;
-                    for rel in &pulled.files {
-                        let size = std::fs::metadata(dest.join(rel)).map(|m| m.len() as i64).unwrap_or(0);
-                        ins.execute(rusqlite::params![rel, size, now])?;
+                    for (rel, size) in &present {
+                        ins.execute(rusqlite::params![rel, *size as i64, now])?;
                     }
                     Ok(())
                 });

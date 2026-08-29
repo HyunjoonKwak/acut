@@ -6,11 +6,13 @@ import { toast } from "./toastStore";
 import type { Library } from "./types";
 
 /**
- * 정리 — «NAS에 이미 있는 것은 지우고, 없는 것은 옮긴다».
+ * 정리 — «똑같은 사진이 다른 곳에 있으면 지우고, NAS에 없는 것은 옮긴다».
  *
- * 완전 중복 무리를 폴더 기준으로 다시 보여 준다. 왼쪽은 폴더 목록(몇 %가 이미
- * NAS에 있나), 오른쪽은 고른 폴더의 사진을 두 묶음으로: 🔴 NAS에 이미 있음(지워도
- * 됨) / 🟢 NAS에 없음(옮겨야 함). 무리·대표·제외 같은 말은 여기 없다.
+ * 폴더마다 사진을 두 묶음으로만 보여 준다:
+ *   🔴 지워도 됨 — 똑같은 파일이 NAS(공용·내사진)나 다른 폴더에 있다
+ *   🟢 NAS에 없음 — 옮겨야 한다
+ * «NAS에 있음»과 «같은 디스크 안에서 겹침»을 따로 보여 줬더니 더 헷갈렸다 (실측).
+ * 어디에 있는지는 묶음 머리에 폴더 이름으로 한 번만 적는다.
  */
 
 type Folder = {
@@ -50,6 +52,12 @@ const thumbUrl = (f: File) =>
     ? `thumb://localhost/${f.library_id}/${f.thumb.split("/").map(encodeURIComponent).join("/")}`
     : null;
 
+/** «후보1번/연도별/2025/2025-04-29» → 앞은 흐리게, 마지막 칸은 진하게 */
+function splitPath(p: string): [string, string] {
+  const i = p.lastIndexOf("/");
+  return i < 0 ? ["", p] : [p.slice(0, i + 1), p.slice(i + 1)];
+}
+
 export default function Cleanup({
   libs,
   onOrganize,
@@ -63,24 +71,44 @@ export default function Cleanup({
   onChanged: () => void;
 }) {
   const ask = useConfirm();
-  const [libId, setLibId] = useState<number | null>(libs[0]?.id ?? null);
-  const [summary, setSummary] = useState<Summary | null>(null);
+  /// 라이브러리마다 지워도 되는 장수 — 고르는 칸에 적고, 가장 많은 곳을 먼저 연다
+  const [sums, setSums] = useState<Record<number, Summary>>({});
+  const [libId, setLibId] = useState<number | null>(null);
   const [folders, setFolders] = useState<Folder[] | null>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [files, setFiles] = useState<File[] | null>(null);
   const [tick, setTick] = useState(0);
 
-  // 라이브러리가 바뀌거나 표시를 하고 나면 전부 새로 읽는다
+  useEffect(() => {
+    let live = true;
+    Promise.all(
+      libs.map((l) =>
+        invoke<Summary>("cleanup_summary", { libraryId: l.id }).then((s) => [l.id, s] as const),
+      ),
+    ).then((rows) => {
+      if (!live) return;
+      const next = Object.fromEntries(rows);
+      setSums(next);
+      setLibId((cur) => {
+        if (cur !== null && libs.some((l) => l.id === cur)) return cur;
+        const best = [...rows].sort((a, b) => b[1].have + b[1].inner - (a[1].have + a[1].inner))[0];
+        return best?.[0] ?? libs[0]?.id ?? null;
+      });
+    });
+    return () => {
+      live = false;
+    };
+  }, [libs, tick]);
+
   useEffect(() => {
     if (libId === null) return;
     let live = true;
-    invoke<Summary>("cleanup_summary", { libraryId: libId }).then(
-      (s) => live && setSummary(s),
-    );
     invoke<Folder[]>("cleanup_folders", { libraryId: libId }).then((f) => {
       if (!live) return;
       setFolders(f);
-      setSel((cur) => (cur !== null && f.some((x) => x.folder_id === cur) ? cur : (f[0]?.folder_id ?? null)));
+      setSel((cur) =>
+        cur !== null && f.some((x) => x.folder_id === cur) ? cur : (f[0]?.folder_id ?? null),
+      );
     });
     return () => {
       live = false;
@@ -90,18 +118,23 @@ export default function Cleanup({
   useEffect(() => {
     if (sel === null) return;
     let live = true;
-    invoke<File[]>("cleanup_files", { folderId: sel }).then(
-      (f) => live && setFiles(f),
-    );
+    invoke<File[]>("cleanup_files", { folderId: sel }).then((f) => live && setFiles(f));
     return () => {
       live = false;
     };
   }, [sel, tick]);
 
+  const lib = libs.find((l) => l.id === libId) ?? null;
+  const sum = libId !== null ? sums[libId] : undefined;
   const folder = folders?.find((f) => f.folder_id === sel) ?? null;
-  const have = useMemo(() => files?.filter((f) => f.cat === "have") ?? [], [files]);
-  const inner = useMemo(() => files?.filter((f) => f.cat === "inner") ?? [], [files]);
+  const dup = useMemo(() => files?.filter((f) => f.cat !== "none") ?? [], [files]);
   const none = useMemo(() => files?.filter((f) => f.cat === "none") ?? [], [files]);
+  /// 원본이 있는 곳 — 많은 순으로 두세 곳
+  const where = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const f of dup) if (f.keeper) m.set(f.keeper, (m.get(f.keeper) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  }, [dup]);
 
   /// 지우기 표시 — 폴더 하나 또는 라이브러리 전부. 먼저 세어 묻는다.
   const mark = useCallback(
@@ -114,27 +147,21 @@ export default function Cleanup({
         return;
       }
       const ok = await ask({
-        title: `${what} — ${dry.rejected.toLocaleString()}장에 지우기 표시`,
+        title: `${what}의 사진 ${dry.rejected.toLocaleString()}장에 지우기 표시`,
         lines: [
-          "원본(NAS 또는 다른 폴더의 것)은 그대로 둡니다",
+          "똑같은 사진이 다른 곳에 있는 것만 — 그쪽(원본)은 그대로 둡니다",
           "파일은 아직 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
-          ...(dry.skipped > 0
-            ? [`공용·내사진 안에서 겹치는 ${dry.skipped.toLocaleString()}무리는 건너뜁니다 — «공용 안 겹침»에서 하나씩`]
-            : []),
         ],
         confirmLabel: "지우기 표시",
       });
       if (!ok) return;
       const r = await invoke<ApplyAll>("cull_apply_all", { ...args, dryRun: false });
-      toast(`${r.rejected.toLocaleString()}장에 지우기 표시 — 격자에서 «치우기»로 휴지통에 보냅니다`, "ok");
+      toast(`${r.rejected.toLocaleString()}장에 지우기 표시했습니다 — 격자에서 «치우기»`, "ok");
       setTick((t) => t + 1);
       onChanged();
     },
     [libId, ask, onChanged],
   );
-
-  const lib = libs.find((l) => l.id === libId) ?? null;
-  const gb = (n: number) => fmtBytes(n);
 
   if (libs.length === 0)
     return (
@@ -159,43 +186,42 @@ export default function Cleanup({
           aria-label="정리할 라이브러리"
           className="h-7 px-2 rounded-md bg-raised text-fg ring-1 ring-line outline-none"
         >
-          {libs.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
+          {libs.map((l) => {
+            const s = sums[l.id];
+            return (
+              <option key={l.id} value={l.id}>
+                {l.name}
+                {s ? ` — 지워도 됨 ${(s.have + s.inner).toLocaleString()}장` : ""}
+              </option>
+            );
+          })}
         </select>
-        {summary && (
+        {sum && (
           <span className="text-fg-dim tabular-nums">
-            NAS에 이미 있는 사진{" "}
+            지워도 되는 사진{" "}
             <b className="text-keep">
-              {summary.have.toLocaleString()}장 · {gb(summary.have_bytes)}
+              {(sum.have + sum.inner).toLocaleString()}장 · {fmtBytes(sum.have_bytes + sum.inner_bytes)}
             </b>
-            {summary.inner > 0 && (
-              <span className="text-fg-mute">
-                {" "}· 안에서 겹치는 사본 {summary.inner.toLocaleString()}장 · {gb(summary.inner_bytes)}
-              </span>
-            )}
+            <span className="text-fg-mute"> — 똑같은 사진이 다른 곳에 있는 것</span>
           </span>
         )}
         <div className="flex-1" />
-        {summary && summary.have + summary.inner > 0 && lib && (
+        {sum && sum.have + sum.inner > 0 && lib && (
           <button
-            onClick={() => mark(null, `${lib.name} 전부`)}
+            onClick={() => mark(null, `${lib.name} 전체`)}
             className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px]"
           >
-            이 라이브러리 전부 지우기 표시
+            {lib.name} 전체 지우기 표시
           </button>
         )}
       </div>
 
       <div className="flex-1 min-h-0 flex">
         {/* 왼쪽 — 폴더 목록 */}
-        <div className="w-[420px] shrink-0 border-r border-line overflow-y-auto">
-          <div className="grid grid-cols-[1fr_92px_64px_60px] gap-2 px-3 py-1.5 text-[10.5px] uppercase tracking-wider text-fg-mute border-b border-line">
+        <div className="w-[440px] shrink-0 border-r border-line overflow-y-auto">
+          <div className="grid grid-cols-[1fr_96px_70px] gap-2 px-3 py-1.5 text-[10.5px] uppercase tracking-wider text-fg-mute border-b border-line">
             <span>폴더 (지울 게 많은 순)</span>
-            <span className="text-right">있음 / 전체</span>
-            <span />
+            <span className="text-right">지워도 됨 / 전체</span>
             <span className="text-right">비는 용량</span>
           </div>
           {folders === null ? (
@@ -204,38 +230,42 @@ export default function Cleanup({
             </div>
           ) : folders.length === 0 ? (
             <div className="px-3 py-6 text-fg-mute text-[12px]">
-              지워도 되는 사본이 있는 폴더가 없습니다
+              지워도 되는 사진이 있는 폴더가 없습니다
             </div>
           ) : (
             folders.map((f) => {
-              const dup = f.have + f.inner;
-              const pct = f.total ? Math.round((dup / f.total) * 100) : 0;
+              const n = f.have + f.inner;
+              const pct = f.total ? Math.round((n / f.total) * 100) : 0;
               const on = f.folder_id === sel;
+              const [head, tail] = splitPath(f.folder || "/");
               return (
                 <button
                   key={f.folder_id}
                   onClick={() => setSel(f.folder_id)}
-                  className={`w-full grid grid-cols-[1fr_92px_64px_60px] gap-2 items-center px-3 py-2 text-left text-[12.5px] tabular-nums border-b border-line ${
+                  className={`w-full grid grid-cols-[1fr_96px_70px] gap-2 items-center px-3 py-2 text-left text-[12.5px] tabular-nums border-b border-line ${
                     on ? "bg-raised shadow-[inset_3px_0_0_var(--color-keep)]" : "hover:bg-hover"
                   }`}
                 >
-                  <span className="truncate text-fg" title={f.folder || "/"}>
-                    {f.folder || "/"}
+                  <span className="min-w-0" title={f.folder || "/"}>
+                    <span className="block text-[10.5px] text-fg-mute truncate">{head}</span>
+                    <span className="block text-fg truncate">{tail}</span>
+                    <span className="flex items-center gap-1.5 mt-1">
+                      <span className="flex-1 h-1.5 rounded bg-line overflow-hidden">
+                        <i className="block h-full bg-drop/85" style={{ width: `${pct}%` }} />
+                      </span>
+                      {n === f.total ? (
+                        <span className="text-[9.5px] font-bold px-1 rounded bg-drop/20 text-drop">
+                          전부 지워도 됨
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-fg-mute">{pct}%</span>
+                      )}
+                    </span>
                   </span>
                   <span className="text-right text-fg-dim">
-                    {dup.toLocaleString()} / {f.total.toLocaleString()}
+                    {n.toLocaleString()} / {f.total.toLocaleString()}
                   </span>
-                  <span className="flex items-center gap-1">
-                    <span className="flex-1 h-1.5 rounded bg-line overflow-hidden">
-                      <i className="block h-full bg-drop/85" style={{ width: `${pct}%` }} />
-                    </span>
-                    {dup === f.total && (
-                      <span className="text-[9.5px] font-bold px-1 rounded bg-drop/20 text-drop">
-                        전부
-                      </span>
-                    )}
-                  </span>
-                  <span className="text-right text-fg-mute">{gb(f.have_bytes + f.inner_bytes)}</span>
+                  <span className="text-right text-fg-mute">{fmtBytes(f.have_bytes + f.inner_bytes)}</span>
                 </button>
               );
             })
@@ -251,7 +281,8 @@ export default function Cleanup({
           ) : (
             <>
               <div className="text-[15px] font-semibold mb-3">
-                <span className="text-fg-mute font-medium">{lib?.name}</span> · {folder.folder || "/"}
+                <span className="text-fg-mute font-medium">{lib?.name} · </span>
+                {folder.folder || "/"}
                 <span className="text-fg-mute font-medium text-[12.5px] ml-2">
                   {folder.total.toLocaleString()}장
                 </span>
@@ -261,20 +292,21 @@ export default function Cleanup({
                 tone="del"
                 title={
                   <>
-                    NAS에 이미 있음 <b>{folder.have.toLocaleString()}장</b> · {gb(folder.have_bytes)}
+                    지워도 됨 <b>{(folder.have + folder.inner).toLocaleString()}장</b> ·{" "}
+                    {fmtBytes(folder.have_bytes + folder.inner_bytes)}
                   </>
                 }
                 hint={
-                  folder.have > 0
-                    ? `지워도 됩니다 — 원본: ${folder.keeper_library ?? ""} · ${folder.keeper_folder ?? "/"} (${folder.keeper_copies.toLocaleString()}장)${
-                        folder.inner > 0 ? ` · 그 밖에 ${lib?.name} 안에서 겹치는 사본 ${folder.inner.toLocaleString()}장` : ""
-                      }`
-                    : `${lib?.name} 안에서만 겹치는 사본 ${folder.inner.toLocaleString()}장 — 원본은 다른 폴더에`
+                  where.length
+                    ? `똑같은 사진이 여기 있습니다 → ${where
+                        .map(([k, n]) => `${k} (${n.toLocaleString()}장)`)
+                        .join(" · ")}`
+                    : "똑같은 사진이 다른 곳에 있습니다"
                 }
                 action={
                   folder.have + folder.inner > 0 ? (
                     <button
-                      onClick={() => mark(folder.folder_id, `«${folder.folder || "/"}» 폴더`)}
+                      onClick={() => mark(folder.folder_id, `«${splitPath(folder.folder || "/")[1]}» 폴더`)}
                       className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px]"
                     >
                       {(folder.have + folder.inner).toLocaleString()}장 지우기 표시
@@ -282,11 +314,7 @@ export default function Cleanup({
                   ) : null
                 }
               >
-                {files === null ? (
-                  <Loading />
-                ) : (
-                  <Grid files={[...have, ...inner]} dim />
-                )}
+                {files === null ? <Loading /> : <Grid files={dup} dim />}
               </Section>
 
               <Section
@@ -298,8 +326,8 @@ export default function Cleanup({
                 }
                 hint={
                   none.length > 0
-                    ? `${lib?.name}에만 있습니다 — 옮겨야 합니다`
-                    : "옮길 것이 없습니다 — 지우기 표시 뒤 이 폴더는 비워도 됩니다"
+                    ? `${lib?.name}에만 있는 사진 — 옮겨야 합니다`
+                    : "없습니다 — 위 사진을 지우면 이 폴더는 빕니다"
                 }
                 action={
                   none.length > 0 && libId !== null ? (
@@ -320,9 +348,8 @@ export default function Cleanup({
       </div>
 
       <div className="h-9 shrink-0 flex items-center gap-3 px-4 border-t border-line text-[12px] text-fg-mute">
-        지우기 표시는 도장일 뿐입니다 — 격자로 나가 «제외 N장 치우기»를 눌러야 휴지통(같은 디스크
+        «지우기 표시»는 도장일 뿐입니다 — 격자로 나가 «제외 N장 치우기»를 눌러야 휴지통(같은 디스크
         안, 되돌리기 가능)으로 갑니다.
-        <span className="ml-auto">공용·내사진 안에서 겹치는 것은 «공용 안 겹침» 탭에서 하나씩</span>
       </div>
     </div>
   );
@@ -364,41 +391,37 @@ function Loading() {
   );
 }
 
-/** 사진 격자 — 지워질 것은 흐리게, 아래에 원본이 있는 곳 */
+/** 사진 격자 — 지워질 것은 흐리게. 어디 있는지는 마우스를 올리면 */
 function Grid({ files, dim }: { files: File[]; dim?: boolean }) {
-  const [limit, setLimit] = useState(120);
+  const [limit, setLimit] = useState(96);
   const shown = files.slice(0, limit);
   return (
     <>
-      <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))" }}>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))" }}>
         {shown.map((f) => {
           const u = thumbUrl(f);
           return (
-            <figure key={f.file_id} className="m-0 relative">
+            <figure
+              key={f.file_id}
+              className="m-0"
+              title={f.keeper ? `${f.name} — 똑같은 사진: ${f.keeper}` : f.name}
+            >
               {u ? (
                 <img
                   src={u}
                   loading="lazy"
                   alt=""
                   className="w-full rounded-md object-cover bg-canvas"
-                  style={{ aspectRatio: "4/3", opacity: dim ? 0.45 : 1 }}
+                  style={{ aspectRatio: "4/3", opacity: dim ? 0.4 : 1 }}
                 />
               ) : (
-                <div className="w-full rounded-md bg-canvas flex items-center justify-center text-fg-faint text-[10px]" style={{ aspectRatio: "4/3" }}>
+                <div
+                  className="w-full rounded-md bg-canvas flex items-center justify-center text-fg-faint text-[10px]"
+                  style={{ aspectRatio: "4/3" }}
+                >
                   {f.kind === 1 ? "영상" : "…"}
                 </div>
               )}
-              {dim && (
-                <span className="absolute top-1.5 left-1.5 text-[10px] font-bold px-1.5 rounded bg-drop/90 text-drop-fg">
-                  지움
-                </span>
-              )}
-              <figcaption
-                className={`text-[10.5px] mt-1 truncate ${dim ? "text-keep" : "text-fg-mute"}`}
-                title={f.keeper ? `${f.name} → ${f.keeper}` : f.name}
-              >
-                {f.keeper ? `→ ${f.keeper}` : f.name}
-              </figcaption>
             </figure>
           );
         })}

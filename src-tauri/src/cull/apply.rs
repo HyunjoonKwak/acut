@@ -132,7 +132,7 @@ fn in_lib(lib_rel: &str, rel: &str) -> String {
 /// 제외될 사본이 있는 폴더들 — 용량 큰 순. `files == copies`면 폴더 통째로 사본이다.
 pub fn dup_folders(c: &Connection, kind: i32, limit: usize) -> rusqlite::Result<Vec<DupFolder>> {
     let mut st = c.prepare(
-        "WITH pend AS (
+        "WITH pend AS MATERIALIZED (
            SELECT m.group_id, m.is_best, f.folder_id, f.size
            FROM group_members m
            JOIN groups g ON g.id = m.group_id

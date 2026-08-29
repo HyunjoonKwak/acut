@@ -49,6 +49,8 @@ struct Row {
     taken_at: i64,
     size: i64,
     sharpness: Option<f64>,
+    /// 폴더의 영역 — 내사진·공용에 있는 것이 대표가 된다
+    area: i32,
     v: Vec<f32>,
 }
 
@@ -84,10 +86,10 @@ fn share_group(taken: &HashMap<i64, Vec<i64>>, a: i64, b: i64) -> bool {
 fn load(db: &Db) -> Result<Vec<Row>> {
     db.read(|c| {
         let mut st = c.prepare(
-            "SELECT id, taken_at, size, sharpness, embedding
-             FROM files
-             WHERE embedding IS NOT NULL AND kind <> 1 AND trashed_at IS NULL
-             ORDER BY taken_at, id",
+            "SELECT fi.id, fi.taken_at, fi.size, fi.sharpness, fi.embedding, fo.area
+             FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+             WHERE fi.embedding IS NOT NULL AND fi.kind <> 1 AND fi.trashed_at IS NULL
+             ORDER BY fi.taken_at, fi.id",
         )?;
         let it = st.query_map([], |r| {
             let blob: Vec<u8> = r.get(4)?;
@@ -96,6 +98,7 @@ fn load(db: &Db) -> Result<Vec<Row>> {
                 taken_at: r.get(1)?,
                 size: r.get(2)?,
                 sharpness: r.get(3)?,
+                area: r.get(5)?,
                 v: clip::from_blob(&blob),
             })
         })?;
@@ -199,14 +202,15 @@ pub fn scan(
             "INSERT INTO group_members(group_id, file_id, is_best, score) VALUES(?1,?2,?3,?4)",
         )?;
         for (m, w) in &groups {
-            // 가장 또렷한 것, 같으면 큰 것을 남긴다
+            // 정리된 자리(내사진·공용)에 있는 것, 그다음 가장 또렷한 것, 같으면 큰 것
+            let settled = |r: &Row| i32::from(r.area == 1 || r.area == 2);
             let best = *m
                 .iter()
                 .max_by(|&&a, &&b| {
                     let (ra, rb) = (&rows[a], &rows[b]);
-                    ra.sharpness
-                        .unwrap_or(0.0)
-                        .total_cmp(&rb.sharpness.unwrap_or(0.0))
+                    settled(ra)
+                        .cmp(&settled(rb))
+                        .then(ra.sharpness.unwrap_or(0.0).total_cmp(&rb.sharpness.unwrap_or(0.0)))
                         .then(ra.size.cmp(&rb.size))
                 })
                 .unwrap();

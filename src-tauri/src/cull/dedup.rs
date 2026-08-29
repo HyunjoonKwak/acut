@@ -169,13 +169,21 @@ pub fn scan(
             // 가장 이른 촬영일을 기본 유지본으로 제안한다.
             // 원본이 사본보다 먼저 찍혔을 가능성이 높다.
             let mut best = ids[0];
-            let mut best_t = i64::MAX;
+            // 정리된 자리(내사진·공용)에 있는 사본이 먼저다 — 옛 백업 디스크와
+            // 운영 디스크 사이 중복에서 «올라간 쪽을 남기고 옛것을 버린다»가 되게.
+            // 같은 자리끼리면 가장 이른 촬영일.
+            let mut best_key = (i32::MAX, i64::MAX);
             for id in ids {
-                let t: i64 = tx
-                    .query_row("SELECT taken_at FROM files WHERE id=?1", [id], |r| r.get(0))
-                    .unwrap_or(i64::MAX);
-                if t < best_t {
-                    best_t = t;
+                let (area, t): (i32, i64) = tx
+                    .query_row(
+                        "SELECT fo.area, fi.taken_at FROM files fi JOIN folders fo ON fo.id = fi.folder_id WHERE fi.id = ?1",
+                        [id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .unwrap_or((i32::MAX, i64::MAX));
+                let key = (if area == 1 || area == 2 { 0 } else { 1 }, t);
+                if key < best_key {
+                    best_key = key;
                     best = *id;
                 }
             }
@@ -277,6 +285,29 @@ mod tests {
             })
             .unwrap();
         assert_eq!(bests, 1, "그룹마다 유지 후보는 하나");
+    }
+
+    /// 옛 백업(작업대)과 내사진에 같은 파일이 있으면, 촬영일이 늦어도 내사진 쪽이 유지본
+    #[test]
+    fn settled_copy_wins_over_an_earlier_shot_in_the_desk() {
+        let (_d, db) = setup();
+        db.transaction(|tx| {
+            tx.execute("UPDATE folders SET area = 0 WHERE name = 'a'", [])?;
+            tx.execute("UPDATE folders SET area = 1 WHERE name = 'b'", [])?;
+            Ok(())
+        })
+        .unwrap();
+        scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let best_name: String = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT f.name FROM group_members m JOIN files f ON f.id = m.file_id WHERE m.is_best = 1",
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(best_name, "20200101_120001.jpg", "내사진(b)의 사본이 남는다");
     }
 
     #[test]

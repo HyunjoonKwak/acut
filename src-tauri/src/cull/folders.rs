@@ -114,6 +114,9 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
 /// 폴더 묶음 하나를 처리한다 — `keep` 폴더의 파일은 남김, `drops` 폴더의 파일은 지우기 표시.
 /// 이 폴더들 안에서만 얽힌 완전 중복 무리는 확정으로 돌려 개별 비교에 다시 안 나오게.
 pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result<ApplyAll> {
+    if drops.contains(&keep) || drops.is_empty() {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     let kept = tx.execute(
         "UPDATE files SET culling_flag = 1 WHERE folder_id = ?1 AND trashed_at IS NULL",
         [keep],
@@ -121,7 +124,8 @@ pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result
     let mut rejected = 0;
     for d in drops {
         rejected += tx.execute(
-            "UPDATE files SET culling_flag = 2 WHERE folder_id = ?1 AND trashed_at IS NULL",
+            "UPDATE files SET culling_flag = 2
+             WHERE folder_id = ?1 AND trashed_at IS NULL AND culling_flag <> 1",
             [d],
         )?;
     }

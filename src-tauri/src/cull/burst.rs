@@ -13,6 +13,8 @@ use crate::db::conn::{Db, Result};
 
 /// 이 간격 안에 찍힌 사진들을 한 순간으로 본다.
 pub const DEFAULT_GAP_SECS: i64 = 10;
+/// 이보다 크면 연사가 아니라 시각이 뭉개진 것이다 — 무리로 만들지 않는다
+pub const MAX_GROUP: usize = 60;
 /// 이 장수 이상일 때만 그룹으로 만든다. 두 장은 굳이 고를 것도 없다.
 pub const MIN_GROUP: usize = 3;
 
@@ -41,7 +43,8 @@ pub fn scan(db: &Db, gap_secs: i64) -> Result<BurstProgress> {
         let mut st = c.prepare(
             "SELECT fi.id, fi.folder_id, fi.taken_at, fi.size, fi.sharpness
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
-             WHERE fi.kind <> 1
+             WHERE fi.kind <> 1 AND fi.trashed_at IS NULL
+               AND fi.taken_at_source <= 1
              ORDER BY fi.folder_id, fi.taken_at, fi.id",
         )?;
         let it = st.query_map([], |r| {
@@ -57,6 +60,8 @@ pub fn scan(db: &Db, gap_secs: i64) -> Result<BurstProgress> {
     })?;
 
     // 정렬돼 있으므로 한 번 훑으며 끊는다.
+    // 촬영 시각이 파일 시각으로 대체된 사진(taken_at_source 2)은 위 질의에서 뺐다 —
+    // 복사한 날짜라 폴더째 같은 초가 되어 2,162장짜리 «순간»이 나왔다 (실측, 리뷰 C9).
     let mut groups: Vec<Vec<&Row>> = Vec::new();
     let mut cur: Vec<&Row> = Vec::new();
     for r in &rows {
@@ -67,7 +72,7 @@ pub fn scan(db: &Db, gap_secs: i64) -> Result<BurstProgress> {
                 cur.push(r)
             }
             _ => {
-                if cur.len() >= MIN_GROUP {
+                if (MIN_GROUP..=MAX_GROUP).contains(&cur.len()) {
                     groups.push(std::mem::take(&mut cur));
                 } else {
                     cur.clear();
@@ -76,7 +81,7 @@ pub fn scan(db: &Db, gap_secs: i64) -> Result<BurstProgress> {
             }
         }
     }
-    if cur.len() >= MIN_GROUP {
+    if (MIN_GROUP..=MAX_GROUP).contains(&cur.len()) {
         groups.push(cur);
     }
 
@@ -272,5 +277,26 @@ mod tests {
         assert_eq!(scan(&db, 10).unwrap().groups, 0);
         // 30초면 한 그룹
         assert_eq!(scan(&db, 30).unwrap().groups, 1);
+    }
+
+
+    #[test]
+    fn file_time_stamps_are_not_a_burst() {
+        let (_d, db) = db();
+        seed(&db, &[(1, 1, 1000, 100, None), (2, 1, 1000, 100, None), (3, 1, 1000, 100, None)]);
+        // 셋 다 촬영 시각이 파일 시각(복사한 날)에서 왔다 — 같은 초여도 «순간»이 아니다
+        db.write(|c| c.execute("UPDATE files SET taken_at_source = 2", [])).unwrap();
+        let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
+        assert_eq!(p.groups, 0);
+    }
+
+    #[test]
+    fn a_run_larger_than_max_group_is_not_a_burst() {
+        let (_d, db) = db();
+        let items: Vec<(i64, i64, i64, i64, Option<f64>)> =
+            (1..=(MAX_GROUP as i64 + 1)).map(|i| (i, 1, 1000 + i, 100, None)).collect();
+        seed(&db, &items);
+        let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
+        assert_eq!(p.groups, 0, "{}장은 연사가 아니라 시각이 뭉개진 것", MAX_GROUP + 1);
     }
 }

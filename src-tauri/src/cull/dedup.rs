@@ -29,6 +29,8 @@ pub struct DedupProgress {
     pub full_total: usize,
     pub full_done: usize,
     pub full_bytes: i64,
+    /// 디스크가 안 꽂혀 있어 뺀 후보 수
+    pub offline: usize,
 }
 
 struct Cand {
@@ -72,7 +74,7 @@ pub fn scan(
     on_progress: impl Fn(&DedupProgress) + Sync + Send,
 ) -> Result<DedupProgress> {
     // 1단계: 크기가 겹치는 것만 후보로. 유일한 크기는 볼 것도 없다.
-    let cands: Vec<Cand> = db.read(|c| {
+    let mut cands: Vec<Cand> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid, fi.quick_hash, fi.full_hash
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
@@ -102,10 +104,16 @@ pub fn scan(
         .into_iter()
         .filter_map(|u| crate::db::volumes::find_mount(&u).map(|m| (u, m)))
         .collect();
+    // 안 꽂힌 디스크의 파일은 저장된 해시가 있어도 뺀다 — 그것이 대표가 되면 살아 있는
+    // 쪽이 제외되고, 그 디스크는 다시 안 올 수도 있다 (리뷰 C10)
+    let before = cands.len();
+    cands.retain(|c| mounts.contains_key(&c.volume_uuid));
+    let offline = before - cands.len();
     let full_path = |c: &Cand| mounts.get(&c.volume_uuid).map(|m| m.join(&c.path));
 
     let progress = Arc::new(Mutex::new(DedupProgress {
         candidates: cands.len(),
+        offline,
         ..Default::default()
     }));
     on_progress(&progress.lock().unwrap().clone());

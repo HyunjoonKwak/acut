@@ -222,11 +222,18 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
         let dest = free_path(mount.join(&it.vol_rel));
         match move_file(&src, &dest) {
             Ok(()) => {
+                // 그새 같은 이름이 생겨 «IMG_1 (2).jpg»로 돌아왔을 수 있다 — 행도 그 이름으로.
+                // 안 맞추면 다음 치우기·이름 바꾸기가 다른 사진에 걸린다 (리뷰 C5)
+                let new_name = dest
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| it.vol_rel.rsplit('/').next().unwrap_or(&it.vol_rel).to_string());
                 db.write(|c| {
                     c.execute(
-                        "UPDATE files SET trashed_at = NULL, trash_path = NULL, trash_batch = NULL
+                        "UPDATE files SET trashed_at = NULL, trash_path = NULL, trash_batch = NULL,
+                                name = ?2
                          WHERE id = ?1",
-                        [it.id],
+                        rusqlite::params![it.id, new_name],
                     )
                 })?;
                 out.moved += 1;
@@ -500,5 +507,24 @@ mod tests {
         // 이미 휴지통에 있는 것은 대상에서 빠진다
         let again = to_trash(&db, &ids[..1], "시험").unwrap();
         assert_eq!((again.moved, again.failed), (0, 0));
+    }
+
+
+    #[test]
+    fn restore_records_the_renamed_file_when_the_slot_is_taken() {
+        let (dir, db, ids) = setup();
+        to_trash(&db, &ids[..1], "시험").unwrap();
+        // 그새 같은 이름의 새 파일이 제자리에 생겼다
+        let slot = dir.path().join("2020/여행/20200101_120000.jpg");
+        std::fs::write(&slot, b"NEW").unwrap();
+
+        let out = restore(&db, &ids[..1]).unwrap();
+        assert_eq!((out.moved, out.failed), (1, 0));
+        assert_eq!(std::fs::read(&slot).unwrap(), b"NEW", "새 파일은 그대로");
+        let name: String = db
+            .read(|c| c.query_row("SELECT name FROM files WHERE id=?1", [ids[0]], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(name, "20200101_120000 (2).jpg", "행이 실제 파일 이름을 가리킨다");
+        assert!(dir.path().join("2020/여행").join(&name).is_file());
     }
 }

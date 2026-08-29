@@ -29,6 +29,8 @@ pub struct Offloaded {
     pub folders: usize,
     pub files: usize,
     pub bytes: u64,
+    /// 사본은 있는데 원본을 못 지운 파일 수 — 0이 아니면 사람이 봐야 한다
+    pub undeleted: usize,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -103,13 +105,16 @@ fn copy_tree(
     dest: &Path,
     cancel: &AtomicBool,
     on_progress: &(impl Fn(&OffloadProgress) + Sync),
-) -> std::io::Result<(usize, u64)> {
+) -> std::io::Result<(usize, u64, usize)> {
     // 디스크가 준 이름은 NFC로 다듬는다 — macOS의 FSKit exFAT은 목록을 NFD로 주면서
     // 찾기는 NFC로만 되어(실측), 목록 그대로 지우면 «없는 파일»이 된다.
     let nfc_path = |p: &Path| -> PathBuf {
         use unicode_normalization::UnicodeNormalization;
         PathBuf::from(p.to_string_lossy().nfc().collect::<String>())
     };
+    // 뿌리도 같은 꼴로 — 걸어 온 경로만 NFC면 strip_prefix가 안 맞아 첫 파일에서 죽었다
+    let src = &nfc_path(src);
+    let dest = &nfc_path(dest);
     let files: Vec<(PathBuf, u64)> = WalkDir::new(src)
         .follow_links(false)
         .into_iter()
@@ -135,7 +140,13 @@ fn copy_tree(
             undo(&copied);
             return Err(std::io::Error::other("멈췄습니다 — 원본은 그대로, 복사한 것은 지웠습니다"));
         }
-        let rel = path.strip_prefix(src).unwrap();
+        let Ok(rel) = path.strip_prefix(src) else {
+            undo(&copied);
+            return Err(std::io::Error::other(format!(
+                "경로를 셈할 수 없습니다: {} — 되돌렸습니다",
+                path.display()
+            )));
+        };
         let to = dest.join(rel);
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent)?;
@@ -157,9 +168,14 @@ fn copy_tree(
         p.bytes_done += size;
         on_progress(&p);
     }
-    // 전부 확인됐다 — 이제 원본을 지운다
+    // 전부 확인됐다 — 이제 원본을 지운다. 하나가 안 지워져도 멈추지 않는다: 사본은
+    // 이미 다 있으니 DB는 새 자리를 가리켜야 한다. 못 지운 것은 세어 알린다 (리뷰 C3)
+    let mut undeleted = 0usize;
     for (path, _) in &files {
-        std::fs::remove_file(path)?;
+        if let Err(e) = std::fs::remove_file(path) {
+            log::warn!("옮긴 뒤 원본을 못 지웠습니다 {}: {e}", path.display());
+            undeleted += 1;
+        }
     }
     // 빈 껍데기 폴더 — 깊은 것부터
     let mut dirs: Vec<PathBuf> = WalkDir::new(src)
@@ -172,7 +188,7 @@ fn copy_tree(
     for d in dirs {
         let _ = std::fs::remove_dir(d);
     }
-    Ok((total, bytes_total))
+    Ok((total, bytes_total, undeleted))
 }
 
 /// 폴더(와 그 아래)를 `dest_library`로 옮긴다. 라이브러리 루트 기준 자리는 그대로.
@@ -244,11 +260,14 @@ pub fn move_folder(
     if let Some(parent) = dst_dir.parent() {
         std::fs::create_dir_all(parent).map_err(|e| bad(e.to_string()))?;
     }
+    let mut undeleted = 0usize;
     if src_lib.volume_uuid == dst_lib.volume_uuid {
         std::fs::rename(&src_dir, &dst_dir).map_err(|e| bad(format!("옮기기 실패: {e}")))?;
         on_progress(&OffloadProgress { done: files as usize, total: files as usize, bytes_done: bytes as u64, bytes_total: bytes as u64 });
     } else {
-        copy_tree(&src_dir, &dst_dir, cancel, &on_progress).map_err(|e| bad(e.to_string()))?;
+        undeleted = copy_tree(&src_dir, &dst_dir, cancel, &on_progress)
+            .map_err(|e| bad(e.to_string()))?
+            .2;
     }
 
     // 2) DB — 폴더 행이 새 라이브러리를 가리킨다
@@ -277,7 +296,7 @@ pub fn move_folder(
             let _ = std::fs::copy(&a, &b).and_then(|_| std::fs::remove_file(&a));
         }
     }
-    Ok(Offloaded { folders: rows.len(), files: files as usize, bytes: bytes as u64 })
+    Ok(Offloaded { folders: rows.len(), files: files as usize, bytes: bytes as u64, undeleted })
 }
 
 #[cfg(test)]
@@ -300,7 +319,7 @@ mod tests {
         std::fs::write(src.join("x.jpg"), b"xx").unwrap();
         std::fs::write(src.join("여행/y.jpg"), b"yyyy").unwrap();
         let cancel = AtomicBool::new(false);
-        let (n, bytes) = copy_tree(&src, &dst, &cancel, &|_| {}).unwrap();
+        let (n, bytes, _) = copy_tree(&src, &dst, &cancel, &|_| {}).unwrap();
         assert_eq!((n, bytes), (2, 6));
         assert_eq!(std::fs::read(dst.join("여행/y.jpg")).unwrap(), b"yyyy");
         assert!(!src.exists());

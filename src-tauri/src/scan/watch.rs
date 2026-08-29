@@ -203,20 +203,23 @@ fn rescan_dir(db: &Db, cache_base: &Path, library_id: i64, dir: &Path) -> Option
     let mount = crate::db::volumes::find_mount(&lib.volume_uuid)?;
     let mut out = Changed { library_id, inserted: 0, updated: 0, removed: 0 };
 
-    // 폴더가 통째로 사라졌을 수도 있다 — 그러면 스캔은 못 하고 정리만 한다
-    if dir.is_dir() {
-        match crate::scan::scan_folder(db, library_id, dir, lib.area, |_| {}) {
-            Ok(p) => {
-                out.inserted = p.inserted;
-                out.updated = p.updated;
-            }
-            Err(e) => log::warn!("감시 스캔 실패 {}: {e}", dir.display()),
-        }
+    // 폴더가 안 보이면(이름을 바꿨거나 디스크가 잠깐 빠짐) 아무것도 지우지 않는다.
+    // 옛 경로로 온 알림에 행을 지우면 별점·판정·태그·코멘트가 통째로 사라진다 (리뷰 C2).
+    // 진짜 없어진 파일은 다음 전체 스캔이 정리한다.
+    if !dir.is_dir() {
+        return Some(out);
     }
-    let rel = dir
-        .strip_prefix(&mount)
-        .map(|r| r.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    match crate::scan::scan_folder(db, library_id, dir, lib.area, |_| {}) {
+        Ok(p) => {
+            out.inserted = p.inserted;
+            out.updated = p.updated;
+        }
+        Err(e) => log::warn!("감시 스캔 실패 {}: {e}", dir.display()),
+    }
+    // 마운트 이름이 바뀌어 접두사가 안 맞으면 rel이 ""가 되어 볼륨 전체를 정리해 버린다 — 하지 않는다
+    let Ok(rel) = dir.strip_prefix(&mount).map(|r| r.to_string_lossy().into_owned()) else {
+        return Some(out);
+    };
     out.removed = crate::scan::prune_missing(db, &mount, library_id, &rel).unwrap_or(0);
 
     if out.inserted > 0 {

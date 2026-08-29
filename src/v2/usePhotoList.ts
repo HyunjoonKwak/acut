@@ -158,6 +158,34 @@ export function usePhotoList(
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }, []);
 
+  /// 여러 줄을 한 번에 고친다 — 한 장씩 고치면 장수만큼 목록을 다시 훑는다
+  const patchRows = useCallback((ids: number[], patch: Partial<FileRow>) => {
+    const set = new Set(ids);
+    setRows((prev) => prev.map((r) => (set.has(r.id) ? { ...r, ...patch } : r)));
+  }, []);
+
+  /// 여러 장의 판정을 한 번에 — IPC 한 번, 트랜잭션 하나, 목록 한 번.
+  /// 실측: 5,000장을 한 장씩 보내면 창이 수십 초 멈췄다 (리뷰 H2)
+  const markMany = useCallback(
+    async (ids: number[], patch: Mark) => {
+      if (ids.length === 0) return;
+      await invoke("files_mark", {
+        ids,
+        rating: patch.rating ?? null,
+        cullingFlag: patch.cullingFlag ?? null,
+        favorite: patch.favorite ?? null,
+      });
+      patchRows(ids, {
+        ...(patch.rating !== undefined ? { rating: patch.rating } : {}),
+        ...(patch.cullingFlag !== undefined
+          ? { culling_flag: patch.cullingFlag }
+          : {}),
+        ...(patch.favorite !== undefined ? { favorite: patch.favorite } : {}),
+      });
+    },
+    [patchRows],
+  );
+
   /// 판정을 바꾼다 — 서버에 쓰고 목록도 그 자리에서 고친다. 뷰어에서 바꾸면
   /// 그리드도 같이 바뀌어야 한다.
   const markOne = useCallback(
@@ -187,6 +215,8 @@ export function usePhotoList(
     loadMore,
     seekTo,
     markOne,
+    markMany,
     patchRow,
+    patchRows,
   };
 }

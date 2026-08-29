@@ -22,6 +22,8 @@ pub struct ApplyAll {
 /// 제외될 사본이 있는 무리만. `dry_run`이면 세기만 하고 바꾸지 않는다.
 ///
 /// 잡동사니(kind 1)는 대표가 없어 전부 제외다.
+/// 이미 «남김»(1)인 파일은 어느 갈래에서도 «제외»로 내리지 않는다 — 완전 중복의 대표를
+/// 비슷한 장면이 제외해 두 벌 다 지우는 길을 막는다 (리뷰 C11).
 pub fn apply_all(
     tx: &Transaction,
     kind: i32,
@@ -72,7 +74,7 @@ pub fn apply_all(
         let all = count(0)? + count(1)?;
         if !dry_run {
             tx.execute(
-                "UPDATE files SET culling_flag = 2 WHERE id IN (
+                "UPDATE files SET culling_flag = 2 WHERE culling_flag <> 1 AND id IN (
                    SELECT file_id FROM group_members WHERE group_id IN (SELECT id FROM temp.todo))",
                 [],
             )?;
@@ -88,7 +90,7 @@ pub fn apply_all(
                 [],
             )?;
             tx.execute(
-                "UPDATE files SET culling_flag = 2 WHERE id IN (
+                "UPDATE files SET culling_flag = 2 WHERE culling_flag <> 1 AND id IN (
                    SELECT file_id FROM group_members
                    WHERE group_id IN (SELECT id FROM temp.todo) AND is_best = 0)",
                 [],
@@ -272,5 +274,20 @@ mod tests {
             .unwrap();
         assert_eq!(r.groups, 1);
         assert!(db.read(|c| dup_folders(c, 0, 10)).unwrap().is_empty());
+    }
+
+
+    #[test]
+    fn never_demotes_a_kept_file() {
+        let (_d, db) = setup(false);
+        // a 의 사본 하나가 다른 무리의 대표라 이미 «남김»이다
+        db.write(|c| c.execute("UPDATE files SET culling_flag = 1 WHERE name = 'copy.jpg'", []))
+            .unwrap();
+        let r = db.transaction(|tx| apply_all(tx, 0, true, false, None, None)).unwrap();
+        assert_eq!(r.groups, 1);
+        let flag: i32 = db
+            .read(|c| c.query_row("SELECT culling_flag FROM files WHERE name = 'copy.jpg'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(flag, 1, "남김은 어느 갈래에서도 제외로 내리지 않는다");
     }
 }

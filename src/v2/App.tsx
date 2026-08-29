@@ -173,7 +173,7 @@ export default function App() {
     mark("grid");
     invoke("startup_report", { marks: startupMarks() }).catch(() => {});
   }, [list.loading, libs.length]);
-  const { rows, loadFirst, loadMore, markOne, patchRow } = list;
+  const { rows, loadFirst, loadMore, markOne, markMany, patchRow } = list;
 
   const selected = useSelection((s) => s.selected);
   const picked = useSelection((s) => s.picked);
@@ -220,9 +220,12 @@ export default function App() {
     [ids],
   );
   const markPicked = useCallback(
-    (patch: Mark) =>
-      useSelection.getState().picked.forEach((id) => markOne(id, patch)),
-    [markOne],
+    (patch: Mark) => {
+      markMany([...useSelection.getState().picked], patch).catch((e) =>
+        toast(String(e), "drop"),
+      );
+    },
+    [markMany],
   );
 
   // ── 일 ──────────────────────────────────────────────────────────
@@ -233,6 +236,7 @@ export default function App() {
     cols: layout.cols,
     compareIds,
     markOne,
+    markMany,
     undoLast: ops.undoLast,
   });
 

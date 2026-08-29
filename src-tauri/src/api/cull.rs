@@ -236,6 +236,8 @@ pub async fn cull_set_best(
 pub struct ApplyResult {
     pub kept: usize,
     pub rejected: usize,
+    /// 정착 구역(내사진·공용)에 있어 제외하지 않은 사본 수 — 거기서 지우면 NAS에서도 지워진다
+    pub skipped: usize,
 }
 
 /// 그룹의 판정을 확정한다 — 대표는 '남김', 나머지는 '제외'로 표시한다.
@@ -245,41 +247,59 @@ pub struct ApplyResult {
 #[tauri::command]
 pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<ApplyResult, String> {
     if group_ids.is_empty() {
-        return Ok(ApplyResult { kept: 0, rejected: 0 });
+        return Ok(ApplyResult { kept: 0, rejected: 0, skipped: 0 });
     }
-    let (kept, rejected) = state
+    let (kept, rejected, skipped) = state
         .db
         .transaction(|tx| {
+            use rusqlite::OptionalExtension;
             let mut kept = 0;
             let mut rejected = 0;
+            let mut skipped = 0;
             for gid in &group_ids {
-                // 잡동사니 그룹은 대표가 없다 — 전부 제외 대상이다
-                let kind: i32 =
-                    tx.query_row("SELECT kind FROM groups WHERE id=?1", [gid], |r| r.get(0))?;
-                if kind == 1 {
-                    rejected += tx.execute(
-                        "UPDATE files SET culling_flag=2 WHERE id IN
-                         (SELECT file_id FROM group_members WHERE group_id=?1)",
-                        [gid],
-                    )?;
-                } else {
+                // 다시 찾기로 사라진 무리일 수 있다 — 조용히 건너뛴다
+                let Some(kind) = tx
+                    .query_row("SELECT kind FROM groups WHERE id=?1", [gid], |r| r.get::<_, i32>(0))
+                    .optional()?
+                else {
+                    continue;
+                };
+                // 정착 구역(내사진·공용)의 사본은 제외하지 않는다 — 치우면 Drive가 NAS에서도
+                // 지운다. 이미 «남김»인 파일도 내리지 않는다 (리뷰 C13·C11).
+                let best = if kind == 1 { "" } else { " AND m.is_best = 0" };
+                rejected += tx.execute(
+                    &format!(
+                        "UPDATE files SET culling_flag=2 WHERE culling_flag <> 1 AND id IN
+                         (SELECT m.file_id FROM group_members m
+                          JOIN files f ON f.id = m.file_id
+                          JOIN folders fo ON fo.id = f.folder_id
+                          WHERE m.group_id=?1{best} AND fo.area NOT IN (1, 2))"
+                    ),
+                    [gid],
+                )?;
+                skipped += tx.query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM group_members m
+                          JOIN files f ON f.id = m.file_id
+                          JOIN folders fo ON fo.id = f.folder_id
+                          WHERE m.group_id=?1{best} AND fo.area IN (1, 2)"
+                    ),
+                    [gid],
+                    |r| r.get::<_, i64>(0),
+                )? as usize;
+                if kind != 1 {
                     kept += tx.execute(
                         "UPDATE files SET culling_flag=1 WHERE id IN
                          (SELECT file_id FROM group_members WHERE group_id=?1 AND is_best=1)",
                         [gid],
                     )?;
-                    rejected += tx.execute(
-                        "UPDATE files SET culling_flag=2 WHERE id IN
-                         (SELECT file_id FROM group_members WHERE group_id=?1 AND is_best=0)",
-                        [gid],
-                    )?;
                 }
                 tx.execute("UPDATE groups SET state=1 WHERE id=?1", [gid])?;
             }
-            Ok((kept, rejected))
+            Ok((kept, rejected, skipped))
         })
         .map_err(err)?;
-    Ok(ApplyResult { kept, rejected })
+    Ok(ApplyResult { kept, rejected, skipped })
 }
 
 /// 갈래의 미결 무리를 한꺼번에 확정한다 (규칙은 cull::apply). `dry_run`이면 세기만.

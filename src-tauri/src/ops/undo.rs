@@ -122,10 +122,16 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
             continue;
         };
         let from = mount.join(&row.to_path); // 지금 있는 곳
-        let to = mount.join(&row.from_path); // 원래 있던 곳
+        // 원래 자리에 그새 다른 파일이 생겼을 수 있다 — 덮어쓰지 않고 옆에 놓는다
+        // (리뷰: rename은 있는 파일을 소리 없이 바꿔치기한다)
+        let to = crate::ops::trash::free_path(mount.join(&row.from_path));
+        let to_rel = to
+            .strip_prefix(&mount)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| row.from_path.clone());
         match move_file(&from, &to) {
             Ok(()) => {
-                repoint(db, row.file_id, &row.volume_uuid, &row.from_path)?;
+                repoint(db, row.file_id, &row.volume_uuid, &to_rel)?;
                 out.moved += 1;
             }
             Err(e) => {
@@ -134,7 +140,10 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
             }
         }
     }
-    mark_undone(db, batch_id)?;
+    // 하나도 못 돌렸으면(디스크가 빠짐) 배치를 열어 둔다 — 꽂고 다시 시도할 수 있게
+    if out.moved > 0 || rows.is_empty() {
+        mark_undone(db, batch_id)?;
+    }
     Ok(out)
 }
 
@@ -286,5 +295,39 @@ mod tests {
         assert_eq!(list[0].id, b.batch_id, "최근 것이 위");
         let first = list.iter().find(|x| x.id == a.batch_id).unwrap();
         assert!(first.undone_at.is_some(), "되돌린 표시가 남는다");
+    }
+
+
+    #[test]
+    fn undo_does_not_overwrite_a_newer_file_in_the_old_place() {
+        let (dir, db, lib, ids) = setup();
+        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let out = move_to(&db, &ids[..1], &dest, "정리").unwrap();
+        // 그새 같은 이름의 새 사진이 원래 자리에 들어왔다
+        std::fs::write(dir.path().join("작업대/a.jpg"), b"NEW PHOTO").unwrap();
+
+        let u = undo(&db, out.batch_id).unwrap();
+        assert_eq!((u.moved, u.failed), (1, 0));
+        assert_eq!(std::fs::read(dir.path().join("작업대/a.jpg")).unwrap(), b"NEW PHOTO", "새 사진은 그대로");
+        assert!(dir.path().join("작업대/a (2).jpg").is_file(), "돌아온 것은 옆에 놓인다");
+        let name: String = db
+            .read(|c| c.query_row("SELECT name FROM files WHERE id=?1", [ids[0]], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(name, "a (2).jpg", "DB도 새 이름을 안다");
+    }
+
+    #[test]
+    fn a_fully_failed_undo_stays_undoable() {
+        let (dir, db, lib, ids) = setup();
+        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let out = move_to(&db, &ids[..1], &dest, "정리").unwrap();
+        // 옮긴 파일이 사라져 되돌릴 수 없다
+        std::fs::remove_file(dir.path().join("2024/행사/a.jpg")).unwrap();
+        let u = undo(&db, out.batch_id).unwrap();
+        assert_eq!((u.moved, u.failed), (0, 1));
+        let undone: Option<i64> = db
+            .read(|c| c.query_row("SELECT undone_at FROM batches WHERE id=?1", [out.batch_id], |r| r.get(0)))
+            .unwrap();
+        assert!(undone.is_none(), "하나도 못 돌렸으면 «되돌린 것»으로 찍지 않는다");
     }
 }

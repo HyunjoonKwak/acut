@@ -16,11 +16,13 @@ export function useGridKeys(opts: {
   cols: number;
   compareIds: number[];
   markOne: (id: number, patch: Mark) => void;
+  /** 여러 장을 골랐을 때 — 화면(선택 패널·메뉴)이 P·X·F를 «고른 것»에 붙여 두었다 */
+  markMany: (ids: number[], patch: Mark) => Promise<void>;
   undoLast: () => void;
 }) {
   const overlay = useOverlayOpen();
   const helping = useUi((s) => s.helping);
-  const { rows, cols, compareIds, markOne, undoLast } = opts;
+  const { rows, cols, compareIds, markOne, markMany, undoLast } = opts;
 
   useEffect(() => {
     if (overlay) return;
@@ -101,14 +103,18 @@ export function useGridKeys(opts: {
       }
       if (i < 0) return;
       const r = rows[i];
-      if (/^[0-5]$/.test(e.key)) markOne(r.id, { rating: +e.key });
+      // 여러 장을 골라 두었으면 그 전부에 — 초점 한 장 기준으로 켜고 끈다 (리뷰 H1)
+      const many = sel.picked.size > 1 && sel.picked.has(r.id);
+      const mark = (patch: Mark) =>
+        many ? void markMany([...sel.picked], patch) : markOne(r.id, patch);
+      if (/^[0-5]$/.test(e.key)) mark({ rating: +e.key });
       else if (e.key === "p")
-        markOne(r.id, { cullingFlag: r.culling_flag === 1 ? 0 : 1 });
+        mark({ cullingFlag: r.culling_flag === 1 ? 0 : 1 });
       else if (e.key === "x")
-        markOne(r.id, { cullingFlag: r.culling_flag === 2 ? 0 : 2 });
-      else if (e.key === "f") markOne(r.id, { favorite: !r.favorite });
+        mark({ cullingFlag: r.culling_flag === 2 ? 0 : 2 });
+      else if (e.key === "f") mark({ favorite: !r.favorite });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlay, helping, rows, cols, compareIds, markOne, undoLast]);
+  }, [overlay, helping, rows, cols, compareIds, markOne, markMany, undoLast]);
 }

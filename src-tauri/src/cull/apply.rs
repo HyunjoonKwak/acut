@@ -18,8 +18,8 @@ pub struct ApplyAll {
     pub skipped: usize,
 }
 
-/// 갈래의 미결 무리를 한꺼번에 확정한다. `folder_id`를 주면 그 폴더에 제외될
-/// 사본이 있는 무리만. `dry_run`이면 세기만 하고 바꾸지 않는다.
+/// 갈래의 미결 무리를 한꺼번에 확정한다. `folder_id`·`library_id`를 주면 거기에
+/// 제외될 사본이 있는 무리만. `dry_run`이면 세기만 하고 바꾸지 않는다.
 ///
 /// 잡동사니(kind 1)는 대표가 없어 전부 제외다.
 pub fn apply_all(
@@ -28,6 +28,7 @@ pub fn apply_all(
     skip_settled: bool,
     dry_run: bool,
     folder_id: Option<i64>,
+    library_id: Option<i64>,
 ) -> rusqlite::Result<ApplyAll> {
     tx.execute_batch(
         "DROP TABLE IF EXISTS temp.todo; CREATE TEMP TABLE todo(id INTEGER PRIMARY KEY);",
@@ -38,8 +39,12 @@ pub fn apply_all(
          WHERE g.kind = ?1 AND g.state = 0
            AND (?2 IS NULL OR EXISTS (
                  SELECT 1 FROM group_members m JOIN files f ON f.id = m.file_id
-                 WHERE m.group_id = g.id AND m.is_best = 0 AND f.folder_id = ?2))",
-        params![kind, folder_id],
+                 WHERE m.group_id = g.id AND m.is_best = 0 AND f.folder_id = ?2))
+           AND (?3 IS NULL OR EXISTS (
+                 SELECT 1 FROM group_members m JOIN files f ON f.id = m.file_id
+                 JOIN folders fo ON fo.id = f.folder_id
+                 WHERE m.group_id = g.id AND m.is_best = 0 AND fo.library_id = ?3))",
+        params![kind, folder_id, library_id],
     )?;
     let total = tx.query_row("SELECT COUNT(*) FROM temp.todo", [], |r| r.get::<_, i64>(0))? as usize;
     let skipped = if skip_settled {
@@ -216,7 +221,7 @@ mod tests {
     #[test]
     fn applies_groups_whose_copies_are_outside_settled_areas() {
         let (_d, db) = setup(false);
-        let dry = db.transaction(|tx| apply_all(tx, 0, true, true, None)).unwrap();
+        let dry = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
         assert_eq!(dry, ApplyAll { groups: 1, kept: 1, rejected: 2, skipped: 0 });
         // dry_run 은 아무것도 바꾸지 않는다
         let flagged: i64 = db
@@ -224,7 +229,7 @@ mod tests {
             .unwrap();
         assert_eq!(flagged, 0);
 
-        let real = db.transaction(|tx| apply_all(tx, 0, true, false, None)).unwrap();
+        let real = db.transaction(|tx| apply_all(tx, 0, true, false, None, None)).unwrap();
         assert_eq!(real, dry);
         let (kept, rejected): (i64, i64) = db
             .read(|c| {
@@ -237,17 +242,17 @@ mod tests {
             .unwrap();
         assert_eq!((kept, rejected), (1, 2));
         // 두 번째는 할 것이 없다
-        let again = db.transaction(|tx| apply_all(tx, 0, true, true, None)).unwrap();
+        let again = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
         assert_eq!(again.groups, 0);
     }
 
     #[test]
     fn skips_groups_with_a_settled_copy_to_reject() {
         let (_d, db) = setup(true);
-        let r = db.transaction(|tx| apply_all(tx, 0, true, true, None)).unwrap();
+        let r = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
         assert_eq!(r, ApplyAll { groups: 0, kept: 0, rejected: 0, skipped: 1 });
         // 건너뛰지 않으면 확정된다 — 대표는 b 의 이른 것, 나머지 셋은 제외
-        let r = db.transaction(|tx| apply_all(tx, 0, false, true, None)).unwrap();
+        let r = db.transaction(|tx| apply_all(tx, 0, false, true, None, None)).unwrap();
         assert_eq!(r, ApplyAll { groups: 1, kept: 1, rejected: 3, skipped: 0 });
     }
 
@@ -263,7 +268,7 @@ mod tests {
         assert_eq!(a.keeper_copies, 2);
         // 폴더만 확정
         let r = db
-            .transaction(|tx| apply_all(tx, 0, true, false, Some(a.folder_id)))
+            .transaction(|tx| apply_all(tx, 0, true, false, Some(a.folder_id), None))
             .unwrap();
         assert_eq!(r.groups, 1);
         assert!(db.read(|c| dup_folders(c, 0, 10)).unwrap().is_empty());

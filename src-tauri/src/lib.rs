@@ -211,6 +211,10 @@ pub fn run() {
             api::cull::cull_apply,
             api::cull::cull_apply_all,
             api::cull::cull_dup_folders,
+            api::cull::cleanup_folders,
+            api::cull::cleanup_files,
+            api::cull::cleanup_summary,
+            api::cull::cull_apply_pair,
             api::cull::cull_skip,
             api::cull::cull_summary,
         ])

@@ -4,7 +4,7 @@
 //! 진행 상황을 이벤트로 흘린다. 조회는 즉시 돌아온다.
 
 use crate::api::{err, AppState};
-use crate::cull::{apply, burst, dedup, junk, scene};
+use crate::cull::{apply, burst, cleanup, dedup, junk, scene};
 use super::job;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -48,6 +48,7 @@ pub struct MemberRow {
     /// 남길지 고를 때 이게 없으면 판단할 근거가 없다.
     pub library: String,
     pub folder: String,
+    pub folder_id: i64,
     pub area: i32,
 }
 
@@ -120,8 +121,11 @@ pub async fn cull_groups(
     kind: i32,
     limit: usize,
     offset: usize,
+    settled: Option<bool>,
 ) -> Result<Vec<GroupRow>, String> {
     let limit = limit.clamp(1, 200);
+    // 정착 구역(내사진·공용) 안에 제외될 사본이 있는 무리만 — 사람이 하나씩 보는 것
+    let settled = settled.unwrap_or(false);
     state
         .db
         .read(|c| {
@@ -136,10 +140,14 @@ pub async fn cull_groups(
                          ORDER BY m.is_best DESC LIMIT 1)
                  FROM groups g
                  WHERE g.kind = ?1 AND g.state = 0
+                   AND (?4 = 0 OR EXISTS (
+                         SELECT 1 FROM group_members m JOIN files fi ON fi.id = m.file_id
+                         JOIN folders fo ON fo.id = fi.folder_id
+                         WHERE m.group_id = g.id AND m.is_best = 0 AND fo.area IN (1, 2)))
                  ORDER BY g.size_bytes DESC
                  LIMIT ?2 OFFSET ?3",
             )?;
-            let it = st.query_map(rusqlite::params![kind, limit as i64, offset as i64], |r| {
+            let it = st.query_map(rusqlite::params![kind, limit as i64, offset as i64, settled as i32], |r| {
                 Ok(GroupRow {
                     id: r.get(0)?,
                     kind: r.get(1)?,
@@ -164,7 +172,7 @@ pub async fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<V
             let mut st = c.prepare(
                 "SELECT m.file_id, f.name, f.size, f.taken_at, f.width, f.height,
                         m.is_best, m.score, t.rel_path, f.culling_flag, fo.library_id,
-                        l.name, l.rel_path, fo.rel_path, fo.area
+                        l.name, l.rel_path, fo.rel_path, fo.area, fo.id
                  FROM group_members m
                  JOIN files f ON f.id = m.file_id
                  JOIN folders fo ON fo.id = f.folder_id
@@ -184,6 +192,7 @@ pub async fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<V
                     library: r.get::<_, Option<String>>(11)?.unwrap_or_default(),
                     folder,
                     area: r.get(14)?,
+                    folder_id: r.get(15)?,
                     file_id: r.get(0)?,
                     name: r.get(1)?,
                     size: r.get(2)?,
@@ -281,10 +290,38 @@ pub async fn cull_apply_all(
     skip_settled: bool,
     dry_run: bool,
     folder_id: Option<i64>,
+    library_id: Option<i64>,
 ) -> Result<apply::ApplyAll, String> {
     state
         .db
-        .transaction(|tx| apply::apply_all(tx, kind, skip_settled, dry_run, folder_id))
+        .transaction(|tx| apply::apply_all(tx, kind, skip_settled, dry_run, folder_id, library_id))
+        .map_err(err)
+}
+
+/// 정리 화면 — 라이브러리의 폴더들을 «NAS에 이미 있음 / 없음»으로.
+#[tauri::command]
+pub async fn cleanup_folders(state: State<'_, AppState>, library_id: i64) -> Result<Vec<cleanup::CleanupFolder>, String> {
+    state.db.read(|c| cleanup::folders(c, library_id)).map_err(err)
+}
+
+/// 폴더 하나의 사진들 — 셋으로 나뉘어.
+#[tauri::command]
+pub async fn cleanup_files(state: State<'_, AppState>, folder_id: i64) -> Result<Vec<cleanup::CleanupFile>, String> {
+    state.db.read(|c| cleanup::files(c, folder_id)).map_err(err)
+}
+
+/// 라이브러리 합계와 정착 구역 안 겹침의 크기.
+#[tauri::command]
+pub async fn cleanup_summary(state: State<'_, AppState>, library_id: i64) -> Result<cleanup::CleanupSummary, String> {
+    state.db.read(|c| cleanup::summary(c, library_id)).map_err(err)
+}
+
+/// 두 폴더 사이의 무리를 한꺼번에 — keep 것을 남기고 drop 것에 지우기 표시.
+#[tauri::command]
+pub async fn cull_apply_pair(state: State<'_, AppState>, keep_folder_id: i64, drop_folder_id: i64) -> Result<apply::ApplyAll, String> {
+    state
+        .db
+        .transaction(|tx| cleanup::apply_pair(tx, keep_folder_id, drop_folder_id))
         .map_err(err)
 }
 

@@ -26,7 +26,7 @@ import Toolbar from "./Toolbar";
 import Viewer from "./Viewer";
 import { contextItems } from "./contextItems";
 import { useData } from "./dataStore";
-import { usePref } from "./prefs";
+import { usePref, usePrefs } from "./prefs";
 import { useSelection } from "./selectionStore";
 import { thumbUrl, type Mark } from "./types";
 import { toast } from "./toastStore";
@@ -76,6 +76,11 @@ export default function App() {
   const facetFilter = useMemo(() => facetOf(filter), [filter]);
 
   const libs = useData((s) => s.libs);
+  /// 정리할 수 있는 곳 — 정착 구역(내사진·공용)이 아닌 라이브러리
+  const cleanupLibs = useMemo(
+    () => libs.filter((l) => l.area !== 1 && l.area !== 2),
+    [libs],
+  );
   const buckets = useData((s) => s.buckets);
   const stats = useData((s) => s.stats);
   const refreshMetaRaw = useData((s) => s.refreshMeta);
@@ -518,6 +523,14 @@ export default function App() {
       )}
       {ui.culling && libs.length > 0 && (
         <Cull
+          libs={cleanupLibs}
+          onOrganize={(ids, libraryId) => {
+            // 격자로 나가 그 사진들을 골라 두고 정리 대화상자를 연다
+            ui.set({ culling: false });
+            usePrefs.getState().set("libId", libraryId);
+            useSelection.getState().setPicked(ids);
+            ui.set({ organizing: true });
+          }}
           onClose={() => {
             ui.set({ culling: false });
             loadFirst();

@@ -73,6 +73,12 @@
     padding: 0;
   }
 
+  /* 어두운 앱이라고 알려야 macOS 겹침 스크롤바가 밝게 그려진다 —
+     안 알리면 검은 바탕에 검은 손잡이라 안 보인다 (실측: 폴더 비교 목록). */
+  :root {
+    color-scheme: dark;
+  }
+
   body {
     font-family: var(--font-sans);
     background: var(--color-canvas);
@@ -127,4 +133,23 @@
 }
 .leaflet-control-attribution a {
   color: var(--color-fg-dim) !important;
+}
+
+/* 늘 보이는 가는 스크롤바 — 긴 목록(폴더 비교·설정)에서 어디쯤인지 보이게.
+   겹침 스크롤바는 손을 떼면 사라져 «스크롤할 게 있다»는 것조차 모른다. */
+.scroll-thin::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border: 2px solid transparent;
+  border-radius: 5px;
+  background-clip: padding-box;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-fg-faint);
 }

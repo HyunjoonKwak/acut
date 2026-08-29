@@ -482,7 +482,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       {/* 후보들 — 크게 보기는 이 안만 덮는다. 위아래 막대는 남는다. */}
       {/* 스크롤은 안쪽 div가 맡는다. 바깥이 스크롤하면 덮개가 같이 밀려 올라간다. */}
       <div className="flex-1 relative min-h-0">
-        <div className="absolute inset-0 overflow-y-auto p-4">
+        <div className="absolute inset-0 overflow-y-auto p-4 scroll-thin">
           {!cur && (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute">
               {scanning ? (

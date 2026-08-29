@@ -405,10 +405,29 @@ pub fn pull(
         let _ = std::fs::remove_file(p);
     }
     let err = err_thread.join().unwrap_or_default();
-    if !status.success() && !out.cancelled {
+    if !rsync_acceptable(status.success(), status.code(), out.cancelled) {
         return Err(std::io::Error::other(format!("rsync 실패 ({status}): {}", explain(&err))));
     }
+    if !status.success() {
+        // 23·24 — 옮기는 사이 NAS 쪽이 바뀌었거나 몇 개를 못 읽었다. 받은 건 받은 것이다.
+        log::warn!("rsync 가 일부만 옮겼습니다 ({status}): {}", explain(&err));
+    }
     Ok(out)
+}
+
+/// rsync 종료 코드 판정 — 0 은 성공, 23(일부 실패)·24(옮기는 사이 사라짐)는 살아 있는
+/// NAS(Drive 가 같이 쓰는)에서 흔한 «일부만»이라 실패로 보지 않는다. 그렇게 보면
+/// 받은 파일이 원장에 안 올라 다음에 또 받고, 1차 비우기 후보에서도 빠진다 (리뷰 H10).
+pub fn rsync_acceptable(success: bool, code: Option<i32>, cancelled: bool) -> bool {
+    success || cancelled || matches!(code, Some(23) | Some(24))
+}
+
+/// 1차 구역 기준 상대경로로 안전한가 — 원장에 없거나 위로 올라가는 경로는 거른다.
+/// NAS 쪽 스크립트는 `#trash/$f` 로 옮길 뿐 경로를 가두지 않는다 (리뷰 C6).
+pub fn safe_zone1_rel(rel: &str) -> bool {
+    !rel.is_empty()
+        && !rel.starts_with('/')
+        && !rel.split('/').any(|s| s.is_empty() || s == "." || s == "..")
 }
 
 /// \r 또는 \n까지 읽는다
@@ -635,5 +654,24 @@ mod tests {
         buf.clear();
         read_until_any(&mut r, &mut buf).unwrap();
         assert_eq!(buf, b"three");
+    }
+
+    #[test]
+    fn partial_transfers_are_not_failures() {
+        assert!(rsync_acceptable(true, Some(0), false));
+        assert!(rsync_acceptable(false, Some(23), false));
+        assert!(rsync_acceptable(false, Some(24), false));
+        assert!(rsync_acceptable(false, Some(255), true), "멈춘 것은 실패가 아니다");
+        assert!(!rsync_acceptable(false, Some(255), false), "ssh 실패");
+        assert!(!rsync_acceptable(false, Some(11), false), "파일 I/O 오류");
+    }
+
+    #[test]
+    fn purge_paths_stay_inside_zone1() {
+        assert!(safe_zone1_rel("2024/여행/a.jpg"));
+        assert!(!safe_zone1_rel("../Photos/a.jpg"));
+        assert!(!safe_zone1_rel("/volume1/photo/a.jpg"));
+        assert!(!safe_zone1_rel("a//b.jpg"));
+        assert!(!safe_zone1_rel(""));
     }
 }

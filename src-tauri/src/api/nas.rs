@@ -138,23 +138,24 @@ pub async fn nas_pull_start(app: AppHandle, library_id: i64) -> Result<(), Strin
         let r = ssh::pull(&cfg, &dest, &already, &cancel, |p| {
             let _ = handle.emit("nas-pull-progress", p);
         });
+        // 원장 — 무엇을 언제 받았나. 비울 때 이걸로 «우리가 받은 것»만 고른다.
+        // 이번에 옮긴 것만이 아니라 지금 폴더에 있는 완성 파일 전부 — 멈췄다 이어받은
+        // 것도, 원장이 생기기 전에 받은 것도, rsync 가 중간에 실패했어도 디스크에 있는
+        // 것은 «받은 것»이다. 안 적으면 다음에 또 받는다 (리뷰 H10)
+        let now = chrono::Utc::now().timestamp();
+        let present = ssh::present_files(&dest);
+        let _ = db.transaction(|tx| {
+            let mut ins = tx.prepare(
+                "INSERT INTO nas_pulls(rel_path, size, pulled_at) VALUES(?1, ?2, ?3)
+                 ON CONFLICT(rel_path) DO UPDATE SET size = excluded.size",
+            )?;
+            for (rel, size) in &present {
+                ins.execute(rusqlite::params![rel, *size as i64, now])?;
+            }
+            Ok(())
+        });
         match r {
             Ok(pulled) => {
-                // 원장 — 무엇을 언제 받았나. 비울 때 이걸로 «우리가 받은 것»만 고른다.
-                // 원장 — 이번에 옮긴 것만이 아니라 지금 폴더에 있는 완성 파일 전부.
-                // 멈췄다 이어받은 것도, 원장이 생기기 전에 받은 것도 «받은 것»이다.
-                let now = chrono::Utc::now().timestamp();
-                let present = ssh::present_files(&dest);
-                let _ = db.transaction(|tx| {
-                    let mut ins = tx.prepare(
-                        "INSERT INTO nas_pulls(rel_path, size, pulled_at) VALUES(?1, ?2, ?3)
-                         ON CONFLICT(rel_path) DO UPDATE SET size = excluded.size",
-                    )?;
-                    for (rel, size) in &present {
-                        ins.execute(rusqlite::params![rel, *size as i64, now])?;
-                    }
-                    Ok(())
-                });
                 let _ = app.emit("nas-pull-done", PullDone { library_id, files: pulled.files.len(), cancelled: pulled.cancelled });
             }
             Err(e) => {
@@ -187,6 +188,26 @@ pub async fn nas_verify(app: AppHandle, library_id: i64) -> Result<Verified, Str
         _ => return Err("내사진(개인)과 공용 라이브러리만 확인합니다".into()),
     };
     let dir = lib.dir.clone().ok_or("디스크가 연결되어 있지 않습니다")?;
+    // «보낼 게 없다»는 «다 올라갔다»가 아니다 — 로컬 폴더가 비었거나 반만 있으면(마운트
+    // 직후, Drive 재대조 중) rsync -n 은 아무것도 안 보내고, 그러면 전 행이 «NAS에 있음»으로
+    // 찍혀 1차 비우기의 근거가 된다. 디스크의 파일 수가 DB의 90% 미만이면 거부한다 (리뷰 C7)
+    let expected: i64 = state
+        .db
+        .read(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+                  WHERE fo.library_id = ?1 AND fi.trashed_at IS NULL",
+                [library_id],
+                |r| r.get(0),
+            )
+        })
+        .map_err(err)?;
+    let on_disk = ssh::present_files(&dir).len() as i64;
+    if expected > 0 && on_disk * 10 < expected * 9 {
+        return Err(format!(
+            "디스크에 {on_disk}개뿐입니다 (DB에는 {expected}개) — 폴더가 다 붙은 뒤 다시 확인하세요"
+        ));
+    }
     let cfg2 = cfg.clone();
     let missing: std::collections::HashSet<String> =
         tauri::async_runtime::spawn_blocking(move || ssh::missing_on_nas(&cfg2, &dir, &remote))
@@ -371,11 +392,26 @@ pub struct Purged {
 pub async fn nas_purge_run(app: AppHandle, rels: Vec<String>) -> Result<Purged, String> {
     let state = app.state::<AppState>();
     let cfg = load(&state)?;
-    let rels2 = rels.clone();
-    let moved = tauri::async_runtime::spawn_blocking(move || ssh::trash_in_zone1(&cfg, &rels2))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    // 화면이 준 목록을 그대로 믿지 않는다 — 우리가 받은 것(원장)이고 1차 구역 안의
+    // 경로일 때만. 내려받기와 겹쳐 돌지도 않게 잡을 잡는다 (리뷰 C6)
+    let allowed: std::collections::HashSet<String> = ledger(&state.db)?.into_iter().collect();
+    let rels2: Vec<String> = rels
+        .into_iter()
+        .filter(|r| ssh::safe_zone1_rel(r) && allowed.contains(r))
+        .collect();
+    if rels2.is_empty() {
+        return Ok(Purged { moved: 0, bytes: 0 });
+    }
+    let Some(guard) = job::try_start(&state.running, "에이컷 NAS 비우기") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
+    let moved = tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        ssh::trash_in_zone1(&cfg, &rels2)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
     let mut bytes = 0i64;
     state
         .db

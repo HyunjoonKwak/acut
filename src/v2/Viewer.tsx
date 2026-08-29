@@ -1,36 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { fmtBytes, fmtDateTime, fmtDuration } from "./format";
+import { fmtDuration } from "./format";
 import TagEditor from "./TagEditor";
 import Histogram from "./Histogram";
 import RenameDialog from "./RenameDialog";
 import { usePref } from "./prefs";
 import CommentBox from "./CommentBox";
+import { CameraRows, DetailRows, Sep } from "./detail";
+import type { Detail } from "./detailText";
 
-type Detail = {
-  name: string;
-  folder: string;
-  size: number;
-  takenAt: number;
-  takenAtSource: number;
-  width: number | null;
-  height: number | null;
-  camMake: string | null;
-  camModel: string | null;
-  lens: string | null;
-  iso: number | null;
-  aperture: number | null;
-  shutter: string | null;
-  focalMm: number | null;
-  durationMs: number | null;
-  rating: number;
-  cullingFlag: number;
-  favorite: boolean;
-  kind: number;
-  comment: string | null;
-};
-
-const SOURCE_LABEL = ["EXIF", "파일명 추정", "파일시각 추정", "알 수 없음"];
 
 export default function Viewer({
   ids,
@@ -83,9 +61,11 @@ export default function Viewer({
     x: number;
     y: number;
   } | null>(null);
-  const scale = view?.id === id ? view.scale : 1;
-  const origin =
-    view?.id === id ? { x: view.x, y: view.y } : { x: 0.5, y: 0.5 };
+  // `view?.id === id` 로 쓰면 안 된다 — id가 undefined(목록 밖 순번)일 때
+  // undefined === undefined 가 참이 되어 null.scale 을 읽다 죽는다 (실측).
+  const zoomed = view !== null && view.id === id;
+  const scale = zoomed ? view.scale : 1;
+  const origin = zoomed ? { x: view.x, y: view.y } : { x: 0.5, y: 0.5 };
   const zoom = scale > 1;
   const resetZoom = useCallback(() => setView(null), []);
   const zoomTo = useCallback(
@@ -418,52 +398,14 @@ export default function Viewer({
         {/* 인스펙터 */}
         {showInfo && detail && (
           <aside className="w-64 shrink-0 bg-raised border-l border-line p-4 overflow-y-auto text-[12px]">
-            <Row k="촬영" v={fmtDateTime(detail.takenAt)} />
-            <Row
-              k="날짜 출처"
-              v={SOURCE_LABEL[detail.takenAtSource] ?? "?"}
-              dim={detail.takenAtSource !== 0}
-            />
-            <Row
-              k="크기"
-              v={
-                detail.width && detail.height
-                  ? `${detail.width} × ${detail.height}`
-                  : "—"
-              }
-            />
-            <Row k="용량" v={fmtBytes(detail.size)} />
-            {detail.durationMs ? (
-              <Row k="길이" v={fmtDuration(detail.durationMs)} />
-            ) : null}
-            <Row k="폴더" v={detail.folder || "/"} />
+            <DetailRows detail={detail} />
             <CommentBox
               key={id}
               id={id}
               initial={detail.comment ?? ""}
               onSaved={(c) => setDetail((d) => (d ? { ...d, comment: c } : d))}
             />
-
-            {(detail.camModel || detail.lens) && (
-              <>
-                <Sep />
-                <Row k="카메라" v={detail.camModel ?? "—"} />
-                <Row k="렌즈" v={detail.lens ?? "—"} />
-                <Row
-                  k="설정"
-                  v={
-                    [
-                      detail.shutter,
-                      detail.aperture ? `f${detail.aperture}` : null,
-                      detail.iso ? `ISO ${detail.iso}` : null,
-                      detail.focalMm ? `${detail.focalMm}mm` : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "—"
-                  }
-                />
-              </>
-            )}
+            <CameraRows detail={detail} />
 
             <Sep />
             <div className="text-[10.5px] text-fg-mute uppercase tracking-wider mb-2">
@@ -545,19 +487,3 @@ export default function Viewer({
   );
 }
 
-function Row({ k, v, dim }: { k: string; v: string; dim?: boolean }) {
-  return (
-    <div className="flex justify-between gap-3 py-[3px]">
-      <span className="text-fg-mute shrink-0">{k}</span>
-      <span
-        className={`text-right truncate font-mono text-[11px] ${dim ? "text-keep" : "text-fg-dim"}`}
-        title={v}
-      >
-        {v}
-      </span>
-    </div>
-  );
-}
-function Sep() {
-  return <div className="h-px bg-line my-3" />;
-}

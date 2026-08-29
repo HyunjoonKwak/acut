@@ -32,6 +32,8 @@ import { thumbUrl, type Mark } from "./types";
 import { toast } from "./toastStore";
 import { useUi } from "./uiStore";
 import { useNasAuto } from "./useNasAuto";
+import { applyStartupSel } from "./devSel";
+import InfoPanel from "./InfoPanel";
 import { mark, startupMarks } from "./startupMarks";
 import { useGridKeys } from "./useGridKeys";
 import { useGridLayout } from "./useGridLayout";
@@ -49,6 +51,10 @@ import { facetOf, useFilter } from "./viewStore";
 export default function App() {
   const [libId] = usePref("libId");
   useNasAuto();
+  // 재현용 — 시작 주소에 ?sel= 이 있으면 그 폴더를 바로 연다
+  useEffect(() => {
+    void applyStartupSel();
+  }, []);
   const [group] = usePref("group");
   const [thumbSize] = usePref("thumbSize");
   const [gridStyle] = usePref("gridStyle");
@@ -58,6 +64,7 @@ export default function App() {
   const [source] = usePref("source");
   const [font] = usePref("font");
   const [statusBar] = usePref("statusBar");
+  const [infoPanel, setInfoPanel] = usePref("infoPanel");
   const [dblClick] = usePref("dblClick");
   const [stripPos] = usePref("stripPos");
   // 글꼴 — CSS가 data-font를 본다
@@ -247,6 +254,19 @@ export default function App() {
   useEffect(() => {
     if (ui.viewerAt !== null && ui.viewerAt >= rows.length - 5) loadMore();
   }, [ui.viewerAt, rows.length, loadMore]);
+  // 목록이 줄어 뷰어의 순번이 밖으로 나가면 마지막 장으로 당긴다 — 휴지통에
+  // 보내거나 다시 읽어 목록이 짧아졌을 때. 비면 닫는다.
+  useEffect(() => {
+    const at = useUi.getState().viewerAt;
+    if (at === null || at < rows.length) return;
+    useUi
+      .getState()
+      .set(
+        rows.length === 0
+          ? { viewerAt: null, viewerFull: false }
+          : { viewerAt: rows.length - 1 },
+      );
+  }, [rows.length]);
 
   /// 타일 우클릭. 고른 것 밖을 우클릭하면 그것 하나만 대상으로 삼는다 —
   /// 안 그러면 눈에 안 보이는 선택에 대고 일이 벌어진다.
@@ -308,7 +328,13 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-canvas text-fg text-[13px]">
-      <Toolbar matched={matched} />
+      <Toolbar
+        matched={matched}
+        rows={rows}
+        compareIds={compareIds}
+        markPicked={markPicked}
+        onTrash={ops.trashFiles}
+      />
 
       <div className="flex-1 flex min-h-0">
         <Sidebar
@@ -342,6 +368,12 @@ export default function App() {
                   pageSize={1}
                   onSeek={list.seekTo}
                 />
+                {infoPanel && (
+                  <InfoPanel
+                    file={focusAt >= 0 ? rows[focusAt] : null}
+                    onClose={() => setInfoPanel(false)}
+                  />
+                )}
               </div>
               {stripPos === "bottom" && STRIP}
             </>
@@ -349,20 +381,29 @@ export default function App() {
             <>
               {/* 위치 갈래 — 지도 위, 그리드 아래. 칸을 누르면 그 자리의 사진만 남는다 */}
               {source === "location" && <MapView filter={filter} />}
-              <PhotoGrid
-                loading={list.loading}
-                empty={libs.length === 0}
-                layout={layout}
-                baseIndex={list.baseIndex}
-                buckets={buckets}
-                caption={caption}
-                gridStyle={gridStyle}
-                group={group}
-                onPick={pick}
-                onOpen={openAt}
-                onContext={openContext}
-                onSeek={list.seekTo}
-              />
+              {/* 격자 오른쪽에 정보 패널 — 고른 한 장의 상세 */}
+              <div className="flex-1 flex min-h-0 min-w-0">
+                <PhotoGrid
+                  loading={list.loading}
+                  empty={libs.length === 0}
+                  layout={layout}
+                  baseIndex={list.baseIndex}
+                  buckets={buckets}
+                  caption={caption}
+                  gridStyle={gridStyle}
+                  group={group}
+                  onPick={pick}
+                  onOpen={openAt}
+                  onContext={openContext}
+                  onSeek={list.seekTo}
+                />
+                {infoPanel && (
+                  <InfoPanel
+                    file={focusAt >= 0 ? rows[focusAt] : null}
+                    onClose={() => setInfoPanel(false)}
+                  />
+                )}
+              </div>
             </>
           )}
 
@@ -385,7 +426,7 @@ export default function App() {
           )}
 
           {/* 크게 보기 — 기본은 콘텐츠 영역만 덮는다 */}
-          {ui.viewerAt !== null && (
+          {ui.viewerAt !== null && ui.viewerAt < ids.length && (
             <Viewer
               ids={ids}
               index={ui.viewerAt}

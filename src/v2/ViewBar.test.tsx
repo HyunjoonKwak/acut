@@ -4,8 +4,6 @@ import userEvent from "@testing-library/user-event";
 import ViewBar from "./ViewBar";
 
 const base = {
-  caption: true,
-  onCaption: () => {},
   filmstrip: false,
   onFilmstrip: () => {},
 };
@@ -33,14 +31,8 @@ describe("보기 방식 버튼", () => {
     expect(onStyle).toHaveBeenLastCalledWith("card");
   });
 
-  it("이름·크기 버튼은 카드에서만 있다", () => {
-    const { rerender } = render(
-      <ViewBar {...base} style="card" onStyle={() => {}} />,
-    );
-    expect(
-      screen.getByRole("button", { name: "이름·크기 표시" }),
-    ).toBeInTheDocument();
-    rerender(<ViewBar {...base} style="tile" onStyle={() => {}} />);
+  it("이름·크기 버튼은 툴바에 없다 — 설정에만 있다", () => {
+    render(<ViewBar {...base} style="card" onStyle={() => {}} />);
     expect(
       screen.queryByRole("button", { name: "이름·크기 표시" }),
     ).not.toBeInTheDocument();
@@ -53,18 +45,19 @@ describe("보기 방식 버튼", () => {
   });
 
   it("켜고 끄는 것은 눌린 상태를 보인다", async () => {
-    const onCaption = vi.fn();
+    const onFilmstrip = vi.fn();
     render(
       <ViewBar
         {...base}
         style="card"
         onStyle={() => {}}
-        onCaption={onCaption}
+        filmstrip
+        onFilmstrip={onFilmstrip}
       />,
     );
-    const b = screen.getByRole("button", { name: "이름·크기 표시" });
+    const b = screen.getByRole("button", { name: "필름스트립" });
     expect(b).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(b);
-    expect(onCaption).toHaveBeenCalledWith(false);
+    expect(onFilmstrip).toHaveBeenCalledWith(false);
   });
 });

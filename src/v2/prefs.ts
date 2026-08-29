@@ -41,6 +41,8 @@ export type Prefs = {
   /** 커서를 올리면 뜨는 이름표 */
   tooltips: boolean;
   statusBar: boolean;
+  /** 격자 옆 정보 패널 — 고른 한 장의 상세 (Lap의 정보 보기) */
+  infoPanel: boolean;
 
   // ── 탐색 ──
   /** 이름줄 첫째 줄 · 둘째 줄 (카드 보기) */
@@ -79,6 +81,7 @@ export const DEFAULT_PREFS: Prefs = {
   font: "pretendard",
   tooltips: true,
   statusBar: true,
+  infoPanel: false,
   caption1: "name",
   caption2: "dateSize",
   badge: "format",

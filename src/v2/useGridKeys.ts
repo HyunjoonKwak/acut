@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useSelection } from "./selectionStore";
 import { useOverlayOpen, useUi } from "./uiStore";
+import { usePrefs } from "./prefs";
 import type { FileRow, Mark } from "./types";
 
 /**
@@ -49,6 +50,13 @@ export function useGridKeys(opts: {
       if ((e.metaKey || e.ctrlKey) && e.key === "a") {
         e.preventDefault();
         sel.setPicked(rows.map((r) => r.id));
+        return;
+      }
+      // 정보 패널 — 뷰어의 I와 같은 키
+      if (e.key === "i" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        const p = usePrefs.getState();
+        p.set("infoPanel", !p.infoPanel);
         return;
       }
       if (e.key === "?") {

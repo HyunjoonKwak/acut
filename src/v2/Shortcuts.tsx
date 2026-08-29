@@ -7,6 +7,7 @@ const GRID: Row[] = [
   { keys: ["P"], what: "남김" },
   { keys: ["X"], what: "제외" },
   { keys: ["F"], what: "즐겨찾기" },
+  { keys: ["I"], what: "정보 패널 켜기/끄기" },
   { keys: ["0", "–", "5"], what: "별점" },
   { keys: ["C"], what: "나란히 보기 (2장 이상 골랐을 때)" },
   { keys: ["⌘", "A"], what: "모두 고르기" },

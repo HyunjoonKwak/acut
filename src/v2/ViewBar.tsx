@@ -1,13 +1,12 @@
 import { useState } from "react";
 import {
-  IconCaption,
   IconCard,
   IconFilmstrip,
   IconJustified,
   IconMasonry,
   IconTile,
 } from "./icons";
-import { hasCaption, type GridStyle } from "./gridStyle";
+import type { GridStyle } from "./gridStyle";
 import { next } from "./cycle";
 import { usePref } from "./prefs";
 
@@ -16,7 +15,8 @@ import { usePref } from "./prefs";
  *
  * 격자 모양은 **누를 때마다 다음 것으로** 바뀐다(카드 → 타일 → 양쪽 맞춤 →
  * 메이슨리). 버튼에 지금 상태의 그림과 이름을 함께 써서 열어 보지 않아도
- * 안다. 이름·크기는 카드에서만 뜨므로 카드일 때만 버튼이 보인다.
+ * 안다. 이름·크기 표시는 설정에만 둔다 — 카드일 때만 나타나는 버튼을 툴바에
+ * 두면 옆 버튼들이 보기마다 자리를 옮긴다.
  */
 
 type IconOf = (p: { className?: string }) => React.ReactElement;
@@ -80,8 +80,8 @@ function Cycle<T extends { v: string; label: string; Icon: IconOf }>({
   );
 }
 
-/** 켜고 끄는 버튼 */
-function Toggle({
+/** 켜고 끄는 버튼 — 툴바의 다른 자리(정보 패널)에서도 같은 생김새로 쓴다 */
+export function ViewToggle({
   label,
   on,
   onClick,
@@ -118,37 +118,24 @@ function Toggle({
 export default function ViewBar({
   style,
   onStyle,
-  caption,
-  onCaption,
   filmstrip,
   onFilmstrip,
 }: {
   style: GridStyle;
   onStyle: (s: GridStyle) => void;
-  caption: boolean;
-  onCaption: (v: boolean) => void;
   filmstrip: boolean;
   onFilmstrip: (v: boolean) => void;
 }) {
   return (
     <div className="flex items-center gap-1">
       <Cycle items={STYLES} value={style} onChange={onStyle} what="보기" />
-      {hasCaption(style) && (
-        <Toggle
-          label="이름·크기 표시"
-          on={caption}
-          onClick={() => onCaption(!caption)}
-        >
-          <IconCaption className="w-[17px] h-[17px]" />
-        </Toggle>
-      )}
-      <Toggle
+      <ViewToggle
         label="필름스트립"
         on={filmstrip}
         onClick={() => onFilmstrip(!filmstrip)}
       >
         <IconFilmstrip className="w-[17px] h-[17px]" />
-      </Toggle>
+      </ViewToggle>
     </div>
   );
 }

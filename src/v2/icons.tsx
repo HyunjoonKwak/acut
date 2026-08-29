@@ -166,6 +166,14 @@ export const IconCaption = (p: P) => (
   </S>
 );
 
+/** 정보 — 동그라미 안의 i */
+export const IconInfo = (p: P) => (
+  <S {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 11v5.5M12 7.8v.2" />
+  </S>
+);
+
 /** 필름스트림 — 아래에 깔리는 띠 */
 export const IconFilmstrip = (p: P) => (
   <S {...p}>

@@ -67,6 +67,9 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
                 // 캐시 키에 원본의 크기·수정시각이 들어 있으므로 내용이 바뀌면
                 // 파일명이 바뀐다. 오래 캐시해도 안전하다.
                 .header("Cache-Control", "public, max-age=31536000, immutable")
+                // 정보 패널의 히스토그램이 썸네일 픽셀을 canvas로 읽는다 — 오리진이
+                // 달라(tauri://localhost) 이 헤더가 없으면 canvas가 오염돼 못 읽는다.
+                .header("Access-Control-Allow-Origin", "*")
                 .body(bytes)
                 .unwrap();
             responder.respond(res);

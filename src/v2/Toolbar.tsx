@@ -3,13 +3,16 @@ import NasBadge from "./NasBadge";
 import FilterButton from "./FilterBar";
 import FilterChips from "./FilterChips";
 import GroupMenu from "./GroupMenu";
+import SelectMenu from "./SelectMenu";
 import SortMenu from "./SortMenu";
-import ViewBar from "./ViewBar";
+import ViewBar, { ViewToggle } from "./ViewBar";
+import { IconInfo } from "./icons";
 import { useData } from "./dataStore";
 import { usePref } from "./prefs";
 import { Btn, Sep } from "./ui";
 import { useUi } from "./uiStore";
 import { useView } from "./viewStore";
+import type { FileRow, Mark } from "./types";
 
 /**
  * 툴바 — 한 줄로 모은다.
@@ -19,9 +22,18 @@ import { useView } from "./viewStore";
  */
 export default function Toolbar({
   matched,
+  rows,
+  compareIds,
+  markPicked,
+  onTrash,
 }: {
   /** 지금 조건에 걸린 장수 */
   matched: number;
+  /** 선택 메뉴가 고를 수 있는 것 — 지금 불러온 목록 */
+  rows: FileRow[];
+  compareIds: number[];
+  markPicked: (patch: Mark) => void;
+  onTrash: (ids: number[]) => Promise<boolean>;
 }) {
   const libs = useData((s) => s.libs);
   const tags = useData((s) => s.tags);
@@ -35,7 +47,7 @@ export default function Toolbar({
   const [group, setGroup] = usePref("group");
   const [gridStyle, setGridStyle] = usePref("gridStyle");
   const [filmstrip, setFilmstrip] = usePref("filmstrip");
-  const [caption, setCaption] = usePref("caption");
+  const [infoPanel, setInfoPanel] = usePref("infoPanel");
   const [thumbSize, setThumbSize] = usePref("thumbSize");
 
   return (
@@ -67,14 +79,6 @@ export default function Toolbar({
           <FilterButton value={picks} onChange={setPicks} />
           <SortMenu value={sort} onChange={setSort} />
           <GroupMenu value={group} onChange={setGroup} />
-          <ViewBar
-            style={gridStyle}
-            onStyle={setGridStyle}
-            filmstrip={filmstrip}
-            onFilmstrip={setFilmstrip}
-            caption={caption}
-            onCaption={setCaption}
-          />
           <input
             type="range"
             min={100}
@@ -84,10 +88,30 @@ export default function Toolbar({
             title="썸네일 크기"
             className="w-20 accent-accent"
           />
+          <ViewBar
+            style={gridStyle}
+            onStyle={setGridStyle}
+            filmstrip={filmstrip}
+            onFilmstrip={setFilmstrip}
+          />
+          {/* 경계선 오른쪽은 «사진을 다루는 일» — 고르고, 골라내고, 들여다본다 (Lap의 배치) */}
           <Sep />
+          <SelectMenu
+            rows={rows}
+            compareIds={compareIds}
+            markPicked={markPicked}
+            onTrash={onTrash}
+          />
           <Btn tone="keep" onClick={() => setUi({ culling: true })}>
             고르기
           </Btn>
+          <ViewToggle
+            label="정보 패널"
+            on={infoPanel}
+            onClick={() => setInfoPanel(!infoPanel)}
+          >
+            <IconInfo className="w-[17px] h-[17px]" />
+          </ViewToggle>
         </div>
       )}
     </div>

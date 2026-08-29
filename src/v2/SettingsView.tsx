@@ -243,6 +243,16 @@ function Browse() {
         </span>
       </Row>
       <Row
+        label="이름줄 표시"
+        hint={
+          style === "card"
+            ? "사진 아래 이름과 날짜·크기"
+            : "카드 보기에서만 뜹니다"
+        }
+      >
+        <Toggle k="caption" />
+      </Row>
+      <Row
         label="이름줄 첫째 줄"
         hint={style === "card" ? undefined : "카드 보기에서만 뜹니다"}
       >

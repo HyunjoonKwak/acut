@@ -3,8 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fmtBytes } from "./format";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
-import { useData } from "./dataStore";
-import type { FolderRow } from "./types";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 /**
  * 두 폴더 비교 — «후보1번/연도별»과 «후보2번»처럼 내가 고른 두 폴더 아래를 견준다.
@@ -30,32 +29,32 @@ type PairRow = {
   bytes: number;
 };
 type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
+/** Finder 로 고른 폴더가 라이브러리 안의 어느 폴더인가 */
+type FolderHit = { id: number; library_id: number; library: string; path: string; file_count: number };
 
 const settled = (f: FolderIn) => f.area === 1 || f.area === 2;
 
 export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const ask = useConfirm();
-  const libs = useData((s) => s.libs);
-  const [all, setAll] = useState<FolderRow[]>([]);
-  const [a, setA] = useState<FolderRow | null>(null);
-  const [b, setB] = useState<FolderRow | null>(null);
+  const [a, setA] = useState<FolderHit | null>(null);
+  const [b, setB] = useState<FolderHit | null>(null);
   const [rows, setRows] = useState<PairRow[] | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // 두 폴더가 정해지면 바로 견준다 — «비교» 단추를 따로 누를 이유가 없다
   useEffect(() => {
+    if (!a || !b) return;
     let live = true;
-    invoke<FolderRow[]>("folders_list", { libraryId: null }).then(
-      (f) => live && setAll(f.filter((x) => x.id !== null)),
-    );
+    setBusy(true);
+    setRows(null);
+    invoke<PairRow[]>("cull_compare_folders", { aFolderId: a.id, bFolderId: b.id })
+      .then((r) => live && setRows(r))
+      .catch((e) => live && toast(String(e), "drop"))
+      .finally(() => live && setBusy(false));
     return () => {
       live = false;
     };
-  }, []);
-
-  const libName = useCallback(
-    (id: number) => libs.find((l) => l.id === id)?.name ?? "",
-    [libs],
-  );
+  }, [a, b]);
 
   const compare = useCallback(async () => {
     if (!a?.id || !b?.id) return;
@@ -126,16 +125,14 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="h-full flex flex-col">
       <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line text-[12.5px] flex-wrap">
-        <Picker label="A" value={a} all={all} libName={libName} onPick={setA} exclude={b} />
+        <Picker label="A" value={a} onPick={setA} />
         <span className="text-fg-mute">⇔</span>
-        <Picker label="B" value={b} all={all} libName={libName} onPick={setB} exclude={a} />
-        <button
-          onClick={compare}
-          disabled={!a || !b || busy}
-          className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
-        >
-          {busy ? "견주는 중…" : "비교"}
-        </button>
+        <Picker label="B" value={b} onPick={setB} />
+        {busy && (
+          <span className="flex items-center gap-2 text-keep">
+            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 견주는 중…
+          </span>
+        )}
         {rows && (
           <span className="text-fg-dim tabular-nums">
             똑같은 폴더 <b className="text-fg">{same.length.toLocaleString()}</b>쌍
@@ -167,8 +164,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
 
       <div className="flex-1 min-h-0 overflow-y-auto scroll-thin">
         {rows === null ? (
-          <div className="h-full flex items-center justify-center text-fg-mute text-[13px]">
-            위에서 두 폴더를 고르고 «비교»를 누르세요 — 예: A 통합전후보 · 후보1번/연도별, B 통합전후보 · 후보2번
+          <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute text-[13px]">
+            <div>«폴더 고르기…»로 견줄 두 폴더를 Finder 에서 고르세요 — 등록한 라이브러리 안의 폴더면 됩니다.</div>
+            <div className="text-fg-faint text-[12px]">예: A = T7 › 통합전후보 › 후보1번 › 연도별, B = T7 › 통합전후보 › 후보2번</div>
           </div>
         ) : rows.length === 0 ? (
           <div className="h-full flex items-center justify-center text-fg-mute">
@@ -178,8 +176,8 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           <table className="w-full text-[12.5px] tabular-nums">
             <thead className="text-[10.5px] text-fg-mute uppercase tracking-wider sticky top-0 bg-canvas">
               <tr className="text-left">
-                <th className="py-1.5 px-4 font-medium">A · {a && `${libName(a.library_id)} · ${a.path || "/"}`}</th>
-                <th className="py-1.5 pr-3 font-medium">B · {b && `${libName(b.library_id)} · ${b.path || "/"}`}</th>
+                <th className="py-1.5 px-4 font-medium">A · {a && `${a.library} · ${a.path || "/"}`}</th>
+                <th className="py-1.5 pr-3 font-medium">B · {b && `${b.library} · ${b.path || "/"}`}</th>
                 <th className="py-1.5 pr-3 font-medium text-right">장수</th>
                 <th className="py-1.5 pr-3 font-medium">상태</th>
                 <th className="py-1.5 pr-4 font-medium"></th>
@@ -246,13 +244,14 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
 }
 
 /** 폴더 칸 — 고른 뿌리 아래 경로만 보인다 */
-function Cell({ f, sub }: { f: FolderIn | null; sub: FolderRow | null }) {
+function Cell({ f, sub }: { f: FolderIn | null; sub: FolderHit | null }) {
   if (!f) return <span className="text-fg-faint">—</span>;
+  // 고른 뿌리 아래 경로만 — 뿌리가 라이브러리 자체(경로 "")면 전체를 보인다
   const rootPath = sub?.path ?? "";
   const shown =
-    rootPath && f.folder.startsWith(rootPath)
+    sub && f.library_id === sub.library_id && (rootPath === "" || f.folder === rootPath || f.folder.startsWith(rootPath + "/"))
       ? f.folder.slice(rootPath.length).replace(/^\//, "") || "(이 폴더)"
-      : f.folder || "/";
+      : `${f.library} · ${f.folder || "/"}`;
   return (
     <span className="truncate block" title={`${f.library} / ${f.folder || "/"}`}>
       {settled(f) && <span className="text-keep text-[10px] mr-1">NAS</span>}
@@ -261,66 +260,50 @@ function Cell({ f, sub }: { f: FolderIn | null; sub: FolderRow | null }) {
   );
 }
 
-/** 폴더 고르기 — 글자로 걸러 고른다. 폴더가 수천 개라 목록 전체는 못 보여 준다 */
+/** 폴더 고르기 — Finder 창으로. 라이브러리 안의 폴더를 DB 의 폴더 행으로 바꾼다 */
 function Picker({
   label,
   value,
-  all,
-  libName,
   onPick,
-  exclude,
 }: {
   label: string;
-  value: FolderRow | null;
-  all: FolderRow[];
-  libName: (id: number) => string;
-  onPick: (f: FolderRow) => void;
-  exclude: FolderRow | null;
+  value: FolderHit | null;
+  onPick: (f: FolderHit) => void;
 }) {
-  const [q, setQ] = useState("");
-  const [open, setOpen] = useState(false);
-  const hits = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    return all
-      .filter((f) => f.id !== exclude?.id)
-      .filter((f) => !t || `${libName(f.library_id)} ${f.path}`.toLowerCase().includes(t))
-      .slice(0, 40);
-  }, [q, all, exclude, libName]);
+  const pick = async () => {
+    const picked = await openDialog({ directory: true, multiple: false, title: `${label} 폴더 고르기` });
+    if (typeof picked !== "string") return;
+    try {
+      const hit = await invoke<FolderHit | null>("folder_by_path", { path: picked });
+      if (!hit) {
+        toast("등록된 라이브러리 안의 폴더가 아닙니다 — 왼쪽 앨범에 있는 폴더를 고르세요", "drop");
+        return;
+      }
+      onPick(hit);
+    } catch (e) {
+      toast(String(e), "drop");
+    }
+  };
   return (
-    <div className="relative flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5">
       <span className="text-fg-mute font-semibold">{label}</span>
-      <input
-        value={open ? q : value ? `${libName(value.library_id)} · ${value.path || "/"}` : q}
-        placeholder="폴더 이름으로 찾기…"
-        onFocus={() => {
-          setOpen(true);
-          setQ("");
-        }}
-        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-        onChange={(e) => setQ(e.target.value)}
-        className="h-7 w-[300px] px-2 rounded-md bg-raised text-fg ring-1 ring-line outline-none focus:ring-accent"
-      />
-      {open && (
-        <ul className="absolute left-4 top-8 z-40 w-[420px] max-h-72 overflow-y-auto scroll-thin bg-raised rounded-lg ring-1 ring-line-strong shadow-2xl py-1">
-          {hits.length === 0 && <li className="px-3 py-1.5 text-fg-mute">없음</li>}
-          {hits.map((f) => (
-            <li key={`${f.library_id}-${f.id}`}>
-              <button
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  onPick(f);
-                  setOpen(false);
-                }}
-                className="w-full text-left px-3 py-1.5 hover:bg-hover"
-              >
-                <span className="text-fg-mute">{libName(f.library_id)} · </span>
-                {f.path || "/"}
-                <span className="text-fg-mute"> ({f.file_count.toLocaleString()})</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <button
+        onClick={pick}
+        title="Finder 에서 폴더 고르기"
+        className={`h-7 min-w-[260px] max-w-[420px] px-2.5 rounded-md text-left truncate ring-1 ${
+          value ? "bg-raised text-fg ring-line" : "bg-raised text-fg-mute ring-line-strong"
+        }`}
+      >
+        {value ? (
+          <>
+            <span className="text-fg-mute">{value.library} · </span>
+            {value.path || "/"}
+            <span className="text-fg-mute"> ({value.file_count.toLocaleString()})</span>
+          </>
+        ) : (
+          "폴더 고르기…"
+        )}
+      </button>
     </div>
   );
 }

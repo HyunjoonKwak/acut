@@ -362,6 +362,58 @@ pub async fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result
 /// 사이드바 폴더 트리. 라이브러리를 고른 뒤에만 의미가 있다.
 ///
 /// 스캐너는 파일이 든 폴더만 기록하므로 중간 마디는 [`tree::build`]가 만든다.
+#[derive(Debug, Serialize)]
+pub struct FolderHit {
+    pub id: i64,
+    pub library_id: i64,
+    pub library: String,
+    /// 라이브러리 기준 경로
+    pub path: String,
+    pub file_count: i64,
+}
+
+/// Finder 로 고른 절대경로 → 등록된 라이브러리 안의 폴더 행. 밖이면 None.
+/// exFAT 은 목록을 NFD 로 주니 NFC 로 맞춰 견준다.
+#[tauri::command]
+pub async fn folder_by_path(state: State<'_, AppState>, path: String) -> Result<Option<FolderHit>, String> {
+    use unicode_normalization::UnicodeNormalization;
+    let nfc = |s: &str| s.nfc().collect::<String>();
+    let want = nfc(path.trim_end_matches('/'));
+    let libs = crate::db::libraries::list(&state.db).map_err(err)?;
+    // 가장 깊이 맞는 라이브러리 — 라이브러리가 겹쳐 등록돼 있을 수 있다
+    let mut best: Option<(&crate::db::libraries::Library, String)> = None;
+    for l in &libs {
+        let Some(dir) = &l.dir else { continue };
+        let root = nfc(&dir.to_string_lossy()).trim_end_matches('/').to_string();
+        let sub = if want == root {
+            Some(String::new())
+        } else {
+            want.strip_prefix(&format!("{root}/")).map(str::to_string)
+        };
+        if let Some(sub) = sub {
+            if best.as_ref().is_none_or(|(b, _)| b.dir.as_ref().map_or(0, |d| d.as_os_str().len()) < root.len()) {
+                best = Some((l, sub));
+            }
+        }
+    }
+    let Some((lib, sub)) = best else { return Ok(None) };
+    let vol_rel = crate::media::cache::rel_path(&lib.rel_path, &sub);
+    let hit = state
+        .db
+        .read(|c| {
+            use rusqlite::OptionalExtension;
+            c.query_row(
+                "SELECT id, (SELECT COUNT(*) FROM files WHERE folder_id = folders.id AND trashed_at IS NULL)
+                 FROM folders WHERE volume_uuid = ?1 AND rel_path = ?2",
+                rusqlite::params![lib.volume_uuid, vol_rel],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .optional()
+        })
+        .map_err(err)?;
+    Ok(hit.map(|(id, n)| FolderHit { id, library_id: lib.id, library: lib.name.clone(), path: sub, file_count: n }))
+}
+
 #[tauri::command]
 pub async fn folders_list(
     state: State<'_, AppState>,

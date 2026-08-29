@@ -141,10 +141,17 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   // 스캔 진행
   useEffect(() => {
     const un: Array<() => void> = [];
+    // 갈래 하나가 끝날 때마다 위의 숫자와 목록을 새로 읽는다 — 안 그러면 전체
+    // 해시를 읽는 한 시간 동안 «같은 순간 0»으로 보여 아무것도 못 찾은 줄 안다.
+    const stage = (msg: string) => {
+      setBusy(msg);
+      loadSummary();
+      loadGroups(kind);
+    };
     listen<{ found: number; bytes: number }>("cull-junk", () =>
-      setBusy("잡동사니 완료 — 같은 순간 찾는 중"),
+      stage("잡동사니 완료 — 같은 순간 찾는 중"),
     ).then((f) => un.push(f));
-    listen("cull-burst", () => setBusy("같은 순간 완료 — 중복 확인 중")).then(
+    listen("cull-burst", () => stage("같은 순간 완료 — 중복 확인 중")).then(
       (f) => un.push(f),
     );
     listen<{
@@ -163,7 +170,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
           : `중복 확인 — 빠른 해시 ${p.hashed.toLocaleString()}/${p.candidates.toLocaleString()}`,
       );
     }).then((f) => un.push(f));
-    listen("cull-dedup", () => setBusy("중복 완료 — 비슷한 장면 찾는 중")).then(
+    listen("cull-dedup", () => stage("중복 완료 — 비슷한 장면 찾는 중")).then(
       (f) => un.push(f),
     );
     listen<{ photos: number; groups: number }>("cull-scene", (e) =>

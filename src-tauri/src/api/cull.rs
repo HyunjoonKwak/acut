@@ -221,6 +221,17 @@ pub async fn cull_set_best(
     state
         .db
         .transaction(|tx| {
+            // 다시 찾기로 무리 id 가 재사용되면 화면의 id 가 다른 무리를 가리킬 수 있다 —
+            // 그 무리에 없는 사진이면 대표가 하나도 없는 무리가 되어 다음 확정이 전부를
+            // 제외한다. 바꾸기 전에 있는지부터 본다 (리뷰 H6)
+            let member: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM group_members WHERE group_id=?1 AND file_id=?2",
+                rusqlite::params![group_id, file_id],
+                |r| r.get(0),
+            )?;
+            if member == 0 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
             tx.execute("UPDATE group_members SET is_best=0 WHERE group_id=?1", [group_id])?;
             tx.execute(
                 "UPDATE group_members SET is_best=1 WHERE group_id=?1 AND file_id=?2",

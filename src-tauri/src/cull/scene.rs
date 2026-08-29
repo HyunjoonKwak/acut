@@ -51,7 +51,21 @@ struct Row {
     sharpness: Option<f64>,
     /// 폴더의 영역 — 내사진·공용에 있는 것이 대표가 된다
     area: i32,
-    v: Vec<f32>,
+}
+
+/// 임베딩 전부를 한 덩어리에 — 장마다 Vec 을 두면 22.8만 장에 900MB 를 넘겼다 (리뷰 H9).
+/// i 번째 사진의 벡터는 `vecs[i*DIM..(i+1)*DIM]`.
+struct Loaded {
+    rows: Vec<Row>,
+    vecs: Vec<f32>,
+    /// 벡터 길이 — 첫 행이 정한다. 길이가 다른 것(옛 모델)은 견줄 수 없어 뺀다
+    dim: usize,
+}
+
+impl Loaded {
+    fn v(&self, i: usize) -> &[f32] {
+        &self.vecs[i * self.dim..(i + 1) * self.dim]
+    }
 }
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
@@ -83,7 +97,7 @@ fn share_group(taken: &HashMap<i64, Vec<i64>>, a: i64, b: i64) -> bool {
     }
 }
 
-fn load(db: &Db) -> Result<Vec<Row>> {
+fn load(db: &Db) -> Result<Loaded> {
     db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fi.taken_at, fi.size, fi.sharpness, fi.embedding, fo.area
@@ -91,28 +105,40 @@ fn load(db: &Db) -> Result<Vec<Row>> {
              WHERE fi.embedding IS NOT NULL AND fi.kind <> 1 AND fi.trashed_at IS NULL
              ORDER BY fi.taken_at, fi.id",
         )?;
-        let it = st.query_map([], |r| {
+        let mut rows = Vec::new();
+        let mut vecs: Vec<f32> = Vec::new();
+        let mut dim = 0usize;
+        let mut q = st.query([])?;
+        while let Some(r) = q.next()? {
             let blob: Vec<u8> = r.get(4)?;
-            Ok(Row {
+            let v = clip::from_blob(&blob);
+            if dim == 0 {
+                dim = v.len();
+            }
+            if v.len() != dim || dim == 0 {
+                continue; // 길이가 다른 벡터(옛 모델)는 견줄 수 없다
+            }
+            rows.push(Row {
                 id: r.get(0)?,
                 taken_at: r.get(1)?,
                 size: r.get(2)?,
                 sharpness: r.get(3)?,
                 area: r.get(5)?,
-                v: clip::from_blob(&blob),
-            })
-        })?;
-        it.collect::<rusqlite::Result<Vec<_>>>()
+            });
+            vecs.extend_from_slice(&v);
+        }
+        Ok(Loaded { rows, vecs, dim })
     })
 }
 
 /// 시간순 이웃 가운데 문턱을 넘는 짝. (앞, 뒤, 닮음)
 fn pairs(
-    rows: &[Row],
+    loaded: &Loaded,
     threshold: f32,
     taken: &HashMap<i64, Vec<i64>>,
     cancel: &AtomicBool,
 ) -> (Vec<(usize, usize, f32)>, usize) {
+    let rows = &loaded.rows;
     let out: Vec<(Vec<(usize, usize, f32)>, usize)> = rows
         .par_iter()
         .enumerate()
@@ -130,7 +156,7 @@ fn pairs(
                     continue;
                 }
                 n += 1;
-                let s = dot(&a.v, &b.v);
+                let s = dot(loaded.v(i), loaded.v(j));
                 if s >= threshold {
                     hits.push((i, j, s));
                 }
@@ -148,14 +174,15 @@ pub fn scan(
     cancel: Arc<AtomicBool>,
     on_progress: impl Fn(&SceneProgress) + Sync + Send,
 ) -> Result<SceneProgress> {
-    let rows = load(db)?;
+    let loaded = load(db)?;
+    let rows = &loaded.rows;
     let mut progress = SceneProgress { photos: rows.len(), ..Default::default() };
     on_progress(&progress);
     if rows.len() < MIN_GROUP {
         return Ok(progress);
     }
     let taken = taken(db)?;
-    let (links, compared) = pairs(&rows, threshold, &taken, &cancel);
+    let (links, compared) = pairs(&loaded, threshold, &taken, &cancel);
     progress.compared = compared;
     if cancel.load(Ordering::Relaxed) {
         return Ok(progress);

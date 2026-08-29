@@ -5,7 +5,8 @@
 //!
 //! 폴더의 «서명» = 바로 아래 파일들의 전체 해시를 정렬해 이어 붙인 것. 서명이 같은
 //! 폴더끼리 한 묶음이다. 파일 하나라도 해시가 없으면(크기가 유일해 후보조차 아니었던
-//! 파일) 그 폴더는 어디와도 같을 수 없으니 뺀다. 하위 폴더는 저마다 따로 비교한다.
+//! 파일) 그 폴더는 어디와도 같을 수 없으니 뺀다. 하위 폴더가 있는 폴더는 묶지 않는다 —
+//! 하위는 저마다 따로 비교한다.
 
 use rusqlite::{params, Connection, Transaction};
 use serde::Serialize;
@@ -61,7 +62,10 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
          JOIN tot t ON t.folder_id = sig.folder_id
          JOIN folders fo ON fo.id = sig.folder_id
          JOIN libraries l ON l.id = fo.library_id
-         WHERE t.nohash = 0 AND t.n >= 1",
+         WHERE t.nohash = 0 AND t.n >= 1
+           -- 하위 폴더가 있으면 «바로 아래 파일만 같다»일 뿐이다 — 사용자는 폴더째 같다고
+           -- 읽고 Finder 에서 지운다. 하위는 저마다 따로 견준다 (리뷰 H5)
+           AND NOT EXISTS (SELECT 1 FROM folders c WHERE c.parent_id = fo.id)",
     )?;
     let rows = st.query_map([], |r| {
         let lib_rel: String = r.get(3)?;

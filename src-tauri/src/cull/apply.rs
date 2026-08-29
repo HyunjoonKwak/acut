@@ -49,7 +49,17 @@ pub fn apply_all(
         params![kind, folder_id, library_id],
     )?;
     let total = tx.query_row("SELECT COUNT(*) FROM temp.todo", [], |r| r.get::<_, i64>(0))? as usize;
-    let skipped = if skip_settled {
+    // 잡동사니는 무리가 «사유»별이라 수천 장이 한 무리다 — 정착 구역 한 장 때문에 무리째
+    // 건너뛰면 버튼이 영영 먹통이다. 구성원 단위로 정착 구역만 빼고 나머지는 표시한다 (리뷰 H7)
+    let skipped = if skip_settled && kind == 1 {
+        tx.query_row(
+            "SELECT COUNT(DISTINCT m.file_id) FROM group_members m
+             JOIN files f ON f.id = m.file_id JOIN folders fo ON fo.id = f.folder_id
+             WHERE m.group_id IN (SELECT id FROM temp.todo) AND fo.area IN (1, 2)",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as usize
+    } else if skip_settled {
         tx.execute(
             "DELETE FROM temp.todo WHERE id IN (
                SELECT m.group_id FROM group_members m
@@ -71,11 +81,24 @@ pub fn apply_all(
         .map(|n| n as usize)
     };
     let (kept, rejected) = if kind == 1 {
-        let all = count(0)? + count(1)?;
+        let area = if skip_settled { " AND fo.area NOT IN (1, 2)" } else { "" };
+        let all = tx.query_row(
+            &format!(
+                "SELECT COUNT(DISTINCT m.file_id) FROM group_members m
+                 JOIN files f ON f.id = m.file_id JOIN folders fo ON fo.id = f.folder_id
+                 WHERE m.group_id IN (SELECT id FROM temp.todo){area}"
+            ),
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as usize;
         if !dry_run {
             tx.execute(
-                "UPDATE files SET culling_flag = 2 WHERE culling_flag <> 1 AND id IN (
-                   SELECT file_id FROM group_members WHERE group_id IN (SELECT id FROM temp.todo))",
+                &format!(
+                    "UPDATE files SET culling_flag = 2 WHERE culling_flag <> 1 AND id IN (
+                       SELECT m.file_id FROM group_members m
+                       JOIN files f ON f.id = m.file_id JOIN folders fo ON fo.id = f.folder_id
+                       WHERE m.group_id IN (SELECT id FROM temp.todo){area})"
+                ),
                 [],
             )?;
         }
@@ -102,7 +125,9 @@ pub fn apply_all(
         tx.execute("UPDATE groups SET state = 1 WHERE id IN (SELECT id FROM temp.todo)", [])?;
     }
     tx.execute_batch("DROP TABLE temp.todo;")?;
-    Ok(ApplyAll { groups: total - skipped, kept, rejected, skipped })
+    // 잡동사니의 skipped 는 «건너뛴 사진 수», 나머지 갈래는 «건너뛴 무리 수»
+    let groups = if kind == 1 { total } else { total - skipped };
+    Ok(ApplyAll { groups, kept, rejected, skipped })
 }
 
 #[derive(Debug, Clone, Serialize)]

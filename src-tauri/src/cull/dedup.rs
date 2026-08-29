@@ -42,6 +42,9 @@ struct Cand {
     /// 지난 스캔이 남긴 해시 — 있으면 다시 읽지 않는다. 파일이 바뀌면 스캔이 지운다.
     quick: Option<String>,
     full: Option<String>,
+    /// 대표를 고를 때 쓴다 — 쓰기 잠금 안에서 구성원마다 SELECT 하지 않게 (리뷰 H8)
+    area: i32,
+    taken_at: i64,
 }
 
 /// 읽은 해시를 남긴다 — 다음 스캔은 이 파일들을 다시 읽지 않는다.
@@ -76,7 +79,8 @@ pub fn scan(
     // 1단계: 크기가 겹치는 것만 후보로. 유일한 크기는 볼 것도 없다.
     let mut cands: Vec<Cand> = db.read(|c| {
         let mut st = c.prepare(
-            "SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid, fi.quick_hash, fi.full_hash
+            "SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid, fi.quick_hash, fi.full_hash,
+                    fo.area, fi.taken_at
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
              WHERE fi.size > 0 AND fi.trashed_at IS NULL
                AND fi.size IN (SELECT size FROM files WHERE trashed_at IS NULL GROUP BY size HAVING COUNT(*) > 1)",
@@ -91,6 +95,8 @@ pub fn scan(
                 size: r.get(3)?,
                 quick: r.get(5)?,
                 full: r.get(6)?,
+                area: r.get(7)?,
+                taken_at: r.get(8)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -246,16 +252,11 @@ pub fn scan(
             // 정리된 자리(내사진·공용)에 있는 사본이 먼저다 — 옛 백업 디스크와
             // 운영 디스크 사이 중복에서 «올라간 쪽을 남기고 옛것을 버린다»가 되게.
             // 같은 자리끼리면 가장 이른 촬영일.
-            let mut best_key = (i32::MAX, i64::MAX);
+            let mut best_key = (i32::MAX, i64::MAX, i64::MAX);
             for id in ids {
-                let (area, t): (i32, i64) = tx
-                    .query_row(
-                        "SELECT fo.area, fi.taken_at FROM files fi JOIN folders fo ON fo.id = fi.folder_id WHERE fi.id = ?1",
-                        [id],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
-                    )
-                    .unwrap_or((i32::MAX, i64::MAX));
-                let key = (if area == 1 || area == 2 { 0 } else { 1 }, t);
+                let (area, t) = by_id.get(id).map(|c| (c.area, c.taken_at)).unwrap_or((i32::MAX, i64::MAX));
+                // 같은 자리·같은 시각이면 id 로 — 돌릴 때마다 대표가 바뀌지 않게
+                let key = (if area == 1 || area == 2 { 0 } else { 1 }, t, *id);
                 if key < best_key {
                     best_key = key;
                     best = *id;

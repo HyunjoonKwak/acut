@@ -5,6 +5,7 @@ import { useJob } from "./jobStore";
 import { toast } from "./toastStore";
 import { Kbd } from "./ui";
 import { useCountUp } from "./useCountUp";
+import { usePrefs } from "./prefs";
 import { useView } from "./viewStore";
 
 /**
@@ -33,6 +34,7 @@ export default function StatusActions({
   const viewTrash = useView((s) => s.viewTrash);
   const noThumb = useView((s) => s.picks.no_thumb);
   const hasJob = useJob((s) => s.job !== null);
+  const libId = usePrefs((s) => s.libId);
   const undoable = batches.find((b) => b.undone_at === null);
 
   return (
@@ -69,10 +71,10 @@ export default function StatusActions({
       {!hasJob && !viewTrash && (toClean?.files ?? 0) > 0 && (
         <button
           onClick={cleanExcluded}
-          title={`제외 ${toClean?.files.toLocaleString()}장 · ${fmtBytes(toClean?.bytes ?? 0)} 확보`}
+          title={`${libId === null ? "모든 라이브러리" : "이 라이브러리"}의 제외 ${toClean?.files.toLocaleString()}장 · ${fmtBytes(toClean?.bytes ?? 0)} 확보`}
           className="h-5 px-2 rounded bg-keep text-keep-fg font-semibold"
         >
-          제외 {toClean?.files.toLocaleString()}장 치우기
+          {libId === null ? "전체" : "이 라이브러리"} 제외 {toClean?.files.toLocaleString()}장 치우기
         </button>
       )}
       {!hasJob && nasNew && (

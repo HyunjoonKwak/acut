@@ -28,6 +28,8 @@ pub struct Outcome {
     pub bytes: i64,
     /// 첫 실패 사유. 전부 나열하면 화면에 담기지 않는다.
     pub first_error: Option<String>,
+    /// 사진이 다 나가 디스크에서 지운 폴더 수(치우기) · 행까지 지운 폴더 수(비우기)
+    pub folders_removed: usize,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -40,6 +42,7 @@ pub struct Summary {
 struct Item {
     id: i64,
     library_id: i64,
+    folder_id: i64,
     /// 볼륨 기준 상대경로
     vol_rel: String,
     /// 라이브러리 기준 상대경로 — 휴지통 안에서 이 구조를 그대로 쓴다
@@ -62,7 +65,7 @@ fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
                 fo.rel_path || CASE WHEN fo.rel_path = '' THEN '' ELSE '/' END || fi.name,
                 CASE WHEN l.rel_path = '' THEN fo.rel_path
                      ELSE substr(fo.rel_path, length(l.rel_path) + 2) END,
-                fi.name, fi.size
+                fi.name, fi.size, fi.folder_id
          FROM files fi
          JOIN folders fo ON fo.id = fi.folder_id
          JOIN libraries l ON l.id = fo.library_id
@@ -78,6 +81,7 @@ fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
             Ok(Item {
                 id: r.get(0)?,
                 library_id: r.get(1)?,
+                folder_id: r.get(7)?,
                 volume_uuid: r.get(2)?,
                 vol_rel: r.get(3)?,
                 lib_rel: crate::media::cache::rel_path(&lib_dir, &name),
@@ -226,6 +230,8 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
     let mut out = Outcome { batch_id, ..Default::default() };
     // 라이브러리·마운트는 한 번만 — 파일마다 찾으면 5천 장에 수천만 행 스캔·수만 syscall (리뷰 H16)
     let (libs, mounts) = lookups(db, &items)?;
+    // 옮기고 나서 비는 폴더 — (폴더 행, 디스크 경로, 라이브러리 뿌리)
+    let mut touched: std::collections::BTreeMap<i64, (PathBuf, PathBuf)> = std::collections::BTreeMap::new();
 
     for it in &items {
         let lib = libs.get(&it.library_id);
@@ -251,6 +257,9 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
 
         match move_with_sidecars(&src, &dest) {
             Ok(()) => {
+                if let Some(dir) = src.parent() {
+                    touched.entry(it.folder_id).or_insert_with(|| (dir.to_path_buf(), lib_dir.clone()));
+                }
                 // 저널 경로는 언제나 볼륨 기준이다 — 되돌릴 때 마운트만 붙이면 된다
                 let to_vol_rel = crate::media::cache::rel_path(&lib_rel, &dest_rel);
                 super::record(db, batch_id, "trash", it.id, &it.volume_uuid, &it.vol_rel,
@@ -277,7 +286,66 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
     }
 
     super::close_batch(db, batch_id, out.moved)?;
+    // 사진이 다 나간 폴더는 디스크에서 지운다 — «폴더가 똑같아서» 치운 것인데 빈 껍데기가
+    // 남으면 비교 화면에 «0장»으로 다시 나오고 Finder 에도 남는다 (사용자 지적).
+    // 폴더 행은 남긴다: 휴지통의 파일 행이 그 폴더를 가리키고(FK CASCADE), 되돌리면 폴더가 되살아난다
+    for (folder_id, (dir, lib_dir)) in touched {
+        let live: i64 = db.read(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM files WHERE folder_id = ?1 AND trashed_at IS NULL",
+                [folder_id],
+                |r| r.get(0),
+            )
+        })?;
+        if live == 0 {
+            out.folders_removed += prune_empty_dirs(&dir, &lib_dir);
+        }
+    }
     Ok(out)
+}
+
+/// Finder 가 남기는 것 — 이것만 있으면 «빈 폴더»로 본다
+fn is_junk_entry(name: &str) -> bool {
+    name == ".DS_Store" || name.starts_with("._") || name == "Thumbs.db" || name == "desktop.ini"
+}
+
+/// 빈 폴더를 지우고, 그래서 빈 위 폴더도 `stop`(라이브러리 뿌리) 바로 아래까지 올라가며 지운다.
+/// 사진·다른 파일·하위 폴더가 하나라도 있으면 손대지 않는다. 지운 폴더 수를 돌려준다
+pub fn prune_empty_dirs(dir: &Path, stop: &Path) -> usize {
+    let mut n = 0;
+    let mut cur = dir.to_path_buf();
+    loop {
+        if cur == stop || !cur.starts_with(stop) || cur.file_name().map(|f| f == ".acut").unwrap_or(false) {
+            break;
+        }
+        let Ok(entries) = std::fs::read_dir(&cur) else { break };
+        let mut junk = Vec::new();
+        let mut other = false;
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.file_type().map(|t| t.is_file()).unwrap_or(false) && is_junk_entry(&name) {
+                junk.push(e.path());
+            } else {
+                other = true;
+                break;
+            }
+        }
+        if other {
+            break;
+        }
+        for j in junk {
+            let _ = std::fs::remove_file(j);
+        }
+        if std::fs::remove_dir(&cur).is_err() {
+            break;
+        }
+        n += 1;
+        match cur.parent() {
+            Some(p) => cur = p.to_path_buf(),
+            None => break,
+        }
+    }
+    n
 }
 
 /// 휴지통에서 제자리로 되돌린다. 평점·판정은 그대로 살아 있다.
@@ -381,6 +449,16 @@ pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
         out.bytes += it.size;
     }
     super::close_batch(db, batch_id, out.moved)?;
+    // 파일 행이 하나도 안 남은 폴더 행은 이제 치운다 — 디스크의 폴더는 치울 때 이미 지웠다
+    let folders: std::collections::BTreeSet<i64> = items.iter().map(|i| i.folder_id).collect();
+    for f in folders {
+        out.folders_removed += db.write(|c| {
+            c.execute(
+                "DELETE FROM folders WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM files WHERE folder_id = ?1)",
+                [f],
+            )
+        })?;
+    }
     Ok(out)
 }
 
@@ -421,6 +499,21 @@ pub fn pending(db: &Db, library_id: Option<i64>) -> Result<Vec<i64>> {
     })
 }
 
+/// 이 폴더들 안에서 제외 표시된 것 — 비교 화면이 «방금 표시한 것만» 치울 때
+pub fn pending_in_folders(db: &Db, folder_ids: &[i64]) -> Result<Vec<i64>> {
+    if folder_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = folder_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    db.read(|c| {
+        let mut st = c.prepare(&format!(
+            "SELECT id FROM files WHERE culling_flag = 2 AND trashed_at IS NULL AND folder_id IN ({list})"
+        ))?;
+        let it = st.query_map([], |r| r.get(0))?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,6 +538,54 @@ mod tests {
             .unwrap();
         assert_eq!(ids.len(), 3);
         (dir, db, ids)
+    }
+
+    #[test]
+    fn emptied_folders_leave_the_disk_and_come_back_on_restore() {
+        let (dir, db, ids) = setup();
+        let a = dir.path().join("2020/여행");
+        std::fs::write(a.join(".DS_Store"), b"").unwrap(); // Finder 찌꺼기는 빈 폴더로 친다
+        let out = to_trash(&db, &ids, "치우기").unwrap();
+        assert_eq!(out.moved, 3);
+        assert!(!a.exists(), "사진이 다 나간 폴더는 디스크에서 사라진다");
+        assert!(!dir.path().join("2020").exists(), "그래서 빈 위 폴더도");
+        assert!(dir.path().is_dir(), "라이브러리 뿌리는 남는다");
+        assert_eq!(out.folders_removed, 2);
+        let rows: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%여행'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(rows, 1, "폴더 행은 남는다 — 휴지통 파일이 가리킨다");
+
+        restore(&db, &ids[..1]).unwrap();
+        assert!(a.join("20200101_120000.jpg").is_file(), "되돌리면 폴더가 되살아난다");
+
+        // 나머지 둘을 비우면 — 폴더엔 아직 한 장이 있으니 행은 남는다
+        empty(&db, &ids[1..]).unwrap();
+        let rows: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%여행'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn a_folder_with_other_files_is_not_removed() {
+        let (dir, db, ids) = setup();
+        let a = dir.path().join("2020/여행");
+        std::fs::write(a.join("메모.txt"), b"keep me").unwrap();
+        to_trash(&db, &ids, "치우기").unwrap();
+        assert!(a.join("메모.txt").is_file(), "사진이 아닌 파일이 있으면 폴더를 두어야 한다");
+    }
+
+    #[test]
+    fn pending_in_folders_scopes_to_the_given_folders() {
+        let (_d, db, ids) = setup();
+        db.write(|c| c.execute("UPDATE files SET culling_flag = 2", [])).unwrap();
+        let fid: i64 = db
+            .read(|c| c.query_row("SELECT folder_id FROM files WHERE id = ?1", [ids[0]], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(pending_in_folders(&db, &[fid]).unwrap().len(), 3);
+        assert!(pending_in_folders(&db, &[fid + 1000]).unwrap().is_empty());
+        assert!(pending_in_folders(&db, &[]).unwrap().is_empty());
     }
 
     #[test]

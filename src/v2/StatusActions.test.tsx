@@ -31,13 +31,14 @@ describe("상태바 오른쪽", () => {
     expect(noop.stopJob).toHaveBeenCalled();
   });
 
-  it("제외한 것이 있으면 치우기 버튼이 뜬다", async () => {
+  it("제외한 것이 있으면 치우기 버튼이 뜬다 — 범위(전체/이 라이브러리)를 이름에 단다", async () => {
     useData.setState({ toClean: { files: 12, bytes: 3_000_000 } });
     render(<StatusActions {...noop} />);
     await userEvent.click(
-      screen.getByRole("button", { name: "제외 12장 치우기" }),
+      screen.getByRole("button", { name: /제외 12장 치우기$/ }),
     );
     expect(noop.cleanExcluded).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /^(전체|이 라이브러리) 제외 12장 치우기$/ })).toBeInTheDocument();
   });
 
   it("«썸네일 없음»을 누르면 그것만 보고, 다시 누르면 풀린다", async () => {

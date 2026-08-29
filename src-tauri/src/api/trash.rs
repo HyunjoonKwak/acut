@@ -48,8 +48,13 @@ pub async fn trash_summary(
 pub async fn trash_apply(
     state: State<'_, AppState>,
     library_id: Option<i64>,
+    folder_ids: Option<Vec<i64>>,
 ) -> Result<trash::Outcome, String> {
-    let ids = trash::pending(&state.db, library_id).map_err(err)?;
+    // 폴더 목록이 오면 그 안의 제외분만 — 비교 화면의 «표시한 것만 치우기»
+    let ids = match folder_ids {
+        Some(f) => trash::pending_in_folders(&state.db, &f).map_err(err)?,
+        None => trash::pending(&state.db, library_id).map_err(err)?,
+    };
     trash::to_trash(&state.db, &ids, "제외한 사진 치우기").map_err(err)
 }
 

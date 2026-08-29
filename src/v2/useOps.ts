@@ -77,9 +77,10 @@ export function useOps(cb: {
     const libId = usePrefs.getState().libId;
     if (!toClean || toClean.files === 0) return;
     const ok = await ask({
-      title: `제외한 ${toClean.files.toLocaleString()}장을 치웁니다`,
+      title: `${libId === null ? "모든 라이브러리" : "이 라이브러리"}에서 제외한 ${toClean.files.toLocaleString()}장을 치웁니다`,
       lines: [
         `· ${fmtBytes(toClean.bytes)}가 라이브러리 안 .acut/휴지통 으로 옮겨집니다`,
+        "· 사진이 다 나간 폴더는 디스크에서도 지웁니다",
         "· 언제든 되돌릴 수 있습니다",
       ],
       confirmLabel: "치우기",

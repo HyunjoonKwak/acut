@@ -19,8 +19,9 @@ type FolderIn = {
   folder: string;
   area: number;
 };
-type FolderSet = { folders: FolderIn[]; files: number; bytes: number; pending: boolean };
+type FolderSet = { folders: FolderIn[]; files: number; bytes: number; pending: boolean; flagged: number };
 type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
+type Outcome = { moved: number; failed: number; first_error: string | null; bytes: number; folders_removed?: number };
 
 const settled = (f: FolderIn) => f.area === 1 || f.area === 2;
 /** 묶음의 열쇠 — 폴더 id 조합. 목록 순번은 새로 읽을 때마다 바뀐다 */
@@ -33,6 +34,42 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
   /// 열쇠는 폴더 id 조합 — 배열 순번으로 두면 목록이 새로 오며 다른 묶음에 붙는다 (리뷰 H4)
   const [keep, setKeep] = useState<Record<string, number>>({});
   const [tick, setTick] = useState(0);
+  const [sweeping, setSweeping] = useState(false);
+
+  /// 표시한 것을 휴지통으로 — 이 화면의 묶음 폴더들 안에서만
+  const sweep = useCallback(async () => {
+    if (!sets) return;
+    const flagged = sets.reduce((a, s) => a + s.flagged, 0);
+    if (flagged === 0) return;
+    const folderIds = [...new Set(sets.flatMap((s) => s.folders.map((f) => f.folder_id)))];
+    const ok = await ask({
+      title: `표시한 ${flagged.toLocaleString()}장을 휴지통으로 옮깁니다`,
+      lines: [
+        "여기 나온 묶음의 폴더 안에서 제외 표시된 사진만 — 다른 폴더는 건드리지 않습니다",
+        "사진이 다 나간 폴더는 디스크에서도 지웁니다",
+        "라이브러리 안 .acut/휴지통 으로 옮기는 것이라 되돌릴 수 있습니다 — 영구 삭제는 휴지통 화면에서",
+      ],
+      confirmLabel: "치우기",
+    });
+    if (!ok) return;
+    setSweeping(true);
+    try {
+      const r = await invoke<Outcome>("trash_apply", { libraryId: null, folderIds });
+      const dirs = r.folders_removed ?? 0;
+      toast(
+        r.failed
+          ? `${r.moved.toLocaleString()}장 치움 · ${r.failed}장 실패 (${r.first_error ?? ""})`
+          : `${r.moved.toLocaleString()}장 치웠습니다 (${fmtBytes(r.bytes)})${dirs ? ` · 빈 폴더 ${dirs}개 지움` : ""} — 휴지통에서 되돌릴 수 있습니다`,
+        r.failed ? "drop" : "ok",
+      );
+    } catch (e) {
+      toast(String(e), "drop");
+    } finally {
+      setSweeping(false);
+    }
+    setTick((t) => t + 1);
+    onChanged();
+  }, [sets, ask, onChanged]);
 
   useEffect(() => {
     let live = true;
@@ -130,6 +167,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
     );
   const pending = sets.filter((s) => s.pending);
   const gain = pending.reduce((a, s) => a + s.bytes * (s.folders.length - 1), 0);
+  const flagged = sets.reduce((a, s) => a + s.flagged, 0);
   if (sets.length === 0)
     return (
       <div className="h-full flex items-center justify-center text-fg-mute">
@@ -153,10 +191,26 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
           — 남길 폴더의 ○을 누르면 ● 남김이 되고 나머지는 제외. 건너뛰려면 그냥 두세요
         </span>
         <div className="flex-1" />
+        {sweeping && (
+          <span className="flex items-center gap-2 text-keep">
+            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 치우는 중…
+          </span>
+        )}
+        {flagged > 0 && (
+          <button
+            onClick={sweep}
+            disabled={sweeping}
+            title="여기 나온 폴더 안의 제외 표시된 사진을 휴지통으로 — 되돌릴 수 있습니다"
+            className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
+          >
+            표시한 {flagged.toLocaleString()}장 치우기
+          </button>
+        )}
         {pending.length > 0 && (
           <button
             onClick={applyAllNas}
-            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px]"
+            disabled={sweeping}
+            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
           >
             NAS 것 남기고 전부 처리
           </button>

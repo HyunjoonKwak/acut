@@ -31,8 +31,10 @@ pub struct FolderSet {
     pub files: i64,
     /// 폴더 하나의 용량 — 하나만 남기면 (n-1)배가 빈다
     pub bytes: i64,
-    /// 이 묶음의 파일 중 지우기 표시가 아직 없는 것이 있나
+    /// 이 묶음의 파일 중 제외 표시가 아직 없는 것이 있나
     pub pending: bool,
+    /// 묶음 안에서 제외 표시된 파일 수 — «표시한 N장 치우기»
+    pub flagged: i64,
 }
 
 fn in_lib(lib_rel: &str, rel: &str) -> String {
@@ -92,7 +94,7 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
     let mut st = c.prepare(
         "WITH tot AS (
            SELECT folder_id, COUNT(*) n, SUM(full_hash IS NULL) nohash, SUM(size) bytes,
-                  SUM(culling_flag = 0) pend
+                  SUM(culling_flag = 0) pend, SUM(culling_flag = 2) flagged
            FROM files WHERE trashed_at IS NULL GROUP BY folder_id),
          sig AS (
            SELECT folder_id, group_concat(full_hash, ',') s
@@ -101,7 +103,7 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
                  ORDER BY folder_id, full_hash)
            GROUP BY folder_id)
          SELECT fo.id, fo.library_id, l.name, l.rel_path, fo.rel_path, fo.area,
-                t.n, t.bytes, t.pend, sig.s, fo.volume_uuid
+                t.n, t.bytes, t.pend, sig.s, fo.volume_uuid, t.flagged
          FROM sig
          JOIN tot t ON t.folder_id = sig.folder_id
          JOIN folders fo ON fo.id = sig.folder_id
@@ -125,6 +127,7 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
             r.get::<_, String>(9)?,
             r.get::<_, String>(10)?,
             rel,
+            r.get::<_, i64>(11)?,
         ))
     })?;
     // 하위 폴더가 있으면 «바로 아래 파일만 같다»일 뿐이다 — 사용자는 폴더째 같다고 읽고
@@ -132,20 +135,21 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
     // 없으니 견주지 않는다
     let kids = parents_with_children(c)?;
     let mut online = Online::new();
-    let mut by_sig: HashMap<String, (Vec<FolderIn>, i64, i64, bool)> = HashMap::new();
+    let mut by_sig: HashMap<String, (Vec<FolderIn>, i64, i64, bool, i64)> = HashMap::new();
     for row in rows {
-        let (f, n, bytes, pend, s, vol, rel) = row?;
+        let (f, n, bytes, pend, s, vol, rel, flagged) = row?;
         if kids.contains(&(vol.clone(), rel)) || !online.is(&vol) {
             continue;
         }
-        let e = by_sig.entry(s).or_insert((Vec::new(), n, bytes, false));
+        let e = by_sig.entry(s).or_insert((Vec::new(), n, bytes, false, 0));
         e.0.push(f);
         e.3 |= pend > 0;
+        e.4 += flagged;
     }
     let mut out: Vec<FolderSet> = by_sig
         .into_values()
-        .filter(|(fs, _, _, _)| fs.len() >= 2)
-        .map(|(mut fs, files, bytes, pending)| {
+        .filter(|(fs, _, _, _, _)| fs.len() >= 2)
+        .map(|(mut fs, files, bytes, pending, flagged)| {
             // 정착 구역이 앞에, 그다음은 라이브러리·경로 순 — 남길 것이 맨 앞
             fs.sort_by(|a, b| {
                 let sa = !(a.area == 1 || a.area == 2);
@@ -154,7 +158,7 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
                     .then(a.library_id.cmp(&b.library_id))
                     .then(a.folder.cmp(&b.folder))
             });
-            FolderSet { folders: fs, files, bytes, pending }
+            FolderSet { folders: fs, files, bytes, pending, flagged }
         })
         .collect();
     // 경로 순 — 용량 순으로 두면 «2016, 2023, 2019…» 뒤죽박죽으로 보인다 (사용자 지적).
@@ -439,8 +443,8 @@ pub fn compare_two(
     // (정렬 열쇠 = 뿌리 기준 경로, 줄)
     let mut out: Vec<(String, PairRow)> = Vec::new();
     for ga in &a {
-        if ga.files == 0 && !ga.has_children {
-            continue; // 빈 폴더
+        if ga.files == 0 {
+            continue; // 사진이 바로 아래 없는 폴더(치워서 비었거나 하위만 있는) — 하위는 제 줄로 나온다
         }
         // 1) 내용이 같은 B 폴더 — 이름까지 같은 것을 먼저
         if let Some(s) = sig(ga) {
@@ -516,7 +520,7 @@ pub fn compare_two(
         }));
     }
     for (i, gb) in b.iter().enumerate() {
-        if used_b[i] || (gb.files == 0 && !gb.has_children) {
+        if used_b[i] || gb.files == 0 {
             continue;
         }
         out.push((gb.sub.clone(), PairRow {

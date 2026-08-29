@@ -14,6 +14,7 @@ import { doneSide, overlaps, type FolderHit, type PairRow } from "./twoFoldersLo
  */
 
 type PairsApplied = { applied: number; failed: number; first_error: string | null; kept: number; rejected: number };
+type Outcome = { moved: number; failed: number; first_error: string | null; bytes: number; folders_removed?: number };
 type FolderIn = NonNullable<PairRow["a"]>;
 
 const settled = (f: FolderIn) => f.area === 1 || f.area === 2;
@@ -117,7 +118,44 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const same = useMemo(() => rows?.filter((r) => r.same) ?? [], [rows]);
   const todo = useMemo(() => same.filter((r) => doneSide(r) === null), [same]);
   const sameBytes = todo.reduce((s, r) => s + r.bytes, 0);
-  const locked = busy || marking !== null;
+  /// 이 비교에 나온 폴더들 안에서 제외 표시된 장수 — 표시했으면 여기서 바로 치운다
+  const flagged = useMemo(() => (rows ?? []).reduce((s, r) => s + r.flagged_a + r.flagged_b, 0), [rows]);
+  const [sweeping, setSweeping] = useState(false);
+  const locked = busy || marking !== null || sweeping;
+
+  /// 표시한 것을 휴지통으로 — 세 화면을 건너다니지 않게 비교 화면 안에서 끝낸다.
+  /// 라이브러리 전체가 아니라 이 비교의 폴더들만
+  const sweep = useCallback(async () => {
+    if (!rows || flagged === 0) return;
+    const folderIds = [...new Set(rows.flatMap((r) => [r.a?.folder_id, r.b?.folder_id]).filter((x): x is number => x != null))];
+    const ok = await ask({
+      title: `표시한 ${flagged.toLocaleString()}장을 휴지통으로 옮깁니다`,
+      lines: [
+        "이 비교에 나온 폴더 안의 제외 표시된 사진만 — 라이브러리의 다른 폴더는 건드리지 않습니다",
+        "사진이 다 나간 폴더는 디스크에서도 지웁니다",
+        "라이브러리 안 .acut/휴지통 으로 옮기는 것이라 되돌릴 수 있습니다 — 영구 삭제는 휴지통 화면에서",
+      ],
+      confirmLabel: "치우기",
+    });
+    if (!ok) return;
+    setSweeping(true);
+    try {
+      const r = await invoke<Outcome>("trash_apply", { libraryId: null, folderIds });
+      const dirs = r.folders_removed ?? 0;
+      toast(
+        r.failed
+          ? `${r.moved.toLocaleString()}장 치움 · ${r.failed}장 실패 (${r.first_error ?? ""})`
+          : `${r.moved.toLocaleString()}장 치웠습니다 (${fmtBytes(r.bytes)})${dirs ? ` · 빈 폴더 ${dirs}개 지움` : ""} — 휴지통에서 되돌릴 수 있습니다`,
+        r.failed ? "drop" : "ok",
+      );
+    } catch (e) {
+      toast(String(e), "drop");
+    } finally {
+      setSweeping(false);
+    }
+    onChanged();
+    setTick((t) => t + 1);
+  }, [rows, flagged, ask, onChanged]);
 
   return (
     <div className="h-full flex flex-col">
@@ -135,6 +173,11 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
             <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> {marking.total.toLocaleString()}쌍에 표시 중…
           </span>
         )}
+        {sweeping && (
+          <span className="flex items-center gap-2 text-keep">
+            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 치우는 중…
+          </span>
+        )}
         {rows && !marking && (
           <span className="text-fg-dim tabular-nums">
             똑같은 폴더 <b className="text-fg">{same.length.toLocaleString()}</b>쌍
@@ -149,6 +192,16 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           </span>
         )}
         <div className="flex-1" />
+        {flagged > 0 && (
+          <button
+            onClick={sweep}
+            disabled={locked}
+            title="이 비교에 나온 폴더 안의 제외 표시된 사진을 휴지통으로 — 되돌릴 수 있습니다"
+            className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
+          >
+            표시한 {flagged.toLocaleString()}장 치우기
+          </button>
+        )}
         {todo.length > 0 && (
           <>
             <button

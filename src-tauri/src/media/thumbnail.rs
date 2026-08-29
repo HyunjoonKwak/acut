@@ -367,12 +367,13 @@ mod tests {
                     let p = e.path();
                     if p.is_dir() {
                         stack.push(p);
-                    } else if p
-                        .extension()
-                        .and_then(|x| x.to_str())
-                        .map(|x| x.eq_ignore_ascii_case(ext))
-                        .unwrap_or(false)
-                    {
+                        continue;
+                    }
+                    // macOS가 exFAT에 만드는 `._` 사이드카는 그림이 아니다
+                    if p.file_name().map(|n| n.to_string_lossy().starts_with("._")).unwrap_or(false) {
+                        continue;
+                    }
+                    if p.extension().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case(ext)).unwrap_or(false) {
                         return Some(p);
                     }
                 }

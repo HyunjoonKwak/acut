@@ -104,6 +104,12 @@ fn copy_tree(
     cancel: &AtomicBool,
     on_progress: &(impl Fn(&OffloadProgress) + Sync),
 ) -> std::io::Result<(usize, u64)> {
+    // 디스크가 준 이름은 NFC로 다듬는다 — macOS의 FSKit exFAT은 목록을 NFD로 주면서
+    // 찾기는 NFC로만 되어(실측), 목록 그대로 지우면 «없는 파일»이 된다.
+    let nfc_path = |p: &Path| -> PathBuf {
+        use unicode_normalization::UnicodeNormalization;
+        PathBuf::from(p.to_string_lossy().nfc().collect::<String>())
+    };
     let files: Vec<(PathBuf, u64)> = WalkDir::new(src)
         .follow_links(false)
         .into_iter()
@@ -111,7 +117,7 @@ fn copy_tree(
         .filter(|e| e.file_type().is_file())
         .map(|e| {
             let n = e.metadata().map(|m| m.len()).unwrap_or(0);
-            (e.into_path(), n)
+            (nfc_path(e.path()), n)
         })
         .collect();
     let total = files.len();
@@ -160,7 +166,7 @@ fn copy_tree(
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_dir())
-        .map(|e| e.into_path())
+        .map(|e| nfc_path(e.path()))
         .collect();
     dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
     for d in dirs {

@@ -1246,13 +1246,24 @@ pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<()
             checked += 1;
             let Some(Some(mount)) = mounts.get(&vol) else { continue };
             let rel = rel.trim_start_matches('/').to_string();
-            if let Some(t) = crate::media::mp4date::creation_time(&mount.join(&rel)) {
-                if t != taken_at {
-                    let _ = db.write(|c| {
-                        c.execute("UPDATE files SET taken_at = ?2, taken_at_source = 0 WHERE id = ?1", rusqlite::params![id, t])
-                    });
-                    fixed += 1;
+            let path = mount.join(&rel);
+            let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+            // 파일 안 → 파일명 → 파일 시각(더 이른 쪽) — Spotlight는 다시 믿지 않는다
+            let (t, src) = match crate::media::mp4date::creation_time(&path) {
+                Some(t) => (t, 0),
+                None => {
+                    let md = std::fs::metadata(&path).ok();
+                    let unix = |t: Option<std::time::SystemTime>| t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
+                    let now = chrono::Utc::now().timestamp();
+                    let (t, s) = crate::media::taken_at::resolve(None, &name, md.as_ref().and_then(|m| unix(m.modified().ok())), md.as_ref().and_then(|m| unix(m.created().ok())), now);
+                    (t, s as i32)
                 }
+            };
+            if t != taken_at {
+                let _ = db.write(|c| {
+                    c.execute("UPDATE files SET taken_at = ?2, taken_at_source = ?3 WHERE id = ?1", rusqlite::params![id, t, src])
+                });
+                fixed += 1;
             }
             if last.elapsed().as_millis() >= 200 {
                 last = std::time::Instant::now();

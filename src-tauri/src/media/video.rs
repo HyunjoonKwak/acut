@@ -130,9 +130,26 @@ pub fn probe(path: impl AsRef<Path>) -> VideoMeta {
     // 촬영 시각은 컨테이너에 박힌 것이 먼저 — Spotlight는 색인이 없으면 파일
     // 시스템의 생성 시각(복사한 날)을 돌려준다 (실측: 영상 194개가 전부 같은 날).
     let embedded = super::mp4date::creation_time(path.as_ref());
+    // Spotlight가 준 시각이 파일 시스템 시각(생성·수정)과 같으면 내용에서 읽은 게
+    // 아니라 복사한 날이다 — 버리고 파일명·수정시각 폴백에 맡긴다.
+    let fs_times: Vec<i64> = std::fs::metadata(path.as_ref())
+        .map(|m| {
+            [m.created().ok(), m.modified().ok()]
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64))
+                .collect()
+        })
+        .unwrap_or_default();
+    let spotlight = |item| {
+        // SAFETY: extern static 키를 읽기만 한다
+        unsafe { number(item, ffi::kMDItemContentCreationDate) }
+            .map(|t| t as i64)
+            .filter(|t| !fs_times.iter().any(|f| (f - t).abs() <= 2))
+    };
     let meta = unsafe {
         VideoMeta {
-            taken_at: embedded.or_else(|| number(item, ffi::kMDItemContentCreationDate).map(|t| t as i64)),
+            taken_at: embedded.or_else(|| spotlight(item)),
             duration_ms: number(item, ffi::kMDItemDurationSeconds).map(|d| (d * 1000.0) as i64),
             width: number(item, ffi::kMDItemPixelWidth).map(|v| v as i64),
             height: number(item, ffi::kMDItemPixelHeight).map(|v| v as i64),

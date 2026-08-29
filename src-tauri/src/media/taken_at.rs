@@ -140,6 +140,15 @@ fn parse_digits(d: &[u8]) -> Option<i64> {
         }
         return None;
     }
+    // 12자리 — 분까지 (`2022_05_14 19_17 (1).mp4`, 실측 46개)
+    if d.len() == 12 {
+        let (y, mo, da) = (num(&d[0..4]), num(&d[4..6]), num(&d[6..8]));
+        let (h, mi) = (num(&d[8..10]), num(&d[10..12]));
+        if valid_date(y, mo, da) && h < 24 && mi < 60 {
+            return Some(civil_to_unix(y, mo, da, h, mi, 0));
+        }
+        return None;
+    }
     if d.len() == 8 {
         let (y, mo, da) = (num(&d[0..4]), num(&d[4..6]), num(&d[6..8]));
         if valid_date(y, mo, da) {
@@ -266,6 +275,11 @@ mod tests {
         let exif = t(2018, 7, 25, 14, 31, 0);
         let (ts, src) = resolve(Some(exif), "20260101_123456.jpg", Some(NOW), Some(NOW), NOW);
         assert_eq!((ts, src), (exif, Source::Exif));
+    }
+
+    #[test]
+    fn filename_with_minutes_only() {
+        assert_eq!(from_filename("2022_05_14 19_17 (1).mp4"), Some(civil_to_unix(2022, 5, 14, 19, 17, 0)));
     }
 
     #[test]

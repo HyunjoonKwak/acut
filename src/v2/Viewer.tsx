@@ -46,6 +46,9 @@ export default function Viewer({
   const id = ids[index];
   const player = useRef<HTMLVideoElement>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
+  /// 화면에 뜬 원본 — 히스토그램이 다시 디코드하지 않고 이걸 읽는다
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const getShownImage = useCallback(() => imgRef.current, []);
   const [showInfo, setShowInfo] = useState(true);
   // 불러왔는지·실패했는지·확대했는지를 **어느 사진에 대해서**인지와 함께 둔다.
   // 사진이 바뀌면 id가 안 맞아 저절로 초기 상태가 된다 — 효과에서 셋을
@@ -346,7 +349,10 @@ export default function Viewer({
             />
           ) : (
             <img
+              ref={imgRef}
               src={src}
+              // 히스토그램이 이 그림을 캔버스로 읽는다 — 오리진이 달라 이게 없으면 캔버스가 오염된다
+              crossOrigin="anonymous"
               onLoad={() => setLoadedId(id)}
               onError={() => setFailedId(id)}
               draggable={false}
@@ -455,7 +461,7 @@ export default function Viewer({
             {!isVideo && !failed && (
               <>
                 <Sep />
-                <Histogram src={src} />
+                <Histogram src={src} getImage={getShownImage} />
               </>
             )}
 

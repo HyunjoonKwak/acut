@@ -5,7 +5,7 @@
 //! 저널에 남기므로 ⌘Z로 돌아온다 — 되돌리기의 일반 분기(경로 이동)가 처리한다.
 
 use crate::db::conn::{Db, DbError, Result};
-use crate::ops::trash::move_file;
+use crate::ops::trash::move_with_sidecars;
 
 /// 새 이름을 돌려준다 (NFC로 맞춘 것).
 pub fn rename(db: &Db, id: i64, new_name: &str) -> Result<String> {
@@ -44,7 +44,7 @@ pub fn rename(db: &Db, id: i64, new_name: &str) -> Result<String> {
     }
 
     let batch = super::open_batch(db, "rename", &format!("{old_name} → {new_name}"))?;
-    match move_file(&from, &to) {
+    match move_with_sidecars(&from, &to) {
         Ok(()) => {
             super::record(db, batch, "rename", id, &uuid, &from_rel, Some(&to_rel), Ok(()))?;
             let ext = std::path::Path::new(&new_name)

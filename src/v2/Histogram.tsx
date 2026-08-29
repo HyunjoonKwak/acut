@@ -20,10 +20,14 @@ const SAMPLE = 220;
 export default function Histogram({
   src,
   compact,
+  getImage,
 }: {
   src: string;
   /** 좁은 자리 — 제목을 빼고 낮게 그린다 */
   compact?: boolean;
+  /** 이미 화면에 뜬 <img> — 있으면 그걸 읽어 원본을 두 번 디코드하지 않는다.
+   *  그 img 에는 crossOrigin="anonymous" 가 있어야 캔버스가 오염되지 않는다 */
+  getImage?: () => HTMLImageElement | null;
 }) {
   const [h, setH] = useState<Bins | null>(null);
   const [err, setErr] = useState(false);
@@ -34,15 +38,13 @@ export default function Histogram({
     setH(null);
     setErr(false);
 
-    const img = new Image();
-    // photo:// 는 웹뷰와 다른 오리진이다. 이게 없으면 캔버스가 오염돼
-    // getImageData가 막힌다 (서버 쪽 CORS 헤더와 짝이다).
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
+    const draw = (img: HTMLImageElement) => {
       if (!live) return;
       try {
         const c = (cvs.current ??= document.createElement("canvas"));
-        const r = img.width / img.height || 1;
+        const iw = img.naturalWidth || img.width;
+        const ih = img.naturalHeight || img.height;
+        const r = iw / ih || 1;
         const w = Math.max(1, r >= 1 ? SAMPLE : Math.round(SAMPLE * r));
         const ht = Math.max(1, r >= 1 ? Math.round(SAMPLE / r) : SAMPLE);
         c.width = w;
@@ -56,6 +58,25 @@ export default function Histogram({
         setErr(true);
       }
     };
+
+    // 1) 화면의 그림을 재사용 — 뷰어는 원본(수십 MB)을 이미 디코드했다
+    const shown = getImage?.();
+    if (shown && shown.src === src) {
+      const onLoad = () => draw(shown);
+      if (shown.complete && shown.naturalWidth > 0) draw(shown);
+      else shown.addEventListener("load", onLoad, { once: true });
+      return () => {
+        live = false;
+        shown.removeEventListener("load", onLoad);
+      };
+    }
+
+    // 2) 없으면 따로 읽는다 (인스펙터의 썸네일처럼 작은 것)
+    const img = new Image();
+    // photo:// 는 웹뷰와 다른 오리진이다. 이게 없으면 캔버스가 오염돼
+    // getImageData가 막힌다 (서버 쪽 CORS 헤더와 짝이다).
+    img.crossOrigin = "anonymous";
+    img.onload = () => draw(img);
     img.onerror = () => live && setErr(true);
     img.src = src;
 
@@ -64,7 +85,7 @@ export default function Histogram({
       img.onload = null;
       img.onerror = null;
     };
-  }, [src]);
+  }, [src, getImage]);
 
   if (err) return null;
   const h1 = compact ? H_COMPACT : H;

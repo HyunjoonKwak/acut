@@ -60,8 +60,10 @@ export function usePhotoList(
   }, []);
 
   const loadFirst = useCallback(async () => {
-    // 도는 요청이 있어도 기다리지 않는다 — 조건이 바뀌었으니 그 응답은 버릴 것이다
+    // 도는 요청이 있어도 기다리지 않는다 — 조건이 바뀌었으니 그 응답은 버릴 것이다.
+    // 옛 조건의 스크롤 요청도 같이 버린다 — 새 조건 목록에 옛 순번(«6001/40»)이 붙던 길
     const g = ++gen.current;
+    pending.current = null;
     const free = take();
     setLoading(true);
     try {
@@ -118,10 +120,12 @@ export function usePhotoList(
             index: want,
           });
           if (g !== gen.current) return;
+          // group 을 같이 넘긴다 — 빼면 스크롤바로 옮긴 자리부터 묶기 머리글이 사라진다
           const p = await invoke<Page>("files_page", {
             filter,
             cursor: c,
             limit: PAGE,
+            group,
           });
           if (g !== gen.current) return;
           setRows(p.rows);
@@ -134,7 +138,7 @@ export function usePhotoList(
         free();
       }
     },
-    [filter, take],
+    [filter, group, take],
   );
 
   useEffect(() => {

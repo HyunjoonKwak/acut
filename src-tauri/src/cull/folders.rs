@@ -211,7 +211,7 @@ pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result
 /// 두 폴더 사이의 완전 중복 무리를 한꺼번에 — `keep` 폴더 것을 남기고 `drop` 폴더 것에 제외
 /// 표시. 두 폴더 밖까지 얽힌 무리는 건너뛴다(그건 개별 비교에서). 개별 비교의 «이 폴더 쌍
 /// 전부 이렇게» 단추가 쓴다.
-pub fn apply_pair(tx: &Transaction, keep: i64, drop: i64) -> rusqlite::Result<ApplyAll> {
+pub fn apply_pair(tx: &Transaction, keep: i64, drop: i64, dry_run: bool) -> rusqlite::Result<ApplyAll> {
     if keep == drop {
         return Err(rusqlite::Error::InvalidQuery);
     }
@@ -231,6 +231,23 @@ pub fn apply_pair(tx: &Transaction, keep: i64, drop: i64) -> rusqlite::Result<Ap
         params![keep, drop],
     )?;
     let groups = tx.query_row("SELECT COUNT(*) FROM temp.todo", [], |r| r.get::<_, i64>(0))? as usize;
+    if dry_run {
+        // 세기만 — 남길 폴더의 구성원이 남김, 나머지 중 아직 «남김»이 아닌 것이 제외
+        let kept = tx.query_row(
+            "SELECT COUNT(DISTINCT m.file_id) FROM group_members m JOIN files f ON f.id = m.file_id
+             WHERE m.group_id IN (SELECT id FROM temp.todo) AND f.folder_id = ?1",
+            [keep],
+            |r| r.get::<_, i64>(0),
+        )? as usize;
+        let rejected = tx.query_row(
+            "SELECT COUNT(DISTINCT m.file_id) FROM group_members m JOIN files f ON f.id = m.file_id
+             WHERE m.group_id IN (SELECT id FROM temp.todo) AND f.folder_id <> ?1 AND f.culling_flag <> 1",
+            [keep],
+            |r| r.get::<_, i64>(0),
+        )? as usize;
+        tx.execute_batch("DROP TABLE temp.todo;")?;
+        return Ok(ApplyAll { groups, kept, rejected, skipped: 0 });
+    }
     tx.execute(
         "UPDATE group_members SET is_best = CASE WHEN file_id IN (SELECT id FROM files WHERE folder_id = ?1) THEN 1 ELSE 0 END
          WHERE group_id IN (SELECT id FROM temp.todo)",
@@ -716,14 +733,21 @@ mod tests {
                 ))
             })
             .unwrap();
+        // 먼저 세어 보기 — 아무것도 안 바꾼다
+        let dry = db.transaction(|tx| apply_pair(tx, fc, fb, true)).unwrap();
+        assert_eq!((dry.groups, dry.kept, dry.rejected), (1, 1, 1));
+        let untouched: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE culling_flag <> 0", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(untouched, 0, "dry_run 은 판정을 안 바꾼다");
         // c 를 남기고 b 것에 표시 — 대표가 b 였어도 뒤집힌다
-        let r = db.transaction(|tx| apply_pair(tx, fc, fb)).unwrap();
+        let r = db.transaction(|tx| apply_pair(tx, fc, fb, false)).unwrap();
         assert_eq!((r.groups, r.kept, r.rejected), (1, 1, 1));
         let flag: i32 = db
             .read(|c| c.query_row("SELECT culling_flag FROM files WHERE name = '20200103_120000.jpg'", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(flag, 2, "b 의 것이 제외 표시");
-        assert!(db.transaction(|tx| apply_pair(tx, fb, fb)).is_err(), "같은 폴더끼리는 거절");
+        assert!(db.transaction(|tx| apply_pair(tx, fb, fb, false)).is_err(), "같은 폴더끼리는 거절");
     }
 
     #[test]

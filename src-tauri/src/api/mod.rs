@@ -646,31 +646,24 @@ pub async fn files_mark(
     if ids.is_empty() {
         return Ok(0);
     }
+    // 한 문장 — id 마다 세 문장이면 5,000장에 15,000번 실행이다. NULL 은 «그대로»
+    let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
     let n = state
         .db
         .transaction(|tx| {
-            let mut n = 0;
-            for id in &ids {
-                if let Some(r) = rating {
-                    tx.execute(
-                        "UPDATE files SET rating=?1 WHERE id=?2",
-                        rusqlite::params![r.clamp(0, 5), id],
-                    )?;
-                }
-                if let Some(f) = culling_flag {
-                    tx.execute(
-                        "UPDATE files SET culling_flag=?1 WHERE id=?2",
-                        rusqlite::params![f.clamp(0, 2), id],
-                    )?;
-                }
-                if let Some(v) = favorite {
-                    tx.execute(
-                        "UPDATE files SET favorite=?1 WHERE id=?2",
-                        rusqlite::params![v as i32, id],
-                    )?;
-                }
-                n += 1;
-            }
+            let n = tx.execute(
+                &format!(
+                    "UPDATE files SET rating = COALESCE(?1, rating),
+                                      culling_flag = COALESCE(?2, culling_flag),
+                                      favorite = COALESCE(?3, favorite)
+                     WHERE id IN ({list})"
+                ),
+                rusqlite::params![
+                    rating.map(|r| r.clamp(0, 5)),
+                    culling_flag.map(|f| f.clamp(0, 2)),
+                    favorite.map(|v| v as i32),
+                ],
+            )?;
             Ok(n)
         })
         .map_err(err)?;
@@ -1222,10 +1215,15 @@ pub async fn frontend_log(app: AppHandle, level: String, msg: String) -> Result<
     use std::io::Write;
     let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("webview.log");
+    // 상한 — 오류가 반복되는 세션에서 로그가 끝없이 자라지 않게. 4MB 를 넘으면 한 벌 물린다
+    if std::fs::metadata(&path).map(|m| m.len() > 4 * 1024 * 1024).unwrap_or(false) {
+        let _ = std::fs::rename(&path, dir.join("webview.log.1"));
+    }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join("webview.log"))
+        .open(&path)
         .map_err(|e| e.to_string())?;
     let msg: String = msg.chars().take(8_000).collect();
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");

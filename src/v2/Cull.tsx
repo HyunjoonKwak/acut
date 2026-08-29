@@ -33,6 +33,10 @@ type Member = {
   area: number;
 };
 type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
+/** 무리 목록 한 쪽 — 끝에 가까워지면 다음 쪽을 이어 읽는다 */
+const PAGE_GROUPS = 200;
+/** 정착 구역(내사진 1 · 공용 2) — 여기서 지우면 Drive 가 NAS 에서도 지운다 */
+const settledArea = (area: number | null | undefined) => area === 1 || area === 2;
 type Summary = {
   kind: number;
   groups: number;
@@ -117,6 +121,10 @@ export default function Cull({
   }, [kind]);
   // 응답 세대 — 늦게 온 다른 갈래의 무리가 지금 탭에 들어오지 않게 (리뷰 H3)
   const groupsGen = useRef(0);
+  /// 무리는 200개씩 — 끝에 가까워지면 다음 200개를 이어 붙인다 (처리한 무리는 목록에서 빠지니
+  /// 다음 쪽의 offset 은 «지금 들고 있는 미결 수»다)
+  const [groupsDone, setGroupsDone] = useState(false);
+  const loadingMore = useRef(false);
   const loadGroups = useCallback(async (k: number) => {
     const gen = ++groupsGen.current;
     if (k === -3 || k === -4) {
@@ -126,15 +134,43 @@ export default function Cull({
     }
     let g: Group[];
     try {
-      g = await invoke<Group[]>("cull_groups", { kind: k, limit: 200, offset: 0 });
+      g = await invoke<Group[]>("cull_groups", { kind: k, limit: PAGE_GROUPS, offset: 0 });
     } catch (e) {
       toast(String(e), "drop");
       return;
     }
     if (gen !== groupsGen.current || k !== kindRef.current) return;
     setGroups(g);
+    setGroupsDone(g.length < PAGE_GROUPS);
     setIdx(0);
   }, []);
+  const loadMoreGroups = useCallback(async () => {
+    if (loadingMore.current || groupsDone) return;
+    const k = kindRef.current;
+    if (k === -3 || k === -4) return;
+    loadingMore.current = true;
+    const gen = groupsGen.current;
+    try {
+      const more = await invoke<Group[]>("cull_groups", {
+        kind: k,
+        limit: PAGE_GROUPS,
+        offset: groups.length,
+      });
+      if (gen !== groupsGen.current || k !== kindRef.current) return;
+      setGroupsDone(more.length < PAGE_GROUPS);
+      setGroups((prev) => {
+        const have = new Set(prev.map((g) => g.id));
+        return [...prev, ...more.filter((g) => !have.has(g.id))];
+      });
+    } catch (e) {
+      toast(String(e), "drop");
+    } finally {
+      loadingMore.current = false;
+    }
+  }, [groups.length, groupsDone]);
+  useEffect(() => {
+    if (groups.length > 0 && idx >= groups.length - 20) void loadMoreGroups();
+  }, [idx, groups.length, loadMoreGroups]);
 
 
   /// 무리를 한꺼번에 확정한다 — 먼저 세어 보여 주고 묻는다. 정착 구역(내사진·
@@ -214,11 +250,12 @@ export default function Cull({
     const load =
       kind === -3 || kind === -4
         ? Promise.resolve([] as Group[])
-        : invoke<Group[]>("cull_groups", { kind, limit: 200, offset: 0 });
+        : invoke<Group[]>("cull_groups", { kind, limit: PAGE_GROUPS, offset: 0 });
     load.then(
       (g) => {
         if (!live || gen !== groupsGen.current) return;
         setGroups(g);
+        setGroupsDone(g.length < PAGE_GROUPS);
         setIdx(0);
       },
     );
@@ -381,13 +418,33 @@ export default function Cull({
     async (m: Member) => {
       const other = members.find((x) => x.file_id !== m.file_id);
       if (!other) return;
+      // 먼저 세어 보여 준다 — 몇 쌍·몇 장인지 모른 채 «전부 이렇게»를 누르지 않게
+      let dry: ApplyAll;
+      try {
+        dry = await invoke<ApplyAll>("cull_apply_pair", {
+          keepFolderId: m.folder_id,
+          dropFolderId: other.folder_id,
+          dryRun: true,
+        });
+      } catch (e) {
+        toast(String(e), "drop");
+        return;
+      }
+      if (dry.groups === 0) {
+        toast("이 두 폴더 사이에서만 얽힌 무리가 없습니다 — 다른 폴더까지 얽힌 것은 하나씩");
+        return;
+      }
+      const risky = settledArea(other.area);
       const ok = await ask({
         title: `«${m.folder || "/"}»을 남기고 «${other.folder || "/"}» 것에 제외 표시`,
         lines: [
-          "두 폴더 사이에서 겹치는 사진 전부에 적용합니다 — 다른 폴더까지 얽힌 무리는 건너뜁니다",
+          `${dry.groups.toLocaleString()}쌍 — 남김 ${dry.kept.toLocaleString()}장 · 제외 표시 ${dry.rejected.toLocaleString()}장`,
+          "두 폴더 사이에서만 겹치는 무리에 적용합니다 — 다른 폴더까지 얽힌 무리는 건너뜁니다",
+          ...(risky ? ["주의: 제외될 쪽이 NAS 동기화 폴더입니다 — 치우면 NAS에서도 지워집니다"] : []),
           "파일은 아직 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
         ],
         confirmLabel: "전부 이렇게",
+        danger: risky,
       });
       if (!ok) return;
       let r: ApplyAll;
@@ -448,6 +505,15 @@ export default function Cull({
       } catch (e) {
         toast(String(e), "drop");
         return;
+      }
+      // 타일의 배지도 같이 — X 로 제외한 것이 «★ 남김»으로 남아 있지 않게
+      if (patch.cullingFlag !== undefined) {
+        const flag = patch.cullingFlag;
+        setGot((cur) =>
+          cur
+            ? { ...cur, list: cur.list.map((x) => (x.file_id === fileId ? { ...x, culling_flag: flag } : x)) }
+            : cur,
+        );
       }
     },
     [pick],
@@ -633,7 +699,7 @@ export default function Cull({
                           …
                         </div>
                       )}
-                      {m.is_best ? (
+                      {m.is_best && m.culling_flag !== 2 ? (
                         <span className="absolute top-2 left-2 h-5 px-2 rounded bg-keep text-keep-fg text-[11px] font-bold flex items-center">
                           ★ 남김
                         </span>

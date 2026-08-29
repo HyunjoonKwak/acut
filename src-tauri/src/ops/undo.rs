@@ -6,7 +6,7 @@
 //! 되돌린 배치는 `undone_at`이 찍힌다. 두 번 되돌리지 않기 위해서다.
 
 use crate::db::conn::{Db, Result};
-use crate::ops::trash::{move_file, Outcome};
+use crate::ops::trash::{move_with_sidecars, Outcome};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Batch {
@@ -143,7 +143,7 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
             .strip_prefix(&back_mount)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| row.from_path.clone());
-        match move_file(&from, &to) {
+        match move_with_sidecars(&from, &to) {
             Ok(()) => {
                 repoint(db, row.file_id, &row.from_vol, &to_rel)?;
                 out.moved += 1;

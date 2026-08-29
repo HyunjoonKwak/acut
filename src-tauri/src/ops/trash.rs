@@ -118,18 +118,69 @@ pub fn free_path(want: PathBuf) -> PathBuf {
     let stem = want.file_stem().map(|s| s.to_string_lossy().into_owned());
     let ext = want.extension().map(|s| s.to_string_lossy().into_owned());
     let dir = want.parent().map(Path::to_path_buf).unwrap_or_default();
+    let name_for = |n: &str| match (&stem, &ext) {
+        (Some(s), Some(e)) => format!("{s} ({n}).{e}"),
+        (Some(s), None) => format!("{s} ({n})"),
+        _ => n.to_string(),
+    };
     for n in 2..10_000 {
-        let name = match (&stem, &ext) {
-            (Some(s), Some(e)) => format!("{s} ({n}).{e}"),
-            (Some(s), None) => format!("{s} ({n})"),
-            _ => format!("{n}"),
-        };
-        let p = dir.join(name);
+        let p = dir.join(name_for(&n.to_string()));
         if !p.exists() {
             return p;
         }
     }
-    want
+    // 9,999개가 다 찼다 — 원래 경로를 돌려주면 덮어쓴다. 시각을 붙여 빈 이름을 만든다
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f").to_string();
+    dir.join(name_for(&stamp))
+}
+
+/// 파일의 사이드카 — 편집 정보를 담는 `.xmp`(같은 줄기 `IMG_1.xmp`, 또는 전체 이름
+/// `IMG_1.CR2.xmp`). 사진이 옮겨질 때 따라가야 한다: RAW 는 로컬 한 벌뿐이라 편집 내용을
+/// 잃으면 되찾을 곳이 없다. macOS 가 스스로 관리하는 `._` 파일은 건드리지 않는다.
+///
+/// (원래 경로의 사이드카, 새 경로에 놓일 이름) 짝. 없는 것은 안 돌려준다.
+pub fn sidecars(from: &Path, to: &Path) -> Vec<(PathBuf, PathBuf)> {
+    let mut out = Vec::new();
+    let (Some(from_dir), Some(to_dir)) = (from.parent(), to.parent()) else {
+        return out;
+    };
+    let (Some(fname), Some(tname)) = (from.file_name(), to.file_name()) else {
+        return out;
+    };
+    let (fname, tname) = (fname.to_string_lossy(), tname.to_string_lossy());
+    let stem = |n: &str| n.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| n.to_string());
+    for (a, b) in [
+        (format!("{}.xmp", stem(&fname)), format!("{}.xmp", stem(&tname))),
+        (format!("{fname}.xmp"), format!("{tname}.xmp")),
+    ] {
+        let p = from_dir.join(&a);
+        // 사진 자신이 .xmp 인 경우는 없지만, 줄기 사이드카와 전체 이름 사이드카가 같은 이름이면 한 번만
+        if p != from && p.is_file() && !out.iter().any(|(x, _): &(PathBuf, PathBuf)| *x == p) {
+            out.push((p, to_dir.join(b)));
+        }
+    }
+    out
+}
+
+/// 파일과 그 사이드카를 함께 옮긴다. 사이드카는 최선 — 못 옮겨도 사진 이동은 성공이다
+/// (기록만 남긴다). 사진이 못 옮겨지면 사이드카도 건드리지 않는다.
+pub fn move_with_sidecars(from: &Path, to: &Path) -> std::io::Result<()> {
+    let cars = sidecars(from, to);
+    move_file(from, to)?;
+    for (a, b) in cars {
+        let b = free_path(b);
+        if let Err(e) = move_file(&a, &b) {
+            log::warn!("사이드카를 못 옮겼습니다 {} → {}: {e}", a.display(), b.display());
+        }
+    }
+    Ok(())
+}
+
+/// 사이드카를 지운다 — 휴지통 비우기에서, 사진을 지운 뒤
+pub fn remove_sidecars(of: &Path) {
+    for (a, _) in sidecars(of, of) {
+        let _ = std::fs::remove_file(a);
+    }
 }
 
 /// 파일을 옮긴다. 같은 볼륨이면 rename, 아니면 복사 후 삭제.
@@ -198,7 +249,7 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
             .to_string_lossy()
             .into_owned();
 
-        match move_file(&src, &dest) {
+        match move_with_sidecars(&src, &dest) {
             Ok(()) => {
                 // 저널 경로는 언제나 볼륨 기준이다 — 되돌릴 때 마운트만 붙이면 된다
                 let to_vol_rel = crate::media::cache::rel_path(&lib_rel, &dest_rel);
@@ -255,7 +306,7 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
 
         let src = lib_dir.join(tp);
         let dest = free_path(mount.join(&it.vol_rel));
-        match move_file(&src, &dest) {
+        match move_with_sidecars(&src, &dest) {
             Ok(()) => {
                 // 그새 같은 이름이 생겨 «IMG_1 (2).jpg»로 돌아왔을 수 있다 — 행도 그 이름으로.
                 // 안 맞추면 다음 치우기·이름 바꾸기가 다른 사진에 걸린다 (리뷰 C5)
@@ -324,6 +375,7 @@ pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
                 continue;
             }
         }
+        remove_sidecars(&victim);
         db.write(|c| c.execute("DELETE FROM files WHERE id = ?1", [it.id]))?;
         out.moved += 1;
         out.bytes += it.size;
@@ -393,6 +445,66 @@ mod tests {
             .unwrap();
         assert_eq!(ids.len(), 3);
         (dir, db, ids)
+    }
+
+    #[test]
+    fn sidecar_follows_the_photo_to_the_trash_and_back() {
+        let (dir, db, ids) = setup();
+        let a = dir.path().join("2020/여행");
+        // 줄기 사이드카와 전체 이름 사이드카 둘 다
+        std::fs::write(a.join("20200101_120000.xmp"), b"<xmp/>").unwrap();
+        std::fs::write(a.join("20200101_120001.jpg.xmp"), b"<xmp/>").unwrap();
+        let out = to_trash(&db, &ids[..2], "치우기").unwrap();
+        assert_eq!(out.moved, 2);
+        assert!(!a.join("20200101_120000.xmp").exists(), "사이드카도 떠난다");
+        assert!(!a.join("20200101_120001.jpg.xmp").exists());
+        let t = trash_root(dir.path());
+        assert!(t.join("2020/여행/20200101_120000.xmp").is_file(), "휴지통에 같이 있다");
+        assert!(t.join("2020/여행/20200101_120001.jpg.xmp").is_file());
+
+        restore(&db, &ids[..2]).unwrap();
+        assert!(a.join("20200101_120000.xmp").is_file(), "되돌리면 같이 돌아온다");
+        assert!(a.join("20200101_120001.jpg.xmp").is_file());
+        assert!(!t.join("2020/여행/20200101_120000.xmp").exists());
+    }
+
+    #[test]
+    fn emptying_the_trash_removes_sidecars_too() {
+        let (dir, db, ids) = setup();
+        let a = dir.path().join("2020/여행");
+        std::fs::write(a.join("20200101_120000.xmp"), b"<xmp/>").unwrap();
+        to_trash(&db, &ids[..1], "치우기").unwrap();
+        let t = trash_root(dir.path());
+        assert!(t.join("2020/여행/20200101_120000.xmp").is_file());
+        empty(&db, &ids[..1]).unwrap();
+        assert!(!t.join("2020/여행/20200101_120000.xmp").exists(), "사진과 함께 지워진다");
+    }
+
+    #[test]
+    fn sidecar_pairs_are_named_after_the_destination() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("IMG_1.xmp"), b"").unwrap();
+        std::fs::write(d.path().join("IMG_1.CR2.xmp"), b"").unwrap();
+        let from = d.path().join("IMG_1.CR2");
+        let to = d.path().join("out").join("IMG_1 (2).CR2");
+        let mut got: Vec<String> = sidecars(&from, &to)
+            .into_iter()
+            .map(|(_, b)| b.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        got.sort();
+        assert_eq!(got, ["IMG_1 (2).CR2.xmp", "IMG_1 (2).xmp"]);
+        assert!(sidecars(&d.path().join("none.jpg"), &to).is_empty(), "없으면 없다");
+    }
+
+    #[test]
+    fn free_path_never_returns_an_existing_path() {
+        let d = tempfile::tempdir().unwrap();
+        let want = d.path().join("a.jpg");
+        std::fs::write(&want, b"").unwrap();
+        let p = free_path(want.clone());
+        assert_ne!(p, want);
+        assert!(!p.exists());
+        assert!(p.file_name().unwrap().to_string_lossy().starts_with("a ("));
     }
 
     fn alive(db: &Db) -> i64 {

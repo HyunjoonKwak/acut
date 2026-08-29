@@ -335,13 +335,19 @@ pub async fn cull_apply_all(
 
 /// 두 폴더 사이의 무리를 한꺼번에 — keep 것을 남기고 drop 것에 지우기 표시.
 #[tauri::command]
-pub async fn cull_apply_pair(state: State<'_, AppState>, keep_folder_id: i64, drop_folder_id: i64) -> Result<apply::ApplyAll, String> {
+pub async fn cull_apply_pair(
+    state: State<'_, AppState>,
+    keep_folder_id: i64,
+    drop_folder_id: i64,
+    dry_run: Option<bool>,
+) -> Result<apply::ApplyAll, String> {
     if keep_folder_id == drop_folder_id {
         return Err("같은 폴더를 남기고 지울 수는 없습니다".into());
     }
+    let dry = dry_run.unwrap_or(false);
     state
         .db
-        .transaction(|tx| folders::apply_pair(tx, keep_folder_id, drop_folder_id))
+        .transaction(|tx| folders::apply_pair(tx, keep_folder_id, drop_folder_id, dry))
         .map_err(err)
 }
 

@@ -8,7 +8,7 @@
 
 use crate::db::conn::{Db, Result};
 use crate::db::libraries;
-use crate::ops::trash::{free_path, move_file, Outcome};
+use crate::ops::trash::{free_path, move_with_sidecars, Outcome};
 
 /// 옮길 곳. 라이브러리 안의 상대 폴더 경로다 (`2024/2024-08-27 거제통영`).
 pub struct Dest {
@@ -130,7 +130,7 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
             continue; // 이미 제자리다
         }
 
-        match move_file(&src, &dest_path) {
+        match move_with_sidecars(&src, &dest_path) {
             Ok(()) => {
                 let new_name = dest_path
                     .file_name()

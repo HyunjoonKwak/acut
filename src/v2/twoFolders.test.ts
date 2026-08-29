@@ -64,8 +64,14 @@ test("한쪽이 전부 지우기 표시됐으면 그쪽이 처리됨", () => {
   assert.equal(doneSide(pair({ flagged_a: 3 })), "a");
 });
 
-test("일부만 표시됐거나 같은 짝이 아니면 처리되지 않았다", () => {
+test("일부만 표시됐거나 지울 수 없는 짝이면 처리되지 않았다", () => {
   assert.equal(doneSide(pair({ flagged_b: 2 })), null);
-  assert.equal(doneSide(pair({ same: false, flagged_b: 3 })), null);
+  // 부분만 겹치는 짝은 표시가 있어도 «처리됨»이 아니다
+  assert.equal(doneSide(pair({ same: false, b_in_a: false, a_in_b: false, flagged_b: 3 })), null);
   assert.equal(doneSide(pair({ b: null, flagged_a: 3 })), null);
+});
+
+test("«B쪽이 A에 다 있음» 짝도 B가 전부 표시되면 처리됨이다", () => {
+  assert.equal(doneSide(pair({ same: false, b_in_a: true, a_in_b: false, files_a: 9, files_b: 6, flagged_b: 6 })), "b");
+  assert.equal(doneSide(pair({ same: false, b_in_a: true, a_in_b: false, files_a: 9, files_b: 6, flagged_b: 5 })), null);
 });

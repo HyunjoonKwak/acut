@@ -1001,8 +1001,40 @@ mod tests {
         let vol: String = c
             .query_row("SELECT volume_uuid FROM libraries WHERE name = '통합전후보'", [], |r| r.get(0))
             .unwrap();
-        let r = compare_two(&c, (&vol, "통합전후보/후보1번/연도별"), (&vol, "통합전후보/후보2번")).unwrap();
-        eprintln!("rows {} missing {}", r.rows.len(), r.missing);
+        let a_root = std::env::var("ACUT_A").unwrap_or_else(|_| "통합전후보/후보1번/연도별".into());
+        let b_root = std::env::var("ACUT_B").unwrap_or_else(|_| "통합전후보/후보2번".into());
+        let r = compare_two(&c, (&vol, &a_root), (&vol, &b_root)).unwrap();
+        eprintln!("A={a_root} B={b_root} rows {} missing {}", r.rows.len(), r.missing);
+        // B 쪽을 지워도 되는데 아직 표시가 안 된 짝 — 왜 표시가 안 붙나
+        let pending: Vec<&PairRow> = r.rows.iter().filter(|x| x.b_in_a && x.b.is_some() && x.flagged_b < x.files_b).collect();
+        eprintln!("pending b_in_a {}", pending.len());
+        for x in pending.iter().take(5) {
+            eprintln!(
+                "  {} | files a/b {}/{} flagged {}/{} a_ids {} b_ids {} same {}",
+                x.b.as_ref().unwrap().folder, x.files_a, x.files_b, x.flagged_a, x.flagged_b, x.a_ids.len(), x.b_ids.len(), x.same
+            );
+        }
+        if std::env::var_os("ACUT_LIVE_WRITE").is_some() {
+            if let Some(x) = pending.first() {
+                let mut c2 = Connection::open(&path).unwrap();
+                let tx = c2.transaction().unwrap();
+                let out = apply_trees(&tx, &x.a_ids, &x.b_ids);
+                eprintln!("apply_trees → {out:?}");
+                let n: i64 = tx
+                    .query_row(
+                        &format!(
+                            "SELECT COUNT(*) FROM files WHERE folder_id IN ({}) AND trashed_at IS NULL AND full_hash IN (SELECT full_hash FROM files WHERE folder_id IN ({}) AND trashed_at IS NULL)",
+                            x.b_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(","),
+                            x.a_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+                        ),
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                eprintln!("B 파일 중 A 나무에 같은 해시가 있는 것: {n} / {}", x.files_b);
+                drop(tx); // 되돌린다
+            }
+        }
     }
 
     #[test]

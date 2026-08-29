@@ -67,7 +67,10 @@ export function overlaps(a: FolderHit, b: FolderHit): boolean {
 
 /** 같은 짝인데 한쪽이 이미 전부 지우기 표시됐다 — 다시 누르면 뒤집히니 단추를 감춘다 */
 export function doneSide(r: PairRow): "a" | "b" | null {
-  if (!r.same || !r.a || !r.b) return null;
+  // «똑같음»뿐 아니라 «한쪽이 다른 쪽에 다 있음» 짝도 처리될 수 있다 — same 만 보면
+  // 표시가 다 붙은 짝이 «B쪽 전부 (41짝)»에 그대로 남는다 (실측 2026-08-30)
+  if (!r.a || !r.b) return null;
+  if (!(r.same || r.b_in_a || r.a_in_b)) return null;
   if (r.files_a > 0 && r.flagged_a >= r.files_a) return "a";
   if (r.files_b > 0 && r.flagged_b >= r.files_b) return "b";
   return null;

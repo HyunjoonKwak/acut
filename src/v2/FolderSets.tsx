@@ -125,7 +125,9 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
             </>
           )}
         </span>
-        <span className="text-fg-mute">— 바로 아래 파일 기준, 하위 폴더는 따로 견줍니다</span>
+        <span className="text-fg-mute">
+          — 남길 폴더의 ○을 누르면 ● 남김이 되고 나머지는 지움. 건너뛰려면 그냥 두세요
+        </span>
         <div className="flex-1" />
         {pending.length > 0 && (
           <button
@@ -137,7 +139,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
         )}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto scroll-thin">
         {sets.map((s, i) => {
           const k = keep[i] ?? 0;
           return (
@@ -178,7 +180,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                         name={`keep-${i}`}
                         checked={k === j}
                         onChange={() => setKeep((m) => ({ ...m, [i]: j }))}
-                        className="accent-keep mr-1.5"
+                        className="accent-keep mr-1.5 w-3.5 h-3.5"
                       />
                       <span className={k === j ? "text-keep font-semibold" : "text-fg-mute"}>
                         {k === j ? "남김" : "지움"}

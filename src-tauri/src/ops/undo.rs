@@ -19,8 +19,27 @@ pub struct Batch {
 }
 
 /// 최근 작업 묶음들. 되돌릴 수 있는 것이 위에 온다.
+///
+/// 물릴 게 없어진 묶음은 먼저 닫는다 — 휴지통 화면에서 이미 되돌린 «휴지통으로»,
+/// 다시 휴지통에 간 «되돌리기». 열어 두면 상태바 단추가 그걸 가리킨 채 남는다 (실측 2026-08-30)
 pub fn recent(db: &Db, limit: usize) -> Result<Vec<Batch>> {
     let limit = limit.clamp(1, 200);
+    db.write(|c| {
+        c.execute(
+            "UPDATE batches SET undone_at = strftime('%s','now')
+             WHERE undone_at IS NULL AND kind = 'trash' AND item_count > 0
+               AND NOT EXISTS (SELECT 1 FROM journal j JOIN files f ON f.id = j.file_id
+                               WHERE j.batch_id = batches.id AND j.ok = 1 AND f.trashed_at IS NOT NULL)",
+            [],
+        )?;
+        c.execute(
+            "UPDATE batches SET undone_at = strftime('%s','now')
+             WHERE undone_at IS NULL AND kind = 'restore' AND item_count > 0
+               AND NOT EXISTS (SELECT 1 FROM journal j JOIN files f ON f.id = j.file_id
+                               WHERE j.batch_id = batches.id AND j.ok = 1 AND f.trashed_at IS NULL)",
+            [],
+        )
+    })?;
     db.read(|c| {
         let mut st = c.prepare(
             "SELECT id, kind, label, item_count, created_at, undone_at
@@ -422,6 +441,17 @@ mod tests {
         let again = undo(&db, out.batch_id).unwrap();
         assert_eq!(again.moved, 0);
         assert!(again.first_error.is_some());
+    }
+
+    #[test]
+    fn recent_closes_trash_batches_that_have_nothing_left_to_undo() {
+        let (_d, db, _lib, ids) = setup();
+        let t = trash::to_trash(&db, &ids[..1], "휴지통으로").unwrap();
+        assert!(recent(&db, 10).unwrap().iter().any(|b| b.id == t.batch_id && b.undone_at.is_none()));
+        trash::restore(&db, &ids[..1]).unwrap(); // 휴지통 화면에서 되돌림
+        let list = recent(&db, 10).unwrap();
+        let b = list.iter().find(|b| b.id == t.batch_id).unwrap();
+        assert!(b.undone_at.is_some(), "물릴 게 없는 묶음은 목록을 읽을 때 닫힌다");
     }
 
     #[test]

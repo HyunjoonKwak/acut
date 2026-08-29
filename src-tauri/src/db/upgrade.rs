@@ -12,6 +12,17 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_trash_columns(c)?;
     add_faces_at(c)?;
     add_nas_pulls(c)?;
+    rename_old_labels(c)?;
+    Ok(())
+}
+
+/// 되돌리기 목록의 옛 낱말 — «치우기»를 없애고 «휴지통으로»로 부르기로 했다(2026-08-29).
+/// 이미 저장된 묶음 이름도 같은 낱말이어야 단추가 «되돌리기: 제외한 사진 치우기»로 안 뜬다
+fn rename_old_labels(c: &Connection) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE batches SET label = replace(label, '치우기', '휴지통으로') WHERE label LIKE '%치우기%'",
+        [],
+    )?;
     Ok(())
 }
 

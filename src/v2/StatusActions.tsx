@@ -7,6 +7,7 @@ import { Kbd } from "./ui";
 import { useCountUp } from "./useCountUp";
 import { usePrefs } from "./prefs";
 import { useView } from "./viewStore";
+import { undoLabel } from "./undoLabel";
 
 /**
  * 상태바 오른쪽 — 벌어지는 일과 되돌리기.
@@ -114,10 +115,10 @@ export default function StatusActions({
       {undoable && (
         <button
           onClick={undoLast}
-          title={`가장 최근 작업을 물립니다: ${undoable.label ?? ""} · ${undoable.item_count.toLocaleString()}장`}
+          title={`가장 최근 작업을 물립니다 (${undoable.label ?? ""} · ${undoable.item_count.toLocaleString()}장). 파일이 원래 자리로 돌아갑니다`}
           className="hover:text-fg"
         >
-          ↩ 되돌리기: {undoable.label ?? "최근 작업"} ({undoable.item_count.toLocaleString()}장) <Kbd>⌘Z</Kbd>
+          ↩ {undoLabel(undoable.kind, undoable.item_count)} <Kbd>⌘Z</Kbd>
         </button>
       )}
       {stats && stats.thumbs_pending > 0 && !hasJob && (

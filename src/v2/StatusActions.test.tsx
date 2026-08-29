@@ -108,7 +108,7 @@ describe("상태바 오른쪽", () => {
     render(<StatusActions {...noop} />);
     // 단추 이름이 «무엇을 몇 장» 물리는지 말한다 — 물린 것(1번)이 아니라 아직 안 물린 것(2번).
     // 영구히 비운 것(delete)은 되돌릴 수 없으니 맨 앞에 있어도 건너뛴다
-    const b = screen.getByRole("button", { name: /되돌리기: 휴지통 \(1장\)/ });
+    const b = screen.getByRole("button", { name: /휴지통 보낸 1장 되살리기/ });
     await userEvent.click(b);
     expect(noop.undoLast).toHaveBeenCalled();
   });

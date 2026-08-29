@@ -74,17 +74,25 @@ fn ancestors(rel: &str) -> Vec<String> {
     out
 }
 
-/// 볼륨이 지금 붙어 있나 — 볼륨마다 한 번만 본다
-struct Online(HashMap<String, bool>);
-impl Online {
+/// 볼륨이 지금 붙어 있나, 폴더가 디스크에 아직 있나 — 마운트는 볼륨마다 한 번만 찾는다.
+/// Finder 에서 지운 폴더의 행이 DB 에 남아 있을 수 있다(감시는 «폴더가 안 보이면 지우지
+/// 않는다», 리뷰 C2). 그런 폴더를 견주면 «없는 폴더를 읽는다»가 된다 (실측 2026-08-30: 269개)
+struct Disk(HashMap<String, Option<std::path::PathBuf>>);
+impl Disk {
     fn new() -> Self {
-        Online(HashMap::new())
+        Disk(HashMap::new())
     }
-    fn is(&mut self, vol: &str) -> bool {
-        *self
-            .0
+    fn mount(&mut self, vol: &str) -> Option<std::path::PathBuf> {
+        self.0
             .entry(vol.to_string())
-            .or_insert_with(|| crate::db::volumes::find_mount(vol).is_some())
+            .or_insert_with(|| crate::db::volumes::find_mount(vol))
+            .clone()
+    }
+    fn online(&mut self, vol: &str) -> bool {
+        self.mount(vol).is_some()
+    }
+    fn dir_exists(&mut self, vol: &str, rel: &str) -> bool {
+        self.mount(vol).map(|m| m.join(rel).is_dir()).unwrap_or(false)
     }
 }
 
@@ -134,11 +142,16 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
     // Finder 에서 지운다. 하위는 저마다 따로 견준다. 빠진 디스크의 폴더는 지금 확인할 수
     // 없으니 견주지 않는다
     let kids = parents_with_children(c)?;
-    let mut online = Online::new();
+    let mut disk = Disk::new();
+    let mut missing = 0usize;
     let mut by_sig: HashMap<String, (Vec<FolderIn>, i64, i64, bool, i64)> = HashMap::new();
     for row in rows {
         let (f, n, bytes, pend, s, vol, rel, flagged) = row?;
-        if kids.contains(&(vol.clone(), rel)) || !online.is(&vol) {
+        if kids.contains(&(vol.clone(), rel.clone())) || !disk.online(&vol) {
+            continue;
+        }
+        if !disk.dir_exists(&vol, &rel) {
+            missing += 1;
             continue;
         }
         let e = by_sig.entry(s).or_insert((Vec::new(), n, bytes, false, 0));
@@ -161,6 +174,9 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
             FolderSet { folders: fs, files, bytes, pending, flagged }
         })
         .collect();
+    if missing > 0 {
+        log::warn!("폴더 비교: 디스크에 없는 폴더 {missing}개는 뺐습니다 — 라이브러리를 다시 스캔하세요");
+    }
     // 경로 순 — 용량 순으로 두면 «2016, 2023, 2019…» 뒤죽박죽으로 보인다 (사용자 지적).
     // 묶음의 이름은 정착 구역 폴더(맨 앞)의 경로
     out.sort_by(|a, b| {
@@ -374,7 +390,7 @@ struct Agg {
 
 /// 뿌리는 (볼륨, 볼륨 기준 경로)다 — «연도별»처럼 사진이 바로 아래 없는 폴더는 `folders`
 /// 행이 없어서 id 로는 가리킬 수 없다 (실측: 후보1번/연도별을 골랐는데 «없는 폴더»).
-fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<Vec<Agg>> {
+fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<(Vec<Agg>, usize)> {
     let esc = crate::db::query::escape_like(rel);
     let mut st = c.prepare(
         "SELECT fo.id, fo.rel_path, fo.area, l.id, l.name, l.rel_path, f.full_hash, f.size,
@@ -434,12 +450,27 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<Vec<A
             }
         }
     }
+    // 디스크에서 사라진 폴더(Finder 에서 지운 것)는 뺀다 — DB 행만 남아 «없는 폴더»를 읽지 않게
+    let mut disk = Disk::new();
+    let before = out.len();
+    out.retain(|a| {
+        let rel_full = if a.sub.is_empty() { rel.to_string() } else if rel.is_empty() { a.sub.clone() } else { format!("{rel}/{}", a.sub) };
+        disk.dir_exists(vol, &rel_full)
+    });
+    let missing = before - out.len();
     // 하위 폴더 유무는 이 결과 안에서 안다 — 뿌리 아래 폴더는 전부 여기 들어 있다
     let parents: HashSet<String> = out.iter().flat_map(|a| ancestors(&a.sub)).collect();
     for a in &mut out {
         a.has_children = parents.contains(&a.sub);
     }
-    Ok(out)
+    Ok((out, missing))
+}
+
+/// 두 폴더 비교의 결과 — 줄들과, 디스크에 없어 뺀 폴더 수
+#[derive(Debug, Clone, Serialize)]
+pub struct Compared {
+    pub rows: Vec<PairRow>,
+    pub missing: usize,
 }
 
 /// 두 뿌리가 서로를 품는가 — 같은 폴더가 양쪽 목록에 들어 제 짝이 되는 길을 막는다
@@ -500,12 +531,12 @@ pub fn compare_two(
     c: &Connection,
     (a_vol, a_rel): (&str, &str),
     (b_vol, b_rel): (&str, &str),
-) -> rusqlite::Result<Vec<PairRow>> {
+) -> rusqlite::Result<Compared> {
     if roots_overlap((a_vol, a_rel), (b_vol, b_rel)) {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    let a = folders_under(c, a_vol, a_rel)?;
-    let b = folders_under(c, b_vol, b_rel)?;
+    let (a, miss_a) = folders_under(c, a_vol, a_rel)?;
+    let (b, miss_b) = folders_under(c, b_vol, b_rel)?;
     let mut b_by_sub: HashMap<&str, usize> = HashMap::new();
     for (i, g) in b.iter().enumerate() {
         b_by_sub.entry(g.sub.as_str()).or_insert(i);
@@ -639,7 +670,7 @@ pub fn compare_two(
     }
     // 경로 순 — Finder 를 나란히 놓은 것처럼 읽힌다 (사용자 지적: «오름차순도 내림차순도 아니다»)
     out.sort_by(|x, y| x.0.cmp(&y.0));
-    Ok(out.into_iter().map(|(_, r)| r).collect())
+    Ok(Compared { rows: out.into_iter().map(|(_, r)| r).collect(), missing: miss_a + miss_b })
 }
 
 #[cfg(test)]
@@ -789,7 +820,7 @@ mod tests {
         dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         let x = format!("{root_rel}/x").trim_start_matches('/').to_string();
         let y = format!("{root_rel}/y").trim_start_matches('/').to_string();
-        let rows = db.read(|c| compare_two(c, (&vol, &x), (&vol, &y))).unwrap();
+        let rows = db.read(|c| compare_two(c, (&vol, &x), (&vol, &y))).unwrap().rows;
         let subs: Vec<String> = rows.iter().map(|r| r.a.as_ref().or(r.b.as_ref()).unwrap().folder.clone()).collect();
         let mut sorted = subs.clone();
         sorted.sort();
@@ -914,7 +945,7 @@ mod tests {
             .unwrap()
         };
         let (a, b) = (root_of("a"), root_of("b"));
-        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&b.0, &b.1))).unwrap();
+        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&b.0, &b.1))).unwrap().rows;
         assert_eq!(rows.len(), 1, "하위 폴더 «블로그»는 제 줄로 안 나온다: {rows:?}");
         let r = &rows[0];
         assert!(r.b_in_a && !r.a_in_b && !r.same, "{r:?}");
@@ -922,12 +953,35 @@ mod tests {
         assert_eq!(r.a_ids.len(), 2, "A 쪽 폴더 행 둘(a, a/블로그)");
         assert_eq!(r.b_ids, vec![b.2]);
         // 거꾸로 견줘도 같은 판정 — 이번엔 «A 쪽이 B 에 다 있음»
-        let rows = db.read(|c| compare_two(c, (&b.0, &b.1), (&a.0, &a.1))).unwrap();
+        let rows = db.read(|c| compare_two(c, (&b.0, &b.1), (&a.0, &a.1))).unwrap().rows;
         assert!(rows[0].a_in_b && !rows[0].b_in_a);
         // 나무째 표시 — B(2장) 제외, A 쪽은 남김. «블로그»의 한 장은 B 에 없으니 제외 대상이 아니다
         let out = db.transaction(|tx| apply_trees(tx, &r.a_ids, &r.b_ids)).unwrap();
         assert_eq!((out.kept, out.rejected), (3, 2), "{out:?}");
         assert!(db.transaction(|tx| apply_trees(tx, &r.a_ids, &r.a_ids)).is_err(), "겹치는 나무는 거절");
+    }
+
+    /// Finder 에서 지운 폴더의 행이 남아 있어도 «없는 폴더»를 읽지 않는다
+    #[test]
+    fn folders_deleted_on_disk_are_left_out_and_counted() {
+        let (dir, db) = setup();
+        let root_of = |name: &str| -> (String, String) {
+            db.read(|c| {
+                c.query_row(
+                    "SELECT volume_uuid, rel_path FROM folders WHERE rel_path LIKE ?1",
+                    [format!("%{name}")],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap()
+        };
+        let (a, b) = (root_of("a"), root_of("b"));
+        std::fs::remove_dir_all(dir.path().join("b")).unwrap(); // DB 행은 그대로
+        let r = db.read(|c| compare_two(c, (&a.0, &a.1), (&b.0, &b.1))).unwrap();
+        assert_eq!(r.missing, 1, "{r:?}");
+        assert!(r.rows.iter().all(|row| row.b.is_none()), "사라진 B 는 짝이 되지 않는다: {:?}", r.rows);
+        let sets = db.read(|c| identical_sets(c, 100)).unwrap();
+        assert!(sets.iter().all(|s| s.folders.iter().all(|f| f.folder != "b")), "폴더 비교도 뺀다: {sets:?}");
     }
 
     #[test]
@@ -945,11 +999,11 @@ mod tests {
         };
         let (a, b, d) = (root_of("a"), root_of("b"), root_of("d"));
         // a 와 b 는 내용이 같다 — 뿌리끼리도 짝이 된다
-        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&b.0, &b.1))).unwrap();
+        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&b.0, &b.1))).unwrap().rows;
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert!(rows[0].same && rows[0].b_in_a && rows[0].a_in_b && rows[0].common == 2);
         // a 와 d 는 한 장만 겹친다 — 뿌리 이름은 다르지만 뿌리끼리는 sub 가 같다("")
-        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&d.0, &d.1))).unwrap();
+        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&d.0, &d.1))).unwrap().rows;
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert!(!rows[0].same);
         assert_eq!((rows[0].common, rows[0].files_a, rows[0].files_b), (1, 2, 2));

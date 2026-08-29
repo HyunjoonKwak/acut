@@ -29,6 +29,10 @@ pub struct Progress {
     pub updated: usize,
     pub skipped: usize,
     pub failed: usize,
+    /// 이번 훑기에서 디스크에 없어 지운 파일 행 수 (Finder 에서 지운 것)
+    pub removed: usize,
+    /// 그래서 비어 지운 폴더 행 수
+    pub folders_removed: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -259,6 +263,19 @@ pub fn scan_folder(
         Ok(())
     })?;
 
+    // 디스크에서 사라진 것의 행을 뺀다 — 훑은 뿌리 아래에서 이번에 못 본 파일.
+    // 예전엔 전체 다시 스캔도 이걸 안 해 Finder 에서 지운 폴더 269개가 «없는 폴더»로 남았다 (2026-08-30)
+    {
+        let root_rel = root
+            .strip_prefix(&vol.mount_path)
+            .map(|p| nfc(&p.to_string_lossy()))
+            .unwrap_or_default();
+        let (removed, folders_removed) = prune_gone(db, library_id, &root_rel, &found)?;
+        let mut p = progress.lock().unwrap();
+        p.removed = removed;
+        p.folders_removed = folders_removed;
+    }
+
     // 폴더별 파일 수를 갱신한다 (사이드바에서 쓴다).
     db.write(|c| {
         c.execute(
@@ -279,6 +296,56 @@ pub fn scan_folder(
     let out = progress.lock().unwrap().clone();
     on_progress(&out);
     Ok(out)
+}
+
+/// 훑은 뿌리(`root_rel`, 볼륨 기준) 아래에서 이번에 못 본 파일의 행과, 그래서 빈 폴더 행을 지운다.
+///
+/// 휴지통에 든 것(`trashed_at`)은 원래 자리에 없는 게 정상이라 두고, 휴지통 파일이 가리키는
+/// 폴더 행도 남긴다(FK CASCADE). 안전장치: 훑은 것이 하나도 없거나 절반 넘게 사라졌으면
+/// 마운트가 빠졌거나 잘못 붙은 것으로 보고 손대지 않는다.
+fn prune_gone(db: &Db, library_id: i64, root_rel: &str, found: &[Found]) -> Result<(usize, usize)> {
+    let seen: std::collections::HashSet<(&str, &str)> =
+        found.iter().map(|f| (f.rel_dir.as_str(), f.name.as_str())).collect();
+    let rows: Vec<(i64, String, String)> = db.read(|c| {
+        let mut st = c.prepare(
+            "SELECT fi.id, fo.rel_path, fi.name FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+             WHERE fo.library_id = ?1 AND fi.trashed_at IS NULL",
+        )?;
+        let it = st.query_map([library_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })?;
+    let under = |dir: &str| root_rel.is_empty() || dir == root_rel || dir.starts_with(&format!("{root_rel}/"));
+    let scoped: Vec<&(i64, String, String)> = rows.iter().filter(|(_, d, _)| under(d)).collect();
+    let gone: Vec<i64> = scoped
+        .iter()
+        .filter(|(_, d, n)| !seen.contains(&(d.as_str(), n.as_str())))
+        .map(|(id, _, _)| *id)
+        .collect();
+    if gone.is_empty() {
+        return Ok((0, 0));
+    }
+    if found.is_empty() || (scoped.len() >= 100 && gone.len() * 2 > scoped.len()) {
+        log::warn!(
+            "훑은 뿌리 «{root_rel}» 에서 {}개 중 {}개가 안 보인다 — 디스크가 빠진 것으로 보고 지우지 않는다",
+            scoped.len(),
+            gone.len()
+        );
+        return Ok((0, 0));
+    }
+    let folders_removed = db.transaction(|tx| {
+        let mut del = tx.prepare("DELETE FROM files WHERE id = ?1")?;
+        for id in &gone {
+            del.execute([id])?;
+        }
+        drop(del);
+        tx.execute(
+            "DELETE FROM folders WHERE library_id = ?1
+               AND NOT EXISTS (SELECT 1 FROM files WHERE files.folder_id = folders.id)",
+            [library_id],
+        )
+    })?;
+    log::info!("사라진 파일 {}개·빈 폴더 {}개 행을 지웠다 (뿌리 «{root_rel}»)", gone.len(), folders_removed);
+    Ok((gone.len(), folders_removed))
 }
 
 /// 한 폴더 안에서 **디스크에 없어진** 파일의 행을 지운다. 지운 수를 돌려준다.
@@ -565,6 +632,44 @@ mod tests {
     }
 
     /// 파인더에서 지운 것은 스캔이 못 본다 — prune이 뺀다. 휴지통 것은 둔다.
+    /// Finder 에서 폴더째 지운 뒤 다시 스캔하면 그 파일·폴더 행이 사라진다
+    #[test]
+    fn a_full_rescan_drops_rows_for_folders_deleted_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        for d in ["2003/2004", "2005"] {
+            let p = dir.path().join(d);
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(p.join("a.jpg"), b"photo ".repeat(20)).unwrap();
+            std::fs::write(p.join("b.jpg"), b"other ".repeat(20)).unwrap();
+        }
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        let count = |sql: &str| -> i64 { db.read(|c| c.query_row(sql, [], |r| r.get(0))).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM files"), 4);
+        std::fs::remove_dir_all(dir.path().join("2003")).unwrap();
+        let p = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        assert_eq!((p.removed, p.folders_removed), (2, 1), "{p:?}");
+        assert_eq!(count("SELECT COUNT(*) FROM files"), 2);
+        assert_eq!(count("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%2004'"), 0, "빈 폴더 행도");
+        assert_eq!(count("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%2005'"), 1);
+    }
+
+    /// 마운트가 빠져 아무것도 안 보이면 지우지 않는다
+    #[test]
+    fn a_rescan_that_sees_nothing_does_not_prune() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join("a.jpg"), b"photo ".repeat(20)).unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        std::fs::remove_dir_all(&p).unwrap();
+        let r = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        assert_eq!(r.removed, 0, "훑은 것이 0이면 마운트 문제로 보고 손대지 않는다");
+        let n: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))).unwrap();
+        assert_eq!(n, 1);
+    }
+
     #[test]
     fn prune_removes_rows_whose_files_are_gone() {
         let dir = tempfile::tempdir().unwrap();

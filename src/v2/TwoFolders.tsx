@@ -24,6 +24,8 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const [a, setA] = useState<FolderHit | null>(null);
   const [b, setB] = useState<FolderHit | null>(null);
   const [rows, setRows] = useState<PairRow[] | null>(null);
+  /// 디스크에 없어 뺀 폴더 수 — Finder 에서 지운 폴더의 행이 남은 것
+  const [missing, setMissing] = useState(0);
   const [busy, setBusy] = useState(false);
   /** 표시 진행 — n/총. null 이면 표시 중이 아니다 */
   const [marking, setMarking] = useState<{ total: number } | null>(null);
@@ -36,13 +38,17 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     let live = true;
     setBusy(true);
     setRows(null);
-    invoke<PairRow[]>("cull_compare_folders", {
+    invoke<{ rows: PairRow[]; missing: number }>("cull_compare_folders", {
       aVolume: a.volume_uuid,
       aRel: a.vol_rel,
       bVolume: b.volume_uuid,
       bRel: b.vol_rel,
     })
-      .then((r) => live && setRows(r))
+      .then((r) => {
+        if (!live) return;
+        setRows(r.rows);
+        setMissing(r.missing);
+      })
       .catch((e) => live && toast(String(e), "drop"))
       .finally(() => live && setBusy(false));
     return () => {
@@ -260,6 +266,11 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         )}
       </div>
 
+      {missing > 0 && (
+        <div className="shrink-0 px-4 py-1.5 text-[12px] text-drop bg-drop/10 border-b border-line">
+          디스크에 없는 폴더 {missing.toLocaleString()}개는 뺐습니다 — Finder 에서 지운 폴더의 기록이 남은 것입니다. 왼쪽 앨범에서 라이브러리의 ⟳(다시 스캔)을 누르면 정리됩니다.
+        </div>
+      )}
       <div className="flex-1 min-h-0 overflow-y-auto scroll-thin">
         {rows === null ? (
           <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute text-[13px]">

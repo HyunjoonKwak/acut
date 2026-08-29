@@ -54,9 +54,13 @@ export function useScanEvents(cb: {
           });
       },
     );
-    on("scan-done", () => {
+    on<{ removed?: number; folders_removed?: number }>("scan-done", (p) => {
       data().setScanMsg("스캔 완료 — 썸네일 만드는 중");
       job().clear();
+      if ((p?.removed ?? 0) > 0)
+        toast(
+          `디스크에서 사라진 사진 ${(p.removed ?? 0).toLocaleString()}장${(p.folders_removed ?? 0) > 0 ? ` · 폴더 ${(p.folders_removed ?? 0).toLocaleString()}개` : ""}의 기록을 정리했습니다`,
+        );
       ref.current.reload();
       ref.current.refreshMeta();
     });

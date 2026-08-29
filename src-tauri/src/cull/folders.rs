@@ -148,6 +148,213 @@ pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result
     Ok(ApplyAll { groups, kept, rejected, skipped: 0 })
 }
 
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PairRow {
+    /// A 뿌리 아래 폴더 (뿌리 기준 경로). 없으면 B 에만 있는 폴더
+    pub a: Option<FolderIn>,
+    pub b: Option<FolderIn>,
+    pub files_a: i64,
+    pub files_b: i64,
+    /// 바로 아래 파일이 전부 같다
+    pub same: bool,
+    /// 이름이 같은 폴더끼리, 양쪽에 똑같이 있는 파일 수
+    pub common: i64,
+    /// 같은 쪽 하나를 지우면 비는 용량(same 일 때) — 아니면 공통 파일의 용량
+    pub bytes: i64,
+}
+
+struct Agg {
+    info: FolderIn,
+    /// 뿌리 기준 상대경로 — 이름이 같은 폴더를 찾는 열쇠
+    sub: String,
+    files: i64,
+    bytes: i64,
+    hashes: Vec<String>,
+    all_hashed: bool,
+    has_children: bool,
+}
+
+fn folders_under(c: &Connection, root_id: i64) -> rusqlite::Result<Vec<Agg>> {
+    let (vol, rel): (String, String) = c.query_row(
+        "SELECT volume_uuid, rel_path FROM folders WHERE id = ?1",
+        [root_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let esc = crate::db::query::escape_like(&rel);
+    let mut st = c.prepare(
+        "SELECT fo.id, fo.rel_path, fo.area, l.id, l.name, l.rel_path, f.full_hash, f.size,
+                EXISTS (SELECT 1 FROM folders k WHERE k.parent_id = fo.id)
+         FROM folders fo
+         JOIN libraries l ON l.id = fo.library_id
+         LEFT JOIN files f ON f.folder_id = fo.id AND f.trashed_at IS NULL
+         WHERE fo.volume_uuid = ?1 AND (fo.rel_path = ?2 OR fo.rel_path LIKE ?3 || '/%' ESCAPE '\\')
+         ORDER BY fo.rel_path, f.full_hash",
+    )?;
+    let mut out: Vec<Agg> = Vec::new();
+    let rows = st.query_map(params![vol, rel, esc], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i32>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, Option<String>>(6)?,
+            r.get::<_, Option<i64>>(7)?,
+            r.get::<_, bool>(8)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, fo_rel, area, lib_id, lib_name, lib_rel, hash, size, kids) = row?;
+        if out.last().map(|a| a.info.folder_id) != Some(id) {
+            let sub = fo_rel
+                .strip_prefix(&rel)
+                .map(|s| s.trim_start_matches('/').to_string())
+                .unwrap_or_else(|| fo_rel.clone());
+            out.push(Agg {
+                info: FolderIn {
+                    folder_id: id,
+                    library_id: lib_id,
+                    library: lib_name,
+                    folder: in_lib(&lib_rel, &fo_rel),
+                    area,
+                },
+                sub,
+                files: 0,
+                bytes: 0,
+                hashes: Vec::new(),
+                all_hashed: true,
+                has_children: kids,
+            });
+        }
+        let cur = out.last_mut().unwrap();
+        if let Some(size) = size {
+            cur.files += 1;
+            cur.bytes += size;
+            match hash {
+                Some(h) => cur.hashes.push(h),
+                None => cur.all_hashed = false,
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 두 폴더(와 그 아래)를 견준다 — «후보1번/연도별»과 «후보2번»처럼.
+///
+/// 내용이 완전히 같은 폴더끼리 짝(same), 이름이 같은데 내용이 다른 폴더끼리는 공통
+/// 파일 수와 함께 짝(partial), 한쪽에만 있는 폴더는 홀로. 같은 쪽 큰 것부터.
+pub fn compare_two(c: &Connection, a_root: i64, b_root: i64) -> rusqlite::Result<Vec<PairRow>> {
+    let a = folders_under(c, a_root)?;
+    let b = folders_under(c, b_root)?;
+    // B 쪽 서명·이름 색인
+    let sig = |g: &Agg| -> Option<String> {
+        (g.files > 0 && g.all_hashed && !g.has_children).then(|| g.hashes.join(","))
+    };
+    let mut b_by_sig: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut b_by_sub: HashMap<String, usize> = HashMap::new();
+    for (i, g) in b.iter().enumerate() {
+        if let Some(s) = sig(g) {
+            b_by_sig.entry(s).or_default().push(i);
+        }
+        b_by_sub.entry(g.sub.clone()).or_insert(i);
+    }
+    let mut used_b = vec![false; b.len()];
+    let mut out = Vec::new();
+    for ga in &a {
+        if ga.files == 0 && !ga.has_children {
+            continue; // 빈 폴더
+        }
+        // 1) 내용이 같은 B 폴더 — 이름까지 같은 것을 먼저
+        if let Some(s) = sig(ga) {
+            if let Some(cands) = b_by_sig.get(&s) {
+                let pick = cands
+                    .iter()
+                    .copied()
+                    .filter(|&i| !used_b[i])
+                    .min_by_key(|&i| (b[i].sub != ga.sub, i));
+                if let Some(i) = pick {
+                    used_b[i] = true;
+                    out.push(PairRow {
+                        a: Some(ga.info.clone()),
+                        b: Some(b[i].info.clone()),
+                        files_a: ga.files,
+                        files_b: b[i].files,
+                        same: true,
+                        common: ga.files,
+                        bytes: ga.bytes,
+                    });
+                    continue;
+                }
+            }
+        }
+        // 2) 이름이 같은 B 폴더 — 공통 파일 수
+        if let Some(&i) = b_by_sub.get(&ga.sub) {
+            if !used_b[i] {
+                used_b[i] = true;
+                let gb = &b[i];
+                let mut counts: HashMap<&str, i64> = HashMap::new();
+                for h in &gb.hashes {
+                    *counts.entry(h.as_str()).or_default() += 1;
+                }
+                let mut common = 0i64;
+                let mut bytes = 0i64;
+                let per = if ga.files > 0 { ga.bytes / ga.files } else { 0 };
+                for h in &ga.hashes {
+                    if let Some(n) = counts.get_mut(h.as_str()) {
+                        if *n > 0 {
+                            *n -= 1;
+                            common += 1;
+                            bytes += per;
+                        }
+                    }
+                }
+                out.push(PairRow {
+                    a: Some(ga.info.clone()),
+                    b: Some(gb.info.clone()),
+                    files_a: ga.files,
+                    files_b: gb.files,
+                    same: false,
+                    common,
+                    bytes,
+                });
+                continue;
+            }
+        }
+        // 3) A 에만
+        out.push(PairRow {
+            a: Some(ga.info.clone()),
+            b: None,
+            files_a: ga.files,
+            files_b: 0,
+            same: false,
+            common: 0,
+            bytes: 0,
+        });
+    }
+    for (i, gb) in b.iter().enumerate() {
+        if used_b[i] || (gb.files == 0 && !gb.has_children) {
+            continue;
+        }
+        out.push(PairRow {
+            a: None,
+            b: Some(gb.info.clone()),
+            files_a: 0,
+            files_b: gb.files,
+            same: false,
+            common: 0,
+            bytes: 0,
+        });
+    }
+    // 같은 것 → 부분 → 한쪽만, 각각 큰 순
+    out.sort_by(|x, y| {
+        let rank = |r: &PairRow| if r.same { 0 } else if r.a.is_some() && r.b.is_some() { 1 } else { 2 };
+        rank(x).cmp(&rank(y)).then(y.bytes.cmp(&x.bytes)).then(y.files_a.cmp(&x.files_a))
+    });
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +415,24 @@ mod tests {
         assert_eq!(r.groups, 1, "{r:?}");
         let pending = db.read(|c| identical_sets(c, 100)).unwrap();
         assert!(!pending[0].pending, "처리한 묶음은 pending 이 아니다");
+    }
+
+    #[test]
+    fn two_roots_pair_identical_and_partial_folders() {
+        let (_d, db) = setup();
+        let id_of = |name: &str| -> i64 {
+            db.read(|c| c.query_row("SELECT id FROM folders WHERE rel_path LIKE ?1", [format!("%{name}")], |r| r.get(0)))
+                .unwrap()
+        };
+        let (a, b, d) = (id_of("a"), id_of("b"), id_of("d"));
+        // a 와 b 는 내용이 같다 — 뿌리끼리도 짝이 된다
+        let rows = db.read(|c| compare_two(c, a, b)).unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert!(rows[0].same && rows[0].common == 2);
+        // a 와 d 는 한 장만 겹친다 — 뿌리 이름은 다르지만 뿌리끼리는 sub 가 같다("")
+        let rows = db.read(|c| compare_two(c, a, d)).unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert!(!rows[0].same);
+        assert_eq!((rows[0].common, rows[0].files_a, rows[0].files_b), (1, 2, 2));
     }
 }

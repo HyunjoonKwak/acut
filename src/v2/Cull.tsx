@@ -7,6 +7,7 @@ import { useJob } from "./jobStore";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 import FolderSets from "./FolderSets";
+import TwoFolders from "./TwoFolders";
 
 type Group = {
   id: number;
@@ -41,6 +42,7 @@ type Summary = {
 
 const KINDS = [
   { id: -3, label: "폴더 비교", hint: "내용이 완전히 같은 폴더들 — 하나만 남기고 나머지 지우기" },
+  { id: -4, label: "두 폴더 비교", hint: "내가 고른 두 폴더 아래를 견준다 — 후보1번/연도별 ⇔ 후보2번" },
   { id: 0, label: "개별 비교", hint: "바이트가 같은 사진 무리 — 한 장씩 보며" },
   { id: 2, label: "같은 순간", hint: "연달아 찍은 것" },
   { id: 1, label: "잡동사니", hint: "스크린샷·다운로드본" },
@@ -98,7 +100,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   }, []);
 
   const loadGroups = useCallback(async (k: number) => {
-    if (k === -3) {
+    if (k === -3 || k === -4) {
       setGroups([]); // 폴더 비교는 무리가 아니라 폴더로 본다
       setIdx(0);
       return;
@@ -341,7 +343,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (viewerAt !== null) return; // 크게 보기가 열려 있으면 뷰어가 키를 가져간다
-      if (kind === -3 && e.key !== "Escape") return; // 폴더 비교는 제 손잡이가 있다
+      if ((kind === -3 || kind === -4) && e.key !== "Escape") return; // 폴더 비교는 제 손잡이가 있다
       if (e.key === " ") {
         e.preventDefault();
         apply();
@@ -401,7 +403,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               }`}
             >
               {k.label}
-              {k.id !== -3 && (
+              {k.id !== -3 && k.id !== -4 && (
                 <span className="tabular-nums text-fg-mute">
                   {" "}
                   {s?.groups ?? 0}
@@ -458,9 +460,13 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      {kind === -3 ? (
+      {kind === -3 || kind === -4 ? (
         <div className="flex-1 min-h-0">
-          <FolderSets onChanged={loadSummary} />
+          {kind === -3 ? (
+            <FolderSets onChanged={loadSummary} />
+          ) : (
+            <TwoFolders onChanged={loadSummary} />
+          )}
         </div>
       ) : (
         <>

@@ -369,6 +369,16 @@ pub async fn cull_folder_sets(state: State<'_, AppState>) -> Result<Vec<folders:
     state.db.read(|c| folders::identical_sets(c, 500)).map_err(err)
 }
 
+/// 두 폴더 비교 — A·B 아래 폴더들을 내용으로 짝짓는다.
+#[tauri::command]
+pub async fn cull_compare_folders(
+    state: State<'_, AppState>,
+    a_folder_id: i64,
+    b_folder_id: i64,
+) -> Result<Vec<folders::PairRow>, String> {
+    state.db.read(|c| folders::compare_two(c, a_folder_id, b_folder_id)).map_err(err)
+}
+
 /// 폴더 묶음 하나 — keep 을 남기고 drops 에 지우기 표시.
 #[tauri::command]
 pub async fn cull_folder_set_apply(

@@ -4,6 +4,7 @@ import { fmtBytes } from "./format";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { doneSide, overlaps, type FolderHit, type PairRow } from "./twoFoldersLogic";
 
 /**
  * 두 폴더 비교 — «후보1번/연도별»과 «후보2번»처럼 내가 고른 두 폴더 아래를 견준다.
@@ -12,34 +13,8 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
  * «n/m 똑같음», 한쪽에만 있으면 그대로. 같은 것은 어느 쪽을 지울지 골라 한 번에.
  */
 
-type FolderIn = {
-  folder_id: number;
-  library_id: number;
-  library: string;
-  folder: string;
-  area: number;
-};
-type PairRow = {
-  a: FolderIn | null;
-  b: FolderIn | null;
-  files_a: number;
-  files_b: number;
-  same: boolean;
-  common: number;
-  bytes: number;
-};
 type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
-/** Finder 로 고른 폴더가 라이브러리 안의 어느 폴더인가 */
-type FolderHit = {
-  id: number | null;
-  library_id: number;
-  library: string;
-  path: string;
-  volume_uuid: string;
-  vol_rel: string;
-  abs: string;
-  file_count: number;
-};
+type FolderIn = NonNullable<PairRow["a"]>;
 
 const settled = (f: FolderIn) => f.area === 1 || f.area === 2;
 
@@ -49,8 +24,12 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const [b, setB] = useState<FolderHit | null>(null);
   const [rows, setRows] = useState<PairRow[] | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 표시 진행 — n/총. null 이면 표시 중이 아니다 */
+  const [marking, setMarking] = useState<{ done: number; total: number } | null>(null);
+  const [tick, setTick] = useState(0);
 
-  // 두 폴더가 정해지면 바로 견준다 — «비교» 단추를 따로 누를 이유가 없다
+  // 두 폴더가 정해지면 바로 견준다 — «비교» 단추를 따로 누를 이유가 없다.
+  // 표시한 뒤에는 tick 으로 같은 길을 다시 태운다 — invoke 경로는 이 하나뿐
   useEffect(() => {
     if (!a || !b) return;
     let live = true;
@@ -68,33 +47,15 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     return () => {
       live = false;
     };
-  }, [a, b]);
-
-  const compare = useCallback(async () => {
-    if (!a || !b) return;
-    setBusy(true);
-    try {
-      setRows(
-        await invoke<PairRow[]>("cull_compare_folders", {
-          aVolume: a.volume_uuid,
-          aRel: a.vol_rel,
-          bVolume: b.volume_uuid,
-          bRel: b.vol_rel,
-        }),
-      );
-    } catch (e) {
-      toast(String(e), "drop");
-    } finally {
-      setBusy(false);
-    }
-  }, [a, b]);
+  }, [a, b, tick]);
 
   /// 같은 폴더 짝에서 한쪽에 지우기 표시. side = 지울 쪽
   const mark = useCallback(
     async (targets: PairRow[], side: "a" | "b") => {
-      const pairs = targets.filter((r) => r.same && r.a && r.b);
+      // 처리된 짝은 뺀다 — B쪽을 지운 줄에서 A쪽을 또 누르면 방금 남긴 B가 뒤집힌다
+      const pairs = targets.filter((r) => r.same && r.a && r.b && doneSide(r) === null);
       if (pairs.length === 0) {
-        toast("똑같은 폴더 짝이 없습니다");
+        toast("지우기 표시할 똑같은 폴더 짝이 없습니다");
         return;
       }
       const drop = (r: PairRow) => (side === "a" ? r.a! : r.b!);
@@ -115,47 +76,78 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         danger: risky.length > 0,
       });
       if (!ok) return;
+      // 잠근다 — 도는 동안 «A쪽 전부»를 또 누르면 두 루프가 같은 짝을 반대로 건다
+      setMarking({ done: 0, total: pairs.length });
       let failed = 0;
-      for (const r of pairs) {
-        try {
-          await invoke<ApplyAll>("cull_folder_set_apply", {
-            keepFolderId: keep(r).folder_id,
-            dropFolderIds: [drop(r).folder_id],
-          });
-        } catch {
-          failed += 1;
+      let firstErr = "";
+      try {
+        for (const [i, r] of pairs.entries()) {
+          try {
+            await invoke<ApplyAll>("cull_folder_set_apply", {
+              keepFolderId: keep(r).folder_id,
+              dropFolderIds: [drop(r).folder_id],
+            });
+          } catch (e) {
+            failed += 1;
+            firstErr ||= String(e);
+          }
+          setMarking({ done: i + 1, total: pairs.length });
         }
+      } finally {
+        setMarking(null);
       }
       toast(
         failed
-          ? `${pairs.length - failed}개 처리 · ${failed}개 실패`
+          ? `${pairs.length - failed}개 처리 · ${failed}개 실패 (${firstErr})`
           : `${pairs.length.toLocaleString()}개 폴더에 지우기 표시했습니다 — 격자에서 «치우기»`,
         failed ? "drop" : "ok",
       );
       onChanged();
-      void compare();
+      setTick((t) => t + 1);
     },
-    [ask, onChanged, compare],
+    [ask, onChanged],
+  );
+
+  const pickSide = useCallback(
+    (side: "a" | "b") => (hit: FolderHit) => {
+      const other = side === "a" ? b : a;
+      if (other && overlaps(hit, other)) {
+        toast("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더를 고르세요", "drop");
+        return;
+      }
+      (side === "a" ? setA : setB)(hit);
+    },
+    [a, b],
   );
 
   const same = useMemo(() => rows?.filter((r) => r.same) ?? [], [rows]);
-  const sameBytes = same.reduce((s, r) => s + r.bytes, 0);
+  const todo = useMemo(() => same.filter((r) => doneSide(r) === null), [same]);
+  const sameBytes = todo.reduce((s, r) => s + r.bytes, 0);
+  const locked = busy || marking !== null;
 
   return (
     <div className="h-full flex flex-col">
       <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line text-[12.5px] flex-wrap">
-        <Picker label="A" value={a} onPick={setA} startAt={b?.abs ?? null} />
+        <Picker label="A" value={a} onPick={pickSide("a")} startAt={b?.abs ?? null} disabled={locked} />
         <span className="text-fg-mute">⇔</span>
-        <Picker label="B" value={b} onPick={setB} startAt={a?.abs ?? null} />
+        <Picker label="B" value={b} onPick={pickSide("b")} startAt={a?.abs ?? null} disabled={locked} />
         {busy && (
           <span className="flex items-center gap-2 text-keep">
             <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 견주는 중…
           </span>
         )}
-        {rows && (
+        {marking && (
+          <span className="flex items-center gap-2 text-keep tabular-nums">
+            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 표시 중 {marking.done}/{marking.total}
+          </span>
+        )}
+        {rows && !marking && (
           <span className="text-fg-dim tabular-nums">
             똑같은 폴더 <b className="text-fg">{same.length.toLocaleString()}</b>쌍
-            {same.length > 0 && (
+            {same.length > todo.length && (
+              <> · 처리됨 {(same.length - todo.length).toLocaleString()}</>
+            )}
+            {todo.length > 0 && (
               <>
                 {" "}· 한쪽을 지우면 <b className="text-keep">{fmtBytes(sameBytes)}</b> 빔
               </>
@@ -163,17 +155,19 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           </span>
         )}
         <div className="flex-1" />
-        {same.length > 0 && (
+        {todo.length > 0 && (
           <>
             <button
-              onClick={() => mark(same, "b")}
-              className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px]"
+              onClick={() => mark(todo, "b")}
+              disabled={locked}
+              className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
             >
               B쪽 똑같은 폴더 전부 지우기 표시
             </button>
             <button
-              onClick={() => mark(same, "a")}
-              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px]"
+              onClick={() => mark(todo, "a")}
+              disabled={locked}
+              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
             >
               A쪽 전부
             </button>
@@ -203,8 +197,13 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} className="border-t border-line align-middle">
+              {rows.map((r) => {
+                const done = doneSide(r);
+                return (
+                <tr
+                  key={`${r.a?.folder_id ?? "x"}-${r.b?.folder_id ?? "x"}`}
+                  className={`border-t border-line align-middle ${done ? "opacity-45" : ""}`}
+                >
                   <td className="py-1.5 px-4 max-w-[380px]">
                     <Cell f={r.a} sub={a} />
                   </td>
@@ -233,27 +232,34 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                     )}
                   </td>
                   <td className="py-1.5 pr-4 text-right whitespace-nowrap">
-                    {r.same && (
-                      <>
-                        <button
-                          onClick={() => mark([r], "b")}
-                          className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong mr-1"
-                          title="B쪽 폴더의 사진에 지우기 표시"
-                        >
-                          B쪽 지우기
-                        </button>
-                        <button
-                          onClick={() => mark([r], "a")}
-                          className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong"
-                          title="A쪽 폴더의 사진에 지우기 표시"
-                        >
-                          A쪽 지우기
-                        </button>
-                      </>
+                    {done ? (
+                      <span className="text-ok text-[11.5px]">처리됨 — {done === "a" ? "A" : "B"}쪽 지움</span>
+                    ) : (
+                      r.same && (
+                        <>
+                          <button
+                            onClick={() => mark([r], "b")}
+                            disabled={locked}
+                            className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong mr-1 disabled:opacity-40"
+                            title="B쪽 폴더의 사진에 지우기 표시"
+                          >
+                            B쪽 지우기
+                          </button>
+                          <button
+                            onClick={() => mark([r], "a")}
+                            disabled={locked}
+                            className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
+                            title="A쪽 폴더의 사진에 지우기 표시"
+                          >
+                            A쪽 지우기
+                          </button>
+                        </>
+                      )
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -285,12 +291,14 @@ function Picker({
   value,
   onPick,
   startAt,
+  disabled,
 }: {
   label: string;
   value: FolderHit | null;
   onPick: (f: FolderHit) => void;
   /** 창이 열릴 자리 — 다른 쪽에서 고른 폴더의 위 폴더. 없으면 /Volumes */
   startAt: string | null;
+  disabled?: boolean;
 }) {
   const pick = async () => {
     const from = value?.abs ?? startAt;
@@ -308,6 +316,10 @@ function Picker({
         toast("등록된 라이브러리 안의 폴더가 아닙니다 — 왼쪽 앨범에 있는 폴더를 고르세요", "drop");
         return;
       }
+      if (hit.file_count === 0) {
+        toast("이 폴더 아래에 아직 훑은 사진이 없습니다 — 라이브러리를 먼저 다시 훑으세요", "drop");
+        return;
+      }
       onPick(hit);
     } catch (e) {
       toast(String(e), "drop");
@@ -318,8 +330,9 @@ function Picker({
       <span className="text-fg-mute font-semibold">{label}</span>
       <button
         onClick={pick}
+        disabled={disabled}
         title="Finder 에서 폴더 고르기"
-        className={`h-7 min-w-[260px] max-w-[420px] px-2.5 rounded-md text-left truncate ring-1 ${
+        className={`h-7 min-w-[260px] max-w-[420px] px-2.5 rounded-md text-left truncate ring-1 disabled:opacity-40 ${
           value ? "bg-raised text-fg ring-line" : "bg-raised text-fg-mute ring-line-strong"
         }`}
       >

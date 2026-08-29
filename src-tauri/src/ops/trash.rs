@@ -153,8 +153,18 @@ pub fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
                     "복사가 끝까지 안 됐습니다 ({got} / {want} bytes) — 디스크가 찼나요?"
                 )));
             }
+            copy_mtime(from, to);
             std::fs::remove_file(from)
         }
+    }
+}
+
+/// 사본의 수정 시각을 원본대로 맞춘다. `fs::copy`는 내용만 옮겨 옮긴 날이 찍힌다 —
+/// 촬영일 없는 파일은 이 값으로 날짜를 잡으니 어긋나면 «오늘 찍은 사진»이 된다 (리뷰 H3)
+pub fn copy_mtime(from: &Path, to: &Path) {
+    let Ok(m) = std::fs::metadata(from).and_then(|m| m.modified()) else { return };
+    if let Ok(f) = std::fs::File::options().write(true).open(to) {
+        let _ = f.set_modified(m);
     }
 }
 

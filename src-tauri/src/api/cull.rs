@@ -378,6 +378,9 @@ pub async fn cull_compare_folders(
     b_volume: String,
     b_rel: String,
 ) -> Result<Vec<folders::PairRow>, String> {
+    if folders::roots_overlap((&a_volume, &a_rel), (&b_volume, &b_rel)) {
+        return Err("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더를 고르세요".into());
+    }
     state
         .db
         .read(|c| folders::compare_two(c, (&a_volume, &a_rel), (&b_volume, &b_rel)))

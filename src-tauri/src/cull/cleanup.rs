@@ -243,8 +243,9 @@ pub fn apply_pair(tx: &Transaction, keep: i64, drop: i64) -> rusqlite::Result<Ap
            SELECT file_id FROM group_members WHERE group_id IN (SELECT id FROM temp.todo) AND is_best = 1)",
         [],
     )?;
+    // 이미 «남김»인 파일은 내리지 않는다 — 다른 갈래와 같은 규칙 (리뷰 C11)
     let rejected = tx.execute(
-        "UPDATE files SET culling_flag = 2 WHERE id IN (
+        "UPDATE files SET culling_flag = 2 WHERE culling_flag <> 1 AND id IN (
            SELECT file_id FROM group_members WHERE group_id IN (SELECT id FROM temp.todo) AND is_best = 0)",
         [],
     )?;

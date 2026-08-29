@@ -43,8 +43,11 @@ pub fn recent(db: &Db, limit: usize) -> Result<Vec<Batch>> {
 
 struct Row {
     file_id: i64,
-    volume_uuid: String,
+    /// 원래 있던 볼륨 — 되돌리면 여기로 간다
+    from_vol: String,
     from_path: String,
+    /// 지금 있는 볼륨 — 볼륨을 넘어간 이동이면 `from_vol`과 다르다
+    to_vol: String,
     to_path: String,
 }
 
@@ -77,7 +80,10 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
             it.collect::<rusqlite::Result<Vec<_>>>()
         })?;
         let out = crate::ops::trash::to_trash(db, &ids, "가져오기 되돌리기")?;
-        mark_undone(db, batch_id)?;
+        // 하나도 못 옮겼으면(카드·디스크가 빠짐) 배치를 열어 둔다 — 아래 일반 갈래와 같다
+        if out.moved > 0 || ids.is_empty() {
+            mark_undone(db, batch_id)?;
+        }
         return Ok(Outcome { batch_id, ..out });
     }
 
@@ -91,47 +97,55 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
             it.collect::<rusqlite::Result<Vec<_>>>()
         })?;
         let out = crate::ops::trash::restore(db, &ids)?;
-        mark_undone(db, batch_id)?;
+        if out.moved > 0 || ids.is_empty() {
+            mark_undone(db, batch_id)?;
+        }
         return Ok(Outcome { batch_id, ..out });
     }
 
     let rows: Vec<Row> = db.read(|c| {
         // 나중 것부터 — 같은 배치에서 이름이 밀린 경우를 제자리로 돌린다
         let mut st = c.prepare(
-            "SELECT file_id, from_vol, from_path, to_path FROM journal
+            "SELECT file_id, from_vol, from_path, COALESCE(to_vol, from_vol), to_path FROM journal
              WHERE batch_id = ?1 AND ok = 1 AND file_id IS NOT NULL AND to_path IS NOT NULL
              ORDER BY id DESC",
         )?;
         let it = st.query_map([batch_id], |r| {
             Ok(Row {
                 file_id: r.get(0)?,
-                volume_uuid: r.get(1)?,
+                from_vol: r.get(1)?,
                 from_path: r.get(2)?,
-                to_path: r.get(3)?,
+                to_vol: r.get(3)?,
+                to_path: r.get(4)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
 
     let mut out = Outcome { batch_id, ..Default::default() };
+    // 볼륨마다 마운트는 한 번만 찾는다
+    let mut mounts: std::collections::HashMap<&str, Option<std::path::PathBuf>> =
+        std::collections::HashMap::new();
     for row in &rows {
-        let Some(mount) = crate::db::volumes::find_mount(&row.volume_uuid) else {
+        let now_mount = mount_cached(&mut mounts, &row.to_vol);
+        let back_mount = mount_cached(&mut mounts, &row.from_vol);
+        let (Some(now_mount), Some(back_mount)) = (now_mount, back_mount) else {
             out.failed += 1;
             out.first_error
                 .get_or_insert("디스크가 연결되어 있지 않습니다".into());
             continue;
         };
-        let from = mount.join(&row.to_path); // 지금 있는 곳
+        let from = now_mount.join(&row.to_path); // 지금 있는 곳
         // 원래 자리에 그새 다른 파일이 생겼을 수 있다 — 덮어쓰지 않고 옆에 놓는다
         // (리뷰: rename은 있는 파일을 소리 없이 바꿔치기한다)
-        let to = crate::ops::trash::free_path(mount.join(&row.from_path));
+        let to = crate::ops::trash::free_path(back_mount.join(&row.from_path));
         let to_rel = to
-            .strip_prefix(&mount)
+            .strip_prefix(&back_mount)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| row.from_path.clone());
         match move_file(&from, &to) {
             Ok(()) => {
-                repoint(db, row.file_id, &row.volume_uuid, &to_rel)?;
+                repoint(db, row.file_id, &row.from_vol, &to_rel)?;
                 out.moved += 1;
             }
             Err(e) => {
@@ -147,31 +161,43 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
     Ok(out)
 }
 
+fn mount_cached<'a>(
+    m: &mut std::collections::HashMap<&'a str, Option<std::path::PathBuf>>,
+    volume_uuid: &'a str,
+) -> Option<std::path::PathBuf> {
+    m.entry(volume_uuid)
+        .or_insert_with(|| crate::db::volumes::find_mount(volume_uuid))
+        .clone()
+}
+
 /// 파일 행이 원래 폴더를 가리키게 되돌린다. 폴더 행이 사라졌으면 되살린다.
 fn repoint(db: &Db, file_id: i64, volume_uuid: &str, vol_rel: &str) -> Result<()> {
     let (dir, name) = match vol_rel.rsplit_once('/') {
         Some((d, n)) => (d.to_string(), n.to_string()),
         None => (String::new(), vol_rel.to_string()),
     };
-    // 이 볼륨에서 그 경로를 품는 라이브러리를 찾는다
-    let library_id: Option<i64> = db.read(|c| {
+    // 이 볼륨에서 그 경로를 품는 라이브러리를 찾는다 — 구역(area)도 그 라이브러리의 것.
+    // 상수 1(내사진)로 박으면 작업대로 돌아온 폴더가 정착 구역으로 잡혀 고르기가 건너뛴다
+    let lib: Option<(i64, i32)> = db.read(|c| {
         use rusqlite::OptionalExtension;
         c.query_row(
-            "SELECT id FROM libraries WHERE volume_uuid = ?1
-               AND (rel_path = '' OR ?2 = rel_path OR ?2 LIKE rel_path || '/%')
+            "SELECT id, area FROM libraries WHERE volume_uuid = ?1
+               AND (rel_path = '' OR ?2 = rel_path OR substr(?2, 1, length(rel_path) + 1) = rel_path || '/')
              ORDER BY length(rel_path) DESC LIMIT 1",
             rusqlite::params![volume_uuid, dir],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
     })?;
+    let library_id = lib.map(|l| l.0);
+    let area = lib.map(|l| l.1).unwrap_or(0);
     let folder_name = dir.rsplit('/').next().unwrap_or(&dir).to_string();
     db.write(|c| {
         c.execute(
             "INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,scanned_at)
-             VALUES(?1,?2,?3,?4,1,strftime('%s','now'))
+             VALUES(?1,?2,?3,?4,?5,strftime('%s','now'))
              ON CONFLICT(volume_uuid,rel_path) DO UPDATE SET library_id=COALESCE(excluded.library_id, library_id)",
-            rusqlite::params![volume_uuid, library_id, dir, folder_name],
+            rusqlite::params![volume_uuid, library_id, dir, folder_name, area],
         )?;
         c.execute(
             "UPDATE files SET name = ?2,
@@ -271,6 +297,43 @@ mod tests {
             })
             .unwrap();
         assert_eq!(still, 0, "휴지통 표시도 지워져야 목록에 다시 나온다");
+    }
+
+    #[test]
+    fn journal_keeps_the_destination_volume_apart_from_the_source() {
+        let (_d, db, _lib, ids) = setup();
+        let batch = crate::ops::open_batch(&db, "move", "볼륨 넘어가기").unwrap();
+        crate::ops::record_to(&db, batch, "move", ids[0], "VOL-A", "a/x.jpg", "VOL-B", Some("b/x.jpg"), Ok(()))
+            .unwrap();
+        let (from, to): (String, String) = db
+            .read(|c| {
+                c.query_row("SELECT from_vol, to_vol FROM journal WHERE batch_id = ?1", [batch], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+            })
+            .unwrap();
+        assert_eq!((from.as_str(), to.as_str()), ("VOL-A", "VOL-B"), "to_vol 이 from_vol 에 묶이지 않는다");
+    }
+
+    #[test]
+    fn a_trash_undo_that_moved_nothing_stays_undoable() {
+        let (dir, db, _lib, ids) = setup();
+        let out = trash::to_trash(&db, &ids[..1], "치우기").unwrap();
+        // 휴지통의 파일이 그새 사라졌다 — 되돌릴 것이 없다
+        let trash_path: String = db
+            .read(|c| c.query_row("SELECT trash_path FROM files WHERE id = ?1", [ids[0]], |r| r.get(0)))
+            .unwrap();
+        let _ = std::fs::remove_file(dir.path().join(&trash_path));
+        let _ = std::fs::remove_file(&trash_path);
+        let u = undo(&db, out.batch_id).unwrap();
+        let undone: Option<i64> = db
+            .read(|c| c.query_row("SELECT undone_at FROM batches WHERE id=?1", [out.batch_id], |r| r.get(0)))
+            .unwrap();
+        if u.moved == 0 {
+            assert!(undone.is_none(), "하나도 못 돌렸으면 배치는 열려 있어야 한다");
+        } else {
+            assert!(undone.is_some());
+        }
     }
 
     #[test]

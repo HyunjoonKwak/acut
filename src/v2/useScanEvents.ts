@@ -182,13 +182,16 @@ export function useScanEvents(cb: {
     on<{ done: number; total: number }>("offload-progress", (p) =>
       job().progress({ label: "옮기는 중", done: p.done, total: p.total }),
     );
-    on<{ folders: number; files: number; bytes: number }>(
+    on<{ folders: number; files: number; bytes: number; undeleted?: number }>(
       "offload-done",
       async (o) => {
         job().clear();
+        const left = o.undeleted ?? 0;
         toast(
-          `${o.files.toLocaleString()}장(${o.folders}개 폴더)을 옮겼습니다`,
-          "ok",
+          left > 0
+            ? `${o.files.toLocaleString()}장(${o.folders}개 폴더)을 복사했지만 원본 ${left.toLocaleString()}장은 못 지웠습니다 — 원래 폴더를 확인하세요`
+            : `${o.files.toLocaleString()}장(${o.folders}개 폴더)을 옮겼습니다`,
+          left > 0 ? "drop" : "ok",
         );
         await useData.getState().refreshLibs();
         ref.current.refreshMeta();

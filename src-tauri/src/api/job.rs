@@ -26,10 +26,16 @@ impl Drop for JobGuard {
 
 /// 스위치를 켠다. 이미 켜져 있으면 None — 두 벌이 같은 캐시에 쓰지 않게.
 pub fn try_start(running: &Arc<AtomicBool>, reason: &str) -> Option<JobGuard> {
+    try_start_with(running, reason, false)
+}
+
+/// 뒤에서 도는 일(폴더 감시)용 — 잠자기를 막지 않는다. 사용자가 시킨 일은 `UserInitiated`
+/// 로 시스템 잠자기를 미루지만, 감시가 그걸 쓰면 맥이 밤새 못 잔다 (리뷰 H15)
+pub fn try_start_with(running: &Arc<AtomicBool>, reason: &str, background: bool) -> Option<JobGuard> {
     if running.swap(true, Ordering::AcqRel) {
         return None;
     }
-    Some(JobGuard { running: Arc::clone(running), _activity: Activity::begin(reason) })
+    Some(JobGuard { running: Arc::clone(running), _activity: Activity::begin(reason, background) })
 }
 
 struct Activity {
@@ -41,12 +47,10 @@ struct Activity {
 unsafe impl Send for Activity {}
 
 impl Activity {
-    fn begin(reason: &str) -> Self {
+    fn begin(reason: &str, background: bool) -> Self {
         let info = NSProcessInfo::processInfo();
-        let token = info.beginActivityWithOptions_reason(
-            NSActivityOptions::UserInitiated,
-            &NSString::from_str(reason),
-        );
+        let opts = if background { NSActivityOptions::Background } else { NSActivityOptions::UserInitiated };
+        let token = info.beginActivityWithOptions_reason(opts, &NSString::from_str(reason));
         Activity { token }
     }
 }

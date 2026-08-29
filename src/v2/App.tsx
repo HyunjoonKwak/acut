@@ -222,11 +222,12 @@ export default function App() {
   );
   const markPicked = useCallback(
     (patch: Mark) => {
-      markMany([...useSelection.getState().picked], patch).catch((e) =>
-        toast(String(e), "drop"),
-      );
+      // 판정이 바뀌면 상태바의 «제외 N장 치우기»도 바뀌어야 한다 — 그 수는 refreshMeta 가 센다 (리뷰 H2)
+      markMany([...useSelection.getState().picked], patch)
+        .then(() => refreshMeta())
+        .catch((e) => toast(String(e), "drop"));
     },
-    [markMany],
+    [markMany, refreshMeta],
   );
 
   // ── 일 ──────────────────────────────────────────────────────────
@@ -547,7 +548,9 @@ export default function App() {
           onClose={() => {
             ui.set({ culling: false });
             loadFirst();
+            refreshMeta();
           }}
+          onChanged={refreshMeta}
         />
       )}
 

@@ -49,7 +49,14 @@ const KINDS = [
   { id: 3, label: "비슷한 장면", hint: "AI가 본 닮은 사진 (벡터 필요)" },
 ];
 
-export default function Cull({ onClose }: { onClose: () => void }) {
+export default function Cull({
+  onClose,
+  onChanged,
+}: {
+  onClose: () => void;
+  /** 판정 수가 바뀌었다 — 격자 쪽 «제외 N장 치우기» 수를 다시 세게 */
+  onChanged: () => void;
+}) {
   const [kind, setKind] = useState(-3); // 폴더 비교가 먼저 — 가장 크게 비운다
   const [groups, setGroups] = useState<Group[]>([]);
   const [idx, setIdx] = useState(0);
@@ -99,7 +106,15 @@ export default function Cull({ onClose }: { onClose: () => void }) {
     setSummary(await invoke<Summary[]>("cull_summary"));
   }, []);
 
+  // 지금 탭 — 이벤트 경로에서 «어느 갈래를 새로 읽나»를 최신으로 본다
+  const kindRef = useRef(kind);
+  useEffect(() => {
+    kindRef.current = kind;
+  }, [kind]);
+  // 응답 세대 — 늦게 온 다른 갈래의 무리가 지금 탭에 들어오지 않게 (리뷰 H3)
+  const groupsGen = useRef(0);
   const loadGroups = useCallback(async (k: number) => {
+    const gen = ++groupsGen.current;
     if (k === -3 || k === -4) {
       setGroups([]); // 폴더 비교는 무리가 아니라 폴더로 본다
       setIdx(0);
@@ -110,6 +125,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       limit: 200,
       offset: 0,
     });
+    if (gen !== groupsGen.current || k !== kindRef.current) return;
     setGroups(g);
     setIdx(0);
   }, []);
@@ -125,10 +141,12 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         dryRun: true,
         folderId,
       });
-      if (dry.groups === 0) {
+      // 잡동사니의 skipped 는 «건너뛴 사진 수», 나머지 갈래는 «건너뛴 무리 수»
+      const unit = kind === 1 ? "장" : "무리";
+      if (dry.groups === 0 || (kind === 1 && dry.rejected === 0)) {
         toast(
           dry.skipped > 0
-            ? `확정할 것이 없습니다 — 공용·내사진 안의 사본이 있는 ${dry.skipped.toLocaleString()}무리는 하나씩 봐야 합니다`
+            ? `확정할 것이 없습니다 — 공용·내사진 안의 ${dry.skipped.toLocaleString()}${unit}는 하나씩 봐야 합니다`
             : "확정할 것이 없습니다",
         );
         return;
@@ -139,7 +157,9 @@ export default function Cull({ onClose }: { onClose: () => void }) {
           `남김 ${dry.kept.toLocaleString()}장 · 제외 표시 ${dry.rejected.toLocaleString()}장`,
           ...(dry.skipped > 0
             ? [
-                `공용·내사진 안에 제외될 사본이 있는 ${dry.skipped.toLocaleString()}무리는 건너뜁니다 — 나중에 하나씩`,
+                kind === 1
+                  ? `공용·내사진 안의 ${dry.skipped.toLocaleString()}장은 건너뜁니다 — 나중에 하나씩`
+                  : `공용·내사진 안에 제외될 사본이 있는 ${dry.skipped.toLocaleString()}무리는 건너뜁니다 — 나중에 하나씩`,
               ]
             : []),
           "파일은 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
@@ -168,10 +188,16 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   // «효과 안에서 바로»로 본다. 여기서는 then으로 풀어 쓴다.
   useEffect(() => {
     let live = true;
+    const gen = ++groupsGen.current;
     invoke<Summary[]>("cull_summary").then((s) => live && setSummary(s));
-    invoke<Group[]>("cull_groups", { kind, limit: 200, offset: 0 }).then(
+    // 폴더 탭은 무리를 안 쓴다 — 비우되, 효과 안에서 바로 setState 하지 않는다(컴파일러 규칙)
+    const load =
+      kind === -3 || kind === -4
+        ? Promise.resolve([] as Group[])
+        : invoke<Group[]>("cull_groups", { kind, limit: 200, offset: 0 });
+    load.then(
       (g) => {
-        if (!live) return;
+        if (!live || gen !== groupsGen.current) return;
         setGroups(g);
         setIdx(0);
       },
@@ -208,10 +234,6 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   // 지금 탭 — 구독은 한 번만 하고 갈래는 ref 로 본다. 탭마다 다시 구독하면 listen 이
   // 끝나기 전에 바뀐 효과의 정리가 빈 배열을 돌아 구독이 새고, 낡은 클로저가 다른 탭에
   // 무리를 채웠다 (리뷰 H3)
-  const kindRef = useRef(kind);
-  useEffect(() => {
-    kindRef.current = kind;
-  }, [kind]);
   useEffect(() => {
     let alive = true;
     const subs: Promise<() => void>[] = [];
@@ -264,7 +286,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
 
   const advance = useCallback(() => {
     setGroups((prev) => prev.filter((_, i) => i !== idx));
-    setIdx((i) => Math.min(i, groups.length - 2));
+    setIdx((i) => Math.max(0, Math.min(i, groups.length - 2)));
   }, [idx, groups.length]);
 
   const apply = useCallback(async () => {
@@ -463,9 +485,19 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       {kind === -3 || kind === -4 ? (
         <div className="flex-1 min-h-0">
           {kind === -3 ? (
-            <FolderSets onChanged={loadSummary} />
+            <FolderSets
+              onChanged={() => {
+                loadSummary();
+                onChanged();
+              }}
+            />
           ) : (
-            <TwoFolders onChanged={loadSummary} />
+            <TwoFolders
+              onChanged={() => {
+                loadSummary();
+                onChanged();
+              }}
+            />
           )}
         </div>
       ) : (

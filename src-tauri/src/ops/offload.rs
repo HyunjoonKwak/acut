@@ -150,10 +150,22 @@ fn copy_tree(
             )));
         };
         let to = dest.join(rel);
+        // 중간에 실패하면 복사한 것을 전부 걷는다 — `?`로 빠져나가면 반쪽 사본이 남아
+        // 다음 시도가 «대상에 같은 폴더가 이미 있습니다»로 막힌다 (리뷰 H2)
         if let Some(parent) = to.parent() {
-            std::fs::create_dir_all(parent)?;
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                undo(&copied);
+                return Err(std::io::Error::other(format!("폴더를 못 만들었습니다: {} — {e}. 되돌렸습니다", parent.display())));
+            }
         }
-        let n = std::fs::copy(path, &to)?;
+        let n = match std::fs::copy(path, &to) {
+            Ok(n) => n,
+            Err(e) => {
+                copied.push(to.clone());
+                undo(&copied);
+                return Err(std::io::Error::other(format!("복사 실패: {} — {e}. 되돌렸습니다", to.display())));
+            }
+        };
         let same = n == *size
             && crate::core::hasher::xxhash_file(path).is_some()
             && crate::core::hasher::xxhash_file(path) == crate::core::hasher::xxhash_file(&to);
@@ -165,6 +177,8 @@ fn copy_tree(
                 to.display()
             )));
         }
+        // 수정 시각을 원본대로 — 촬영일이 없는 파일은 이 값이 날짜가 된다
+        crate::ops::trash::copy_mtime(path, &to);
         copied.push(to);
         p.done += 1;
         p.bytes_done += size;

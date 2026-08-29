@@ -137,13 +137,15 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| it.name.clone());
                 let to_rel = crate::media::cache::rel_path(&dest_vol_dir, &new_name);
-                super::record(
+                // 도착 볼륨은 목적지 라이브러리의 것 — 볼륨을 넘어가면 둘이 다르다
+                super::record_to(
                     db,
                     batch_id,
                     "move",
                     it.id,
                     &it.volume_uuid,
                     &it.vol_rel,
+                    &lib.volume_uuid,
                     Some(&to_rel),
                     Ok(()),
                 )?;
@@ -174,17 +176,19 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
     }
 
     super::close_batch(db, batch_id, out.moved)?;
-    recount(db, &[it_lib(&items), Some(dest.library_id)])?;
+    // 떠난 라이브러리 전부와 도착 라이브러리 — 첫 파일의 것만 세면 다른 라이브러리에서
+    // 온 파일의 폴더 수가 틀린 채 남는다
+    let mut libs: Vec<i64> = items.iter().map(|i| i.library_id).collect();
+    libs.push(dest.library_id);
+    libs.sort_unstable();
+    libs.dedup();
+    recount(db, &libs)?;
     Ok(out)
 }
 
-fn it_lib(items: &[Item]) -> Option<i64> {
-    items.first().map(|i| i.library_id)
-}
-
 /// 폴더별 사진 수를 다시 센다. 사이드바 숫자가 곧바로 맞아야 한다.
-fn recount(db: &Db, libs: &[Option<i64>]) -> Result<()> {
-    for id in libs.iter().flatten() {
+fn recount(db: &Db, libs: &[i64]) -> Result<()> {
+    for id in libs {
         db.write(|c| {
             c.execute(
                 "UPDATE folders SET file_count =
@@ -196,6 +200,16 @@ fn recount(db: &Db, libs: &[Option<i64>]) -> Result<()> {
         })?;
     }
     Ok(())
+}
+
+/// 이 파일들이 지금 속한 라이브러리들 — 옮기고 나서 비는 폴더는 여기에 생긴다
+pub fn libraries_of(db: &Db, ids: &[i64]) -> Result<Vec<i64>> {
+    Ok(load(db, ids)?
+        .into_iter()
+        .map(|it| it.library_id)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect())
 }
 
 /// 옮기고 나서 빈 껍데기만 남은 폴더 행을 치운다. 디스크의 빈 폴더는 두고

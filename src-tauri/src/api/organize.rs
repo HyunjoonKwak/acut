@@ -58,10 +58,17 @@ pub async fn organize_move(
     let area = crate::db::libraries::get(&state.db, library_id).map_err(err)?.map(|l| l.area).unwrap_or(2);
     let rel_dir = organize::event_rel_dir_for(area, &date, &title);
     let dest = organize::Dest { library_id, rel_dir: rel_dir.clone() };
+    // 비는 폴더는 **떠난 쪽** 라이브러리에 생긴다 — 옮기기 전에 어느 라이브러리들인지 적어 둔다
+    let mut sources = organize::libraries_of(&state.db, &ids).map_err(err)?;
     let out =
         organize::move_to(&state.db, &ids, &dest, &format!("정리 → {rel_dir}")).map_err(err)?;
     // 비어 버린 폴더 행은 사이드바에서 치운다
-    organize::forget_empty_folders(&state.db, library_id).map_err(err)?;
+    if !sources.contains(&library_id) {
+        sources.push(library_id);
+    }
+    for lib in sources {
+        organize::forget_empty_folders(&state.db, lib).map_err(err)?;
+    }
     Ok(out)
 }
 

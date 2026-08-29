@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useSelection } from "./selectionStore";
 import { useOverlayOpen, useUi } from "./uiStore";
 import { usePrefs } from "./prefs";
+import { toast } from "./toastStore";
 import type { FileRow, Mark } from "./types";
 
 /**
@@ -103,16 +104,20 @@ export function useGridKeys(opts: {
       }
       if (i < 0) return;
       const r = rows[i];
-      // 여러 장을 골라 두었으면 그 전부에 — 초점 한 장 기준으로 켜고 끈다 (리뷰 H1)
-      const many = sel.picked.size > 1 && sel.picked.has(r.id);
+      // 여러 장을 골라 두었으면 그 전부에 — 화면(선택 패널·메뉴)과 같은 뜻으로 **세운다**.
+      // 초점 한 장 기준으로 켜고 끄면 초점이 이미 «남김»일 때 1,199장의 판정이 지워진다 (리뷰 H1).
+      // 대상은 고른 수로만 정한다 — 초점이 고른 것 밖이어도 고른 것에 붙는다
+      const many = sel.picked.size > 1;
       const mark = (patch: Mark) =>
-        many ? void markMany([...sel.picked], patch) : markOne(r.id, patch);
+        many
+          ? void markMany([...sel.picked], patch).catch((err) => toast(String(err), "drop"))
+          : markOne(r.id, patch);
       if (/^[0-5]$/.test(e.key)) mark({ rating: +e.key });
       else if (e.key === "p")
-        mark({ cullingFlag: r.culling_flag === 1 ? 0 : 1 });
+        mark({ cullingFlag: many ? 1 : r.culling_flag === 1 ? 0 : 1 });
       else if (e.key === "x")
-        mark({ cullingFlag: r.culling_flag === 2 ? 0 : 2 });
-      else if (e.key === "f") mark({ favorite: !r.favorite });
+        mark({ cullingFlag: many ? 2 : r.culling_flag === 2 ? 0 : 2 });
+      else if (e.key === "f") mark({ favorite: many ? true : !r.favorite });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

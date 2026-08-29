@@ -70,9 +70,15 @@ test("초점이 목록 안에 있으면 그대로, 없으면 첫 장으로", () 
   assert.equal(S().selected, 70, "빈 목록은 아무것도 안 한다");
 });
 
-test("초점을 옮겨도 선택은 그대로다 — 둘은 다른 일", () => {
+test("목록 안에 남은 선택은 그대로, 목록 밖으로 나간 것은 떨어진다", () => {
   reset();
   S().setPicked([10, 20]);
+  S().focusWithin([10, 20, 30]);
+  assert.deepEqual([...S().picked].sort(), [10, 20], "다 있으면 안 건드린다");
+  // 다른 폴더로 갔다 — 보이지 않는 사진에 «제외»가 찍히면 안 된다 (리뷰 H8)
   S().focusWithin([30, 40]);
-  assert.deepEqual([...S().picked].sort(), [10, 20]);
+  assert.deepEqual([...S().picked], []);
+  S().setPicked([30, 40]);
+  S().focusWithin([]);
+  assert.deepEqual([...S().picked].sort(), [30, 40], "빈 목록(새로 읽는 중)은 아무것도 안 한다");
 });

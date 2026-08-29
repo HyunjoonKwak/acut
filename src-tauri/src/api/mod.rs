@@ -1011,6 +1011,7 @@ pub async fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String
             Arc::clone(&state.db),
             state.cache_base.clone(),
             Arc::clone(&state.running),
+            Arc::clone(&state.cancel),
             move |c| {
                 let _ = handle.emit("library-changed", c);
             },

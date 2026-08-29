@@ -51,16 +51,34 @@ pub fn record(
     to_path: Option<&str>,
     r: std::result::Result<(), &str>,
 ) -> Result<()> {
+    record_to(db, batch_id, op, file_id, volume_uuid, from_path, volume_uuid, to_path, r)
+}
+
+/// 볼륨을 넘어간 이동 — 도착 볼륨을 따로 적는다. 예전엔 `to_vol`을 `from_vol`과 같은
+/// 자리(?4)에 묶어 T7→NAS 이동을 되돌릴 때 원래 디스크에서 사본을 찾다 실패했다 (리뷰 C1)
+#[allow(clippy::too_many_arguments)]
+pub fn record_to(
+    db: &Db,
+    batch_id: i64,
+    op: &str,
+    file_id: i64,
+    from_vol: &str,
+    from_path: &str,
+    to_vol: &str,
+    to_path: Option<&str>,
+    r: std::result::Result<(), &str>,
+) -> Result<()> {
     db.write(|c| {
         c.execute(
             "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok,error)
-             VALUES(?1,?2,?3,?4,?5,?4,?6,?7,?8)",
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             rusqlite::params![
                 batch_id,
                 file_id,
                 op,
-                volume_uuid,
+                from_vol,
                 from_path,
+                to_vol,
                 to_path,
                 r.is_ok() as i32,
                 r.err(),

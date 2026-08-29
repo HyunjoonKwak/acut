@@ -56,7 +56,16 @@ export const useSelection = create<Store>()((set) => ({
   focusWithin: (order) =>
     set((s) => {
       if (order.length === 0) return s;
-      if (s.selected !== null && order.includes(s.selected)) return s;
-      return { selected: order[0] };
+      // 고른 것도 목록 안의 것만 — 다른 폴더로 옮겨 가서 «제외»를 누르면 보이지 않는
+      // 1,200장에 찍히던 길 (리뷰 H8)
+      const inList = new Set(order);
+      const picked =
+        [...s.picked].every((id) => inList.has(id))
+          ? s.picked
+          : new Set([...s.picked].filter((id) => inList.has(id)));
+      const selected =
+        s.selected !== null && inList.has(s.selected) ? s.selected : order[0];
+      if (picked === s.picked && selected === s.selected) return s;
+      return { selected, picked };
     }),
 }));

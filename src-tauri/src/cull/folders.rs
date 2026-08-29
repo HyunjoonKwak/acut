@@ -10,7 +10,7 @@
 
 use rusqlite::{params, Connection, Transaction};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::apply::ApplyAll;
 
@@ -42,6 +42,50 @@ fn in_lib(lib_rel: &str, rel: &str) -> String {
         .to_string()
 }
 
+/// 하위 폴더 행이 있는 (볼륨, 경로) 집합. `folders.parent_id`는 스캐너가 채우지 않아
+/// 그걸로 걸러 봐야 아무것도 안 걸러진다 — 경로의 위 폴더를 셈해서 만든다 (리뷰 H5)
+fn parents_with_children(c: &Connection) -> rusqlite::Result<HashSet<(String, String)>> {
+    let mut st = c.prepare("SELECT volume_uuid, rel_path FROM folders")?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+    let mut out = HashSet::new();
+    for row in rows {
+        let (vol, rel) = row?;
+        // 위 폴더 전부 — 중간 폴더는 사진이 바로 아래 없으면 행이 없어서 바로 위만 보면 놓친다
+        for p in ancestors(&rel) {
+            out.insert((vol.clone(), p));
+        }
+    }
+    Ok(out)
+}
+
+/// `a/b/c` → `a/b`, `a`, `` (뿌리)
+fn ancestors(rel: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = rel;
+    while let Some((p, _)) = cur.rsplit_once('/') {
+        out.push(p.to_string());
+        cur = p;
+    }
+    if !rel.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+/// 볼륨이 지금 붙어 있나 — 볼륨마다 한 번만 본다
+struct Online(HashMap<String, bool>);
+impl Online {
+    fn new() -> Self {
+        Online(HashMap::new())
+    }
+    fn is(&mut self, vol: &str) -> bool {
+        *self
+            .0
+            .entry(vol.to_string())
+            .or_insert_with(|| crate::db::volumes::find_mount(vol).is_some())
+    }
+}
+
 /// 내용이 완전히 같은 폴더 묶음들 — 비는 용량 큰 순.
 pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<FolderSet>> {
     // 파일이 전부 해시된 폴더만 서명을 만든다. group_concat 의 순서는 안쪽 ORDER BY 를 따른다.
@@ -57,15 +101,12 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
                  ORDER BY folder_id, full_hash)
            GROUP BY folder_id)
          SELECT fo.id, fo.library_id, l.name, l.rel_path, fo.rel_path, fo.area,
-                t.n, t.bytes, t.pend, sig.s
+                t.n, t.bytes, t.pend, sig.s, fo.volume_uuid
          FROM sig
          JOIN tot t ON t.folder_id = sig.folder_id
          JOIN folders fo ON fo.id = sig.folder_id
          JOIN libraries l ON l.id = fo.library_id
-         WHERE t.nohash = 0 AND t.n >= 1
-           -- 하위 폴더가 있으면 «바로 아래 파일만 같다»일 뿐이다 — 사용자는 폴더째 같다고
-           -- 읽고 Finder 에서 지운다. 하위는 저마다 따로 견준다 (리뷰 H5)
-           AND NOT EXISTS (SELECT 1 FROM folders c WHERE c.parent_id = fo.id)",
+         WHERE t.nohash = 0 AND t.n >= 1",
     )?;
     let rows = st.query_map([], |r| {
         let lib_rel: String = r.get(3)?;
@@ -82,11 +123,21 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
             r.get::<_, i64>(7)?,
             r.get::<_, i64>(8)?,
             r.get::<_, String>(9)?,
+            r.get::<_, String>(10)?,
+            rel,
         ))
     })?;
+    // 하위 폴더가 있으면 «바로 아래 파일만 같다»일 뿐이다 — 사용자는 폴더째 같다고 읽고
+    // Finder 에서 지운다. 하위는 저마다 따로 견준다. 빠진 디스크의 폴더는 지금 확인할 수
+    // 없으니 견주지 않는다
+    let kids = parents_with_children(c)?;
+    let mut online = Online::new();
     let mut by_sig: HashMap<String, (Vec<FolderIn>, i64, i64, bool)> = HashMap::new();
     for row in rows {
-        let (f, n, bytes, pend, s) = row?;
+        let (f, n, bytes, pend, s, vol, rel) = row?;
+        if kids.contains(&(vol.clone(), rel)) || !online.is(&vol) {
+            continue;
+        }
         let e = by_sig.entry(s).or_insert((Vec::new(), n, bytes, false));
         e.0.push(f);
         e.3 |= pend > 0;
@@ -106,10 +157,13 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
             FolderSet { folders: fs, files, bytes, pending }
         })
         .collect();
+    // 경로 순 — 용량 순으로 두면 «2016, 2023, 2019…» 뒤죽박죽으로 보인다 (사용자 지적).
+    // 묶음의 이름은 정착 구역 폴더(맨 앞)의 경로
     out.sort_by(|a, b| {
-        let ga = a.bytes * (a.folders.len() as i64 - 1);
-        let gb = b.bytes * (b.folders.len() as i64 - 1);
-        gb.cmp(&ga)
+        a.folders[0]
+            .folder
+            .cmp(&b.folders[0].folder)
+            .then(a.folders[0].library_id.cmp(&b.folders[0].library_id))
     });
     out.truncate(limit);
     Ok(out)
@@ -125,12 +179,17 @@ pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result
         "UPDATE files SET culling_flag = 1 WHERE folder_id = ?1 AND trashed_at IS NULL",
         [keep],
     )?;
+    // 남길 폴더에 **같은 내용이 지금 있는** 파일만 지우기 표시 — 목록을 본 뒤 남길 폴더에서
+    // 파일이 지워졌거나 바뀌었으면 그 사본은 마지막 한 벌이다 (리뷰 C12)
     let mut rejected = 0;
     for d in drops {
         rejected += tx.execute(
             "UPDATE files SET culling_flag = 2
-             WHERE folder_id = ?1 AND trashed_at IS NULL AND culling_flag <> 1",
-            [d],
+             WHERE folder_id = ?1 AND trashed_at IS NULL AND culling_flag <> 1
+               AND full_hash IS NOT NULL
+               AND full_hash IN (SELECT k.full_hash FROM files k
+                                 WHERE k.folder_id = ?2 AND k.trashed_at IS NULL AND k.full_hash IS NOT NULL)",
+            params![d, keep],
         )?;
     }
     let all: Vec<i64> = std::iter::once(keep).chain(drops.iter().copied()).collect();
@@ -162,6 +221,9 @@ pub struct PairRow {
     pub common: i64,
     /// 같은 쪽 하나를 지우면 비는 용량(same 일 때) — 아니면 공통 파일의 용량
     pub bytes: i64,
+    /// 이미 지우기 표시된 파일 수 — 한쪽이 전부면 그 짝은 «처리됨»
+    pub flagged_a: i64,
+    pub flagged_b: i64,
 }
 
 struct Agg {
@@ -170,6 +232,8 @@ struct Agg {
     sub: String,
     files: i64,
     bytes: i64,
+    /// culling_flag = 2 인 파일 수
+    flagged: i64,
     hashes: Vec<String>,
     all_hashed: bool,
     has_children: bool,
@@ -181,7 +245,7 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<Vec<A
     let esc = crate::db::query::escape_like(rel);
     let mut st = c.prepare(
         "SELECT fo.id, fo.rel_path, fo.area, l.id, l.name, l.rel_path, f.full_hash, f.size,
-                EXISTS (SELECT 1 FROM folders k WHERE k.parent_id = fo.id)
+                f.culling_flag = 2
          FROM folders fo
          JOIN libraries l ON l.id = fo.library_id
          LEFT JOIN files f ON f.folder_id = fo.id AND f.trashed_at IS NULL
@@ -199,11 +263,11 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<Vec<A
             r.get::<_, String>(5)?,
             r.get::<_, Option<String>>(6)?,
             r.get::<_, Option<i64>>(7)?,
-            r.get::<_, bool>(8)?,
+            r.get::<_, Option<bool>>(8)?.unwrap_or(false),
         ))
     })?;
     for row in rows {
-        let (id, fo_rel, area, lib_id, lib_name, lib_rel, hash, size, kids) = row?;
+        let (id, fo_rel, area, lib_id, lib_name, lib_rel, hash, size, flagged) = row?;
         if out.last().map(|a| a.info.folder_id) != Some(id) {
             let sub = fo_rel
                 .strip_prefix(rel)
@@ -220,22 +284,38 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<Vec<A
                 sub,
                 files: 0,
                 bytes: 0,
+                flagged: 0,
                 hashes: Vec::new(),
                 all_hashed: true,
-                has_children: kids,
+                has_children: false,
             });
         }
         let cur = out.last_mut().unwrap();
         if let Some(size) = size {
             cur.files += 1;
             cur.bytes += size;
+            cur.flagged += flagged as i64;
             match hash {
                 Some(h) => cur.hashes.push(h),
                 None => cur.all_hashed = false,
             }
         }
     }
+    // 하위 폴더 유무는 이 결과 안에서 안다 — 뿌리 아래 폴더는 전부 여기 들어 있다
+    let parents: HashSet<String> = out.iter().flat_map(|a| ancestors(&a.sub)).collect();
+    for a in &mut out {
+        a.has_children = parents.contains(&a.sub);
+    }
     Ok(out)
+}
+
+/// 두 뿌리가 서로를 품는가 — 같은 폴더가 양쪽 목록에 들어 제 짝이 되는 길을 막는다
+pub fn roots_overlap((a_vol, a_rel): (&str, &str), (b_vol, b_rel): (&str, &str)) -> bool {
+    if a_vol != b_vol {
+        return false;
+    }
+    let under = |root: &str, p: &str| root.is_empty() || p == root || p.starts_with(&format!("{root}/"));
+    under(a_rel, b_rel) || under(b_rel, a_rel)
 }
 
 /// 두 폴더(와 그 아래)를 견준다 — «후보1번/연도별»과 «후보2번»처럼.
@@ -247,6 +327,9 @@ pub fn compare_two(
     (a_vol, a_rel): (&str, &str),
     (b_vol, b_rel): (&str, &str),
 ) -> rusqlite::Result<Vec<PairRow>> {
+    if roots_overlap((a_vol, a_rel), (b_vol, b_rel)) {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     let a = folders_under(c, a_vol, a_rel)?;
     let b = folders_under(c, b_vol, b_rel)?;
     // B 쪽 서명·이름 색인
@@ -262,7 +345,8 @@ pub fn compare_two(
         b_by_sub.entry(g.sub.clone()).or_insert(i);
     }
     let mut used_b = vec![false; b.len()];
-    let mut out = Vec::new();
+    // (정렬 열쇠 = 뿌리 기준 경로, 줄)
+    let mut out: Vec<(String, PairRow)> = Vec::new();
     for ga in &a {
         if ga.files == 0 && !ga.has_children {
             continue; // 빈 폴더
@@ -277,7 +361,7 @@ pub fn compare_two(
                     .min_by_key(|&i| (b[i].sub != ga.sub, i));
                 if let Some(i) = pick {
                     used_b[i] = true;
-                    out.push(PairRow {
+                    out.push((ga.sub.clone(), PairRow {
                         a: Some(ga.info.clone()),
                         b: Some(b[i].info.clone()),
                         files_a: ga.files,
@@ -285,7 +369,9 @@ pub fn compare_two(
                         same: true,
                         common: ga.files,
                         bytes: ga.bytes,
-                    });
+                        flagged_a: ga.flagged,
+                        flagged_b: b[i].flagged,
+                    }));
                     continue;
                 }
             }
@@ -311,7 +397,7 @@ pub fn compare_two(
                         }
                     }
                 }
-                out.push(PairRow {
+                out.push((ga.sub.clone(), PairRow {
                     a: Some(ga.info.clone()),
                     b: Some(gb.info.clone()),
                     files_a: ga.files,
@@ -319,12 +405,14 @@ pub fn compare_two(
                     same: false,
                     common,
                     bytes,
-                });
+                    flagged_a: ga.flagged,
+                    flagged_b: gb.flagged,
+                }));
                 continue;
             }
         }
         // 3) A 에만
-        out.push(PairRow {
+        out.push((ga.sub.clone(), PairRow {
             a: Some(ga.info.clone()),
             b: None,
             files_a: ga.files,
@@ -332,13 +420,15 @@ pub fn compare_two(
             same: false,
             common: 0,
             bytes: 0,
-        });
+            flagged_a: ga.flagged,
+            flagged_b: 0,
+        }));
     }
     for (i, gb) in b.iter().enumerate() {
         if used_b[i] || (gb.files == 0 && !gb.has_children) {
             continue;
         }
-        out.push(PairRow {
+        out.push((gb.sub.clone(), PairRow {
             a: None,
             b: Some(gb.info.clone()),
             files_a: 0,
@@ -346,14 +436,14 @@ pub fn compare_two(
             same: false,
             common: 0,
             bytes: 0,
-        });
+            flagged_a: 0,
+            flagged_b: gb.flagged,
+        }));
     }
-    // 같은 것 → 부분 → 한쪽만, 각각 큰 순
-    out.sort_by(|x, y| {
-        let rank = |r: &PairRow| if r.same { 0 } else if r.a.is_some() && r.b.is_some() { 1 } else { 2 };
-        rank(x).cmp(&rank(y)).then(y.bytes.cmp(&x.bytes)).then(y.files_a.cmp(&x.files_a))
-    });
-    Ok(out)
+    // 경로 순 — Finder 를 나란히 놓은 것처럼 읽힌다. «같은 것 → 부분 → 한쪽만, 용량 큰
+    // 순»으로 두었더니 «오름차순도 내림차순도 아니다»(사용자 지적)
+    out.sort_by(|x, y| x.0.cmp(&y.0).then(x.1.same.cmp(&y.1.same)));
+    Ok(out.into_iter().map(|(_, r)| r).collect())
 }
 
 #[cfg(test)]
@@ -416,6 +506,99 @@ mod tests {
         assert_eq!(r.groups, 1, "{r:?}");
         let pending = db.read(|c| identical_sets(c, 100)).unwrap();
         assert!(!pending[0].pending, "처리한 묶음은 pending 이 아니다");
+    }
+
+    #[test]
+    fn ancestors_walk_up_to_the_root() {
+        assert_eq!(ancestors("a/b/c"), ["a/b", "a", ""]);
+        assert_eq!(ancestors("a"), [""]);
+        assert!(ancestors("").is_empty());
+    }
+
+    #[test]
+    fn roots_that_contain_each_other_overlap() {
+        assert!(roots_overlap(("v", "통합전후보"), ("v", "통합전후보/후보1번")));
+        assert!(roots_overlap(("v", "통합전후보/후보1번"), ("v", "통합전후보")));
+        assert!(roots_overlap(("v", "a"), ("v", "a")));
+        assert!(roots_overlap(("v", ""), ("v", "x")), "볼륨 뿌리는 전부를 품는다");
+        assert!(!roots_overlap(("v", "후보1"), ("v", "후보10")), "이름 앞만 같은 것");
+        assert!(!roots_overlap(("v1", "a"), ("v2", "a")), "다른 볼륨");
+    }
+
+    #[test]
+    fn a_folder_with_subfolders_is_never_called_identical() {
+        // a/ 안에 하위 폴더 a/inner/ 가 생기면 a 는 «바로 아래만 같다»일 뿐 — 묶지 않는다
+        let (dir, db) = setup();
+        let inner = dir.path().join("a/inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(inner.join("q.jpg"), b"Q ".repeat(300)).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let sets = db.read(|c| identical_sets(c, 100)).unwrap();
+        assert_eq!(sets.len(), 1, "{sets:?}");
+        let names: Vec<&str> = sets[0].folders.iter().map(|f| f.folder.as_str()).collect();
+        assert!(!names.contains(&"a"), "하위 폴더가 있는 a 는 빠진다: {names:?}");
+        assert_eq!(names, ["c", "b"]);
+    }
+
+    #[test]
+    fn apply_set_only_drops_files_that_still_have_a_copy_in_the_kept_folder() {
+        let (dir, db) = setup();
+        let sets = db.read(|c| identical_sets(c, 100)).unwrap();
+        let s = &sets[0];
+        let keep = s.folders[0].folder_id; // c
+        let drops: Vec<i64> = s.folders[1..].iter().map(|f| f.folder_id).collect();
+        // 목록을 본 뒤 남길 폴더(c)에서 2.jpg 가 사라졌다(휴지통) — 그 내용은 이제 a·b 에만 있다
+        std::fs::remove_file(dir.path().join("c/2.jpg")).unwrap();
+        db.write(|c| {
+            c.execute(
+                "UPDATE files SET trashed_at = 1 WHERE folder_id = ?1 AND name = '2.jpg'",
+                [keep],
+            )
+        })
+        .unwrap();
+        let r = db.transaction(|tx| apply_set(tx, keep, &drops)).unwrap();
+        assert_eq!(r.rejected, 2, "a/1, b/one 만 지우기 표시 — 2.jpg 사본은 남는다: {r:?}");
+        let flagged: Vec<String> = db
+            .read(|c| {
+                let mut st = c.prepare("SELECT name FROM files WHERE culling_flag = 2 ORDER BY name")?;
+                let it = st.query_map([], |r| r.get(0))?;
+                it.collect()
+            })
+            .unwrap();
+        assert_eq!(flagged, ["1.jpg", "one.jpg"]);
+    }
+
+    #[test]
+    fn compare_two_rejects_overlapping_roots_and_lists_in_path_order() {
+        let (dir, db) = setup();
+        // 뿌리 아래 여러 폴더: root/{a,b,c,d} 를 통째로 다른 곳과 견주려면 뿌리가 둘 필요 —
+        // 여기서는 «뿌리(전체) 대 a» 가 겹친다는 것만 본다
+        let vol: String = db
+            .read(|c| c.query_row("SELECT volume_uuid FROM folders LIMIT 1", [], |r| r.get(0)))
+            .unwrap();
+        let a_rel: String = db
+            .read(|c| c.query_row("SELECT rel_path FROM folders WHERE rel_path LIKE '%a'", [], |r| r.get(0)))
+            .unwrap();
+        let root_rel = a_rel.rsplit_once('/').map(|(p, _)| p.to_string()).unwrap_or_default();
+        let e = db.read(|c| compare_two(c, (&vol, &root_rel), (&vol, &a_rel)));
+        assert!(e.is_err(), "겹치는 뿌리는 거절한다: {e:?}");
+        // 경로 순: 두 뿌리 아래 폴더가 여럿일 때 sub 오름차순 — x/{1,2} 대 y/{2,1}
+        for (d, names) in [("x/1", ["p.jpg"]), ("x/2", ["p.jpg"]), ("y/1", ["p.jpg"]), ("y/2", ["p.jpg"])] {
+            let p = dir.path().join(d);
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(p.join(names[0]), d.as_bytes().repeat(200)).unwrap();
+        }
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let x = format!("{root_rel}/x").trim_start_matches('/').to_string();
+        let y = format!("{root_rel}/y").trim_start_matches('/').to_string();
+        let rows = db.read(|c| compare_two(c, (&vol, &x), (&vol, &y))).unwrap();
+        let subs: Vec<String> = rows.iter().map(|r| r.a.as_ref().or(r.b.as_ref()).unwrap().folder.clone()).collect();
+        let mut sorted = subs.clone();
+        sorted.sort();
+        assert_eq!(subs, sorted, "경로 오름차순: {subs:?}");
+        assert!(rows.iter().all(|r| !r.same), "내용이 다 다르니 같은 짝은 없다");
     }
 
     #[test]

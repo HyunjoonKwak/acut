@@ -202,7 +202,11 @@ pub async fn nas_verify(app: AppHandle, library_id: i64) -> Result<Verified, Str
             )
         })
         .map_err(err)?;
-    let on_disk = ssh::present_files(&dir).len() as i64;
+    // 22만 파일을 훑는 동안 비동기 런타임을 잡고 있지 않는다
+    let dir2 = dir.clone();
+    let on_disk = tauri::async_runtime::spawn_blocking(move || ssh::present_media_count(&dir2))
+        .await
+        .map_err(|e| e.to_string())? as i64;
     if expected > 0 && on_disk * 10 < expected * 9 {
         return Err(format!(
             "디스크에 {on_disk}개뿐입니다 (DB에는 {expected}개) — 폴더가 다 붙은 뒤 다시 확인하세요"
@@ -400,12 +404,13 @@ pub async fn nas_purge_run(app: AppHandle, rels: Vec<String>) -> Result<Purged, 
         .filter(|r| ssh::safe_zone1_rel(r) && allowed.contains(r))
         .collect();
     if rels2.is_empty() {
-        return Ok(Purged { moved: 0, bytes: 0 });
+        // 목록은 있었는데 전부 걸러졌다 — «0개 비움»으로 조용히 끝내면 왜 안 됐는지 모른다
+        return Err("비울 수 있는 경로가 없습니다 — 이 앱이 받은 것(원장)이고 1차 구역 안의 경로만 비웁니다".into());
     }
     let Some(guard) = job::try_start(&state.running, "에이컷 NAS 비우기") else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
-    let moved = tauri::async_runtime::spawn_blocking(move || {
+    let ssh::Trashed { moved, error } = tauri::async_runtime::spawn_blocking(move || {
         let _guard = guard;
         ssh::trash_in_zone1(&cfg, &rels2)
     })
@@ -427,6 +432,10 @@ pub async fn nas_purge_run(app: AppHandle, rels: Vec<String>) -> Result<Purged, 
         })
         .map_err(err)?;
     let _ = app.emit("nas-purge-done", Purged { moved: moved.len(), bytes });
+    // 옮긴 것은 원장에서 지웠다 — 그 위에서 일부가 실패했으면 그제야 알린다
+    if let Some(e) = error {
+        return Err(format!("{}개는 옮겼지만 일부 실패: {e}", moved.len()));
+    }
     Ok(Purged { moved: moved.len(), bytes })
 }
 

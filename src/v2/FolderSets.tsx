@@ -74,41 +74,53 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
 
   const applyAllNas = useCallback(async () => {
     if (!sets) return;
-    // NAS(정착 구역) 폴더가 있고 나머지가 전부 NAS 밖인 묶음만 — 위험한 것은 사람이
-    const todo = sets
-      .map((s) => [s] as const)
-      .filter(([s]) => s.pending && settled(s.folders[0]) && s.folders.slice(1).every((f) => !settled(f)));
+    // 남길 것은 사용자가 ●로 고른 폴더(기본은 맨 앞). 그것이 NAS 폴더이고 나머지가 전부
+    // NAS 밖인 묶음만 — 위험한 것은 사람이. ●를 다른 데 두어 조건에 안 맞는 묶음은 건너뛴다
+    const keepAt = (s: FolderSet) => Math.min(keep[setKey(s)] ?? 0, s.folders.length - 1);
+    const todo = sets.filter((s) => {
+      const k = keepAt(s);
+      return s.pending && settled(s.folders[k]) && s.folders.every((f, j) => j === k || !settled(f));
+    });
+    const passed = sets.filter((s) => s.pending).length - todo.length;
     if (todo.length === 0) {
       toast("NAS 것을 남기고 처리할 묶음이 없습니다");
       return;
     }
-    const bytes = todo.reduce((a, [s]) => a + s.bytes * (s.folders.length - 1), 0);
+    const bytes = todo.reduce((a, s) => a + s.bytes * (s.folders.length - 1), 0);
     const ok = await ask({
       title: `${todo.length.toLocaleString()}묶음 — NAS 폴더를 남기고 나머지에 지우기 표시`,
-      lines: [`${fmtBytes(bytes)} 빔`, "NAS 밖(T7·작업대) 폴더에만 표시합니다", "파일은 아직 옮기지 않습니다"],
+      lines: [
+        `${fmtBytes(bytes)} 빔`,
+        "NAS 밖(T7·작업대) 폴더에만 표시합니다",
+        ...(passed > 0 ? [`${passed.toLocaleString()}묶음은 남길 폴더가 NAS 것이 아니라 건너뜁니다`] : []),
+        "파일은 아직 옮기지 않습니다",
+      ],
       confirmLabel: "전부 처리",
     });
     if (!ok) return;
     let failed = 0;
-    for (const [s] of todo) {
+    let firstErr = "";
+    for (const s of todo) {
+      const k = keepAt(s);
       try {
         await invoke<ApplyAll>("cull_folder_set_apply", {
-          keepFolderId: s.folders[0].folder_id,
-          dropFolderIds: s.folders.slice(1).map((d) => d.folder_id),
+          keepFolderId: s.folders[k].folder_id,
+          dropFolderIds: s.folders.filter((_, j) => j !== k).map((d) => d.folder_id),
         });
-      } catch {
+      } catch (e) {
         failed += 1;
+        firstErr ||= String(e);
       }
     }
     toast(
       failed
-        ? `${(todo.length - failed).toLocaleString()}묶음 처리 · ${failed}묶음 실패 — 목록을 새로 읽습니다`
+        ? `${(todo.length - failed).toLocaleString()}묶음 처리 · ${failed}묶음 실패 (${firstErr}) — 목록을 새로 읽습니다`
         : `${todo.length.toLocaleString()}묶음 처리했습니다 — 격자에서 «치우기»`,
       failed ? "drop" : "ok",
     );
     setTick((t) => t + 1);
     onChanged();
-  }, [sets, ask, onChanged]);
+  }, [sets, keep, ask, onChanged]);
 
   if (sets === null)
     return (

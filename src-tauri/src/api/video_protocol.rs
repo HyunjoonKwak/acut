@@ -131,9 +131,10 @@ pub fn parse_range(value: &str, len: u64) -> Option<(u64, u64)> {
     let (a, b) = spec.split_once('-')?;
 
     let (start, end) = if a.is_empty() {
-        // bytes=-500 → 마지막 500바이트
+        // bytes=-500 → 마지막 500바이트. 이것도 한 조각까지만 — «bytes=-400000000» 이
+        // 통째로 메모리에 오르던 길 (리뷰 H11)
         let n: u64 = b.parse().ok()?;
-        let n = n.min(len);
+        let n = n.min(len).min(CHUNK);
         (len - n, len - 1)
     } else {
         let start: u64 = a.parse().ok()?;
@@ -191,6 +192,8 @@ mod tests {
         // mp4의 moov atom이 끝에 있으면 플레이어가 꼬리를 먼저 요청한다
         assert_eq!(parse_range("bytes=-500", 1000), Some((500, 999)));
         assert_eq!(parse_range("bytes=-99999", 1000), Some((0, 999)));
+        // 꼬리도 한 조각(CHUNK)까지만
+        assert_eq!(parse_range("bytes=-400000000", 400_000_000), Some((400_000_000 - CHUNK, 399_999_999)));
     }
 
     #[test]

@@ -268,6 +268,22 @@ pub fn present_files(dest: &Path) -> Vec<(String, u64)> {
         .collect()
 }
 
+/// 폴더 아래 **사진·영상** 파일 수 — 확인(verify)의 «디스크가 다 붙었나» 판단용.
+/// `.DS_Store`·사이드카·`@eaDir` 안의 것은 DB 행이 아니니 세면 안 된다 (리뷰 C7)
+pub fn present_media_count(dest: &Path) -> usize {
+    walkdir::WalkDir::new(dest)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            let n = e.file_name().to_string_lossy();
+            !(e.file_type().is_dir() && crate::scan::kinds::is_skipped_dir(&n)) && n != PARTIAL_DIR
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| crate::scan::kinds::classify(&e.file_name().to_string_lossy()).is_some())
+        .count()
+}
+
 /// 1차 구역에 «받은 적 없는 것»이 몇 개·몇 바이트나 — rsync 시험 실행(-n --stats).
 pub fn count_new(cfg: &Config, dest: &Path, already: &[String]) -> std::io::Result<(usize, u64)> {
     let (_, ok) = rsync_version();
@@ -484,13 +500,27 @@ pub fn missing_on_nas(cfg: &Config, local: &Path, remote: &str) -> std::io::Resu
 }
 
 /// 1차 구역의 파일들을 그 안의 `#trash/`로 옮긴다. 옮긴 것의 상대경로를 돌려준다.
-pub fn trash_in_zone1(cfg: &Config, rels: &[String]) -> std::io::Result<Vec<String>> {
+/// 옮긴 것과, 있었다면 실패 사유. 몇 개가 실패해도 옮긴 것은 돌려준다 — 호출자가 원장을
+/// 그만큼은 지워야 다음 비우기에 «이미 없는 파일»이 다시 안 나온다 (리뷰 H8)
+pub struct Trashed {
+    pub moved: Vec<String>,
+    pub error: Option<String>,
+}
+
+pub fn trash_in_zone1(cfg: &Config, rels: &[String]) -> std::io::Result<Trashed> {
     if rels.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Trashed { moved: Vec::new(), error: None });
     }
-    // 목록은 stdin으로 NUL 구분 — 이름에 무엇이 들어 있어도 된다
+    // 목록은 stdin으로 NUL 구분 — 이름에 무엇이 들어 있어도 된다.
+    // 이름은 mv 가 진짜 성공했을 때만 찍는다. `mv -n` 은 목적지에 같은 이름이 있으면
+    // 옮기지 않고도 0 으로 끝나 «옮겼다»고 적히던 길 — 그 파일은 NAS 에 그대로였다.
     let script = format!(
-        "cd {z} || exit 3; while IFS= read -r -d '' f; do d=$(dirname \"$f\"); mkdir -p \"{t}/$d\" && mv -n -- \"$f\" \"{t}/$f\" && printf '%s\\0' \"$f\"; done",
+        "cd {z} || exit 3; fail=0; while IFS= read -r -d '' f; do \
+           if [ ! -e \"$f\" ]; then continue; fi; \
+           if [ -e \"{t}/$f\" ]; then fail=1; echo \"이미 휴지통에 있음: $f\" >&2; continue; fi; \
+           d=$(dirname \"$f\"); \
+           if mkdir -p \"{t}/$d\" && mv -- \"$f\" \"{t}/$f\"; then printf '%s\\0' \"$f\"; else fail=1; fi; \
+         done; exit $fail",
         z = q(&cfg.zone1),
         t = TRASH_DIR
     );
@@ -503,18 +533,23 @@ pub fn trash_in_zone1(cfg: &Config, rels: &[String]) -> std::io::Result<Vec<Stri
         }
     }
     let out = child.wait_with_output()?;
-    if !out.status.success() {
-        return Err(std::io::Error::other(format!(
-            "ssh 실패: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
-    }
-    Ok(out
+    let moved: Vec<String> = out
         .stdout
         .split(|&b| b == 0)
         .filter(|s| !s.is_empty())
         .map(|s| String::from_utf8_lossy(s).into_owned())
-        .collect())
+        .collect();
+    if out.status.code() == Some(3) {
+        return Err(std::io::Error::other(format!(
+            "NAS 의 1차 구역에 들어갈 수 없습니다: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let error = (!out.status.success()).then(|| {
+        let e = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if e.is_empty() { "일부를 못 옮겼습니다".to_string() } else { e }
+    });
+    Ok(Trashed { moved, error })
 }
 
 #[cfg(test)]

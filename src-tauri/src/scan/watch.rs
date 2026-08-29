@@ -161,6 +161,7 @@ impl Watchers {
         db: Arc<Db>,
         cache_base: PathBuf,
         running: Arc<AtomicBool>,
+        cancel: Arc<AtomicBool>,
         on_changed: impl Fn(Changed) + Send + 'static,
     ) {
         if self.started.swap(true, Ordering::AcqRel) {
@@ -181,7 +182,7 @@ impl Watchers {
                 // 사용자 스캔이 도는 중 — 되돌려 놓고 다음 틱에.
                 // 스위치는 JobGuard 로 잡는다 — 직접 켜고 끄면 스캔 중 패닉 한 번에 꺼지지
                 // 않아 모든 작업이 «다른 일이 도는 중»으로 영영 막힌다 (리뷰 H12)
-                let Some(_guard) = crate::api::job::try_start(&running, "에이컷 폴더 감시") else {
+                let Some(_guard) = crate::api::job::try_start_with(&running, "에이컷 폴더 감시", true) else {
                     let mut p = pending.lock().unwrap_or_else(|e| e.into_inner());
                     for k in due {
                         p.entry(k).or_insert_with(Instant::now);
@@ -189,7 +190,7 @@ impl Watchers {
                     continue;
                 };
                 for (library_id, dir) in due {
-                    if let Some(c) = rescan_dir(&db, &cache_base, library_id, &dir) {
+                    if let Some(c) = rescan_dir(&db, &cache_base, library_id, &dir, &cancel) {
                         on_changed(c);
                     }
                 }
@@ -199,7 +200,13 @@ impl Watchers {
 }
 
 /// 폴더 하나를 다시 훑는다 — 새것은 넣고, 사라진 것은 빼고, 썸네일을 만든다.
-fn rescan_dir(db: &Db, cache_base: &Path, library_id: i64, dir: &Path) -> Option<Changed> {
+fn rescan_dir(
+    db: &Db,
+    cache_base: &Path,
+    library_id: i64,
+    dir: &Path,
+    cancel: &Arc<AtomicBool>,
+) -> Option<Changed> {
     let lib = crate::db::libraries::get(db, library_id).ok()??;
     let mount = crate::db::volumes::find_mount(&lib.volume_uuid)?;
     let mut out = Changed { library_id, inserted: 0, updated: 0, removed: 0 };
@@ -207,8 +214,10 @@ fn rescan_dir(db: &Db, cache_base: &Path, library_id: i64, dir: &Path) -> Option
     // 폴더가 안 보이면(이름을 바꿨거나 디스크가 잠깐 빠짐) 아무것도 지우지 않는다.
     // 옛 경로로 온 알림에 행을 지우면 별점·판정·태그·코멘트가 통째로 사라진다 (리뷰 C2).
     // 진짜 없어진 파일은 다음 전체 스캔이 정리한다.
+    // 달라진 것이 없으니 알리지도 않는다 — Some 을 돌려주면 알림마다 «library-changed»가
+    // 나가 사라진 폴더 하나에 화면이 새로고침 폭풍을 맞는다 (리뷰 H6)
     if !dir.is_dir() {
-        return Some(out);
+        return None;
     }
     match crate::scan::scan_folder(db, library_id, dir, lib.area, |_| {}) {
         Ok(p) => {
@@ -219,14 +228,14 @@ fn rescan_dir(db: &Db, cache_base: &Path, library_id: i64, dir: &Path) -> Option
     }
     // 마운트 이름이 바뀌어 접두사가 안 맞으면 rel이 ""가 되어 볼륨 전체를 정리해 버린다 — 하지 않는다
     let Ok(rel) = dir.strip_prefix(&mount).map(|r| r.to_string_lossy().into_owned()) else {
-        return Some(out);
+        return (out.inserted + out.updated > 0).then_some(out);
     };
     out.removed = crate::scan::prune_missing(db, &mount, library_id, &rel).unwrap_or(0);
 
     if out.inserted > 0 {
-        let cancel = Arc::new(AtomicBool::new(false));
+        // 앱의 멈춤 스위치를 같이 본다 — 제 것을 새로 만들면 «멈추기»가 이 썸네일 작업엔 안 닿는다
         let cache_root = crate::media::cache::cache_root(cache_base, library_id);
-        let _ = crate::scan::thumbs::generate(db, library_id, &mount, &cache_root, cancel, |_| {});
+        let _ = crate::scan::thumbs::generate(db, library_id, &mount, &cache_root, Arc::clone(cancel), |_| {});
     }
     if out.inserted + out.updated + out.removed == 0 {
         return None;

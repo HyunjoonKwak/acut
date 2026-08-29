@@ -11,7 +11,7 @@ use crate::db::conn::{Db, Result};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -22,6 +22,13 @@ pub struct DedupProgress {
     pub groups: usize,
     /// 중복을 정리하면 확보되는 용량
     pub reclaimable: i64,
+    /// 어느 단계인가 — "quick"(앞뒤 128KB) 또는 "full"(파일 전체). 전체 해시는
+    /// 오래 걸리는데 숫자가 안 바뀌면 멈춘 줄 안다 (실측: 191,000에서 «멈췄다»).
+    pub phase: &'static str,
+    /// 전체 해시 — 대상 수, 읽은 수, 읽은 바이트
+    pub full_total: usize,
+    pub full_done: usize,
+    pub full_bytes: i64,
 }
 
 struct Cand {
@@ -30,6 +37,24 @@ struct Cand {
     path: PathBuf,
     volume_uuid: String,
     size: i64,
+    /// 지난 스캔이 남긴 해시 — 있으면 다시 읽지 않는다. 파일이 바뀌면 스캔이 지운다.
+    quick: Option<String>,
+    full: Option<String>,
+}
+
+/// 읽은 해시를 남긴다 — 다음 스캔은 이 파일들을 다시 읽지 않는다.
+fn persist(db: &Db, column: &str, rows: &[(i64, String)]) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let sql = format!("UPDATE files SET {column}=?1 WHERE id=?2");
+    db.transaction(|tx| {
+        let mut up = tx.prepare(&sql)?;
+        for (id, h) in rows {
+            up.execute(rusqlite::params![h, id])?;
+        }
+        Ok(())
+    })
 }
 
 /// 완전 중복을 찾아 `groups`/`group_members`에 기록한다.
@@ -49,10 +74,10 @@ pub fn scan(
     // 1단계: 크기가 겹치는 것만 후보로. 유일한 크기는 볼 것도 없다.
     let cands: Vec<Cand> = db.read(|c| {
         let mut st = c.prepare(
-            "SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid
+            "SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid, fi.quick_hash, fi.full_hash
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
-             WHERE fi.size > 0
-               AND fi.size IN (SELECT size FROM files GROUP BY size HAVING COUNT(*) > 1)",
+             WHERE fi.size > 0 AND fi.trashed_at IS NULL
+               AND fi.size IN (SELECT size FROM files WHERE trashed_at IS NULL GROUP BY size HAVING COUNT(*) > 1)",
         )?;
         let it = st.query_map([], |r| {
             let dir: String = r.get(1)?;
@@ -62,6 +87,8 @@ pub fn scan(
                 path: PathBuf::from(crate::media::cache::rel_path(&dir, &name)),
                 volume_uuid: r.get(4)?,
                 size: r.get(3)?,
+                quick: r.get(5)?,
+                full: r.get(6)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -86,60 +113,99 @@ pub fn scan(
         return Ok(progress.lock().unwrap().clone());
     }
 
-    // 2단계: 빠른 해시 (파일당 128KB만 읽는다)
+    // 2단계: 빠른 해시 (파일당 128KB만 읽는다). 지난번 것이 있으면 그대로 쓴다.
     let counter = AtomicUsize::new(0);
+    let new_quick = Mutex::new(Vec::<(i64, String)>::new());
     let quick: Vec<(i64, i64, String)> = cands
         .par_iter()
         .filter_map(|c| {
             if cancel.load(Ordering::Relaxed) {
                 return None;
             }
-            let q = hash::quick(full_path(c)?).ok()?;
+            let q = match &c.quick {
+                Some(q) => q.clone(),
+                None => {
+                    let q = hash::quick(full_path(c)?).ok()?;
+                    new_quick.lock().unwrap().push((c.id, q.clone()));
+                    q
+                }
+            };
             let n = counter.fetch_add(1, Ordering::Relaxed);
             if n % 500 == 0 {
                 let mut p = progress.lock().unwrap();
+                p.phase = "quick";
                 p.hashed = n;
                 on_progress(&p.clone());
             }
             Some((c.id, c.size, q))
         })
         .collect();
-
+    persist(db, "quick_hash", &new_quick.into_inner().unwrap())?;
+    if cancel.load(Ordering::Relaxed) {
+        // 반쪽 결과로 묶으면 엉뚱한 그룹이 된다 — 해시만 남기고 그룹은 손대지 않는다
+        return Ok(progress.lock().unwrap().clone());
+    }
     // (크기, 빠른해시)가 같은 것끼리 묶는다. 혼자면 중복이 아니다.
     let mut buckets: HashMap<(i64, String), Vec<i64>> = HashMap::new();
     for (id, size, q) in quick {
         buckets.entry((size, q)).or_default().push(id);
     }
-    let need_full: Vec<i64> = buckets
+    let by_id: HashMap<i64, &Cand> = cands.iter().map(|c| (c.id, c)).collect();
+    let need_full: Vec<&Cand> = buckets
         .values()
         .filter(|v| v.len() > 1)
         .flatten()
-        .copied()
+        .filter_map(|id| by_id.get(id).copied())
         .collect();
-
-    // 3단계: 전체 해시 — 여기까지 오는 건 극소수다
-    let by_id: HashMap<i64, &Cand> = cands.iter().map(|c| (c.id, c)).collect();
+    // 3단계: 전체 해시 — 앞뒤가 같은 것만. 옛 백업 디스크와 운영 디스크가 같이
+    // 등록돼 있으면 여기가 수십만 장·수백 GB다. 진행을 보내고, 200장마다 저장해
+    // 멈춰도 읽은 만큼은 남긴다.
+    {
+        let mut p = progress.lock().unwrap();
+        p.phase = "full";
+        p.hashed = cands.len();
+        p.full_total = need_full.len();
+        on_progress(&p.clone());
+    }
+    let full_done = AtomicUsize::new(0);
+    let full_bytes = AtomicI64::new(0);
+    let pending = Mutex::new(Vec::<(i64, String)>::new());
+    let full_total = need_full.len();
     let full_hashes: Vec<(i64, String)> = need_full
         .par_iter()
-        .filter_map(|id| {
+        .filter_map(|c| {
             if cancel.load(Ordering::Relaxed) {
                 return None;
             }
-            let c = by_id.get(id)?;
-            let h = hash::full(full_path(c)?).ok()?;
-            Some((*id, h))
+            let h = match &c.full {
+                Some(h) => h.clone(),
+                None => {
+                    let h = hash::full(full_path(c)?).ok()?;
+                    full_bytes.fetch_add(c.size, Ordering::Relaxed);
+                    let mut pend = pending.lock().unwrap();
+                    pend.push((c.id, h.clone()));
+                    if pend.len() >= 200 {
+                        let batch = std::mem::take(&mut *pend);
+                        drop(pend);
+                        let _ = persist(db, "full_hash", &batch);
+                    }
+                    h
+                }
+            };
+            let n = full_done.fetch_add(1, Ordering::Relaxed) + 1;
+            if n % 25 == 0 || n == full_total {
+                let mut p = progress.lock().unwrap();
+                p.full_done = n;
+                p.full_bytes = full_bytes.load(Ordering::Relaxed);
+                on_progress(&p.clone());
+            }
+            Some((c.id, h))
         })
         .collect();
-
-    // DB에 해시를 남겨 다음 스캔에서 다시 읽지 않게 한다.
-    db.transaction(|tx| {
-        let mut up = tx.prepare("UPDATE files SET full_hash=?1 WHERE id=?2")?;
-        for (id, h) in &full_hashes {
-            up.execute(rusqlite::params![h, id])?;
-        }
-        Ok(())
-    })?;
-
+    persist(db, "full_hash", &pending.into_inner().unwrap())?;
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(progress.lock().unwrap().clone());
+    }
     // 전체 해시가 같은 것끼리 그룹
     let mut final_groups: HashMap<String, Vec<i64>> = HashMap::new();
     for (id, h) in full_hashes {
@@ -322,6 +388,27 @@ mod tests {
             })
             .unwrap();
         assert!(hashed >= 3, "다음 스캔에서 다시 읽지 않도록 저장한다");
+        let quick: i64 = db
+            .read(|c| {
+                c.query_row("SELECT COUNT(*) FROM files WHERE quick_hash IS NOT NULL", [], |r| {
+                    r.get(0)
+                })
+            })
+            .unwrap();
+        assert!(quick >= hashed, "빠른 해시도 남긴다 — 전체 해시 대상은 빠른 해시를 거쳤다");
+    }
+
+    #[test]
+    fn progress_reports_the_full_hash_phase() {
+        let (_d, db) = setup();
+        let phases = Mutex::new(Vec::new());
+        scan(&db, Arc::new(AtomicBool::new(false)), |p| {
+            phases.lock().unwrap().push((p.phase, p.full_total, p.full_done));
+        })
+        .unwrap();
+        let ph = phases.into_inner().unwrap();
+        assert!(ph.iter().any(|x| x.0 == "full" && x.1 >= 3), "전체 해시 단계를 알린다: {ph:?}");
+        assert!(ph.iter().any(|x| x.0 == "full" && x.2 == x.1 && x.1 > 0), "끝까지 센다: {ph:?}");
     }
 
     #[test]

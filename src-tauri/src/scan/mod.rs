@@ -208,6 +208,10 @@ pub fn scan_folder(
                 ?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?25,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,
                 strftime('%s','now'))
              ON CONFLICT(folder_id,name) DO UPDATE SET
+                quick_hash=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.quick_hash END,
+                full_hash=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.full_hash END,
                 size=excluded.size, taken_at=excluded.taken_at,
                 taken_at_source=excluded.taken_at_source,
                 modified_at=excluded.modified_at, width=excluded.width,

@@ -123,9 +123,22 @@ export default function Cull({ onClose }: { onClose: () => void }) {
     listen("cull-burst", () => setBusy("같은 순간 완료 — 중복 확인 중")).then(
       (f) => un.push(f),
     );
-    listen<{ hashed: number; candidates: number }>("cull-dedup-progress", (e) =>
-      setBusy(`중복 확인 ${e.payload.hashed}/${e.payload.candidates}`),
-    ).then((f) => un.push(f));
+    listen<{
+      phase: string;
+      hashed: number;
+      candidates: number;
+      full_total: number;
+      full_done: number;
+      full_bytes: number;
+    }>("cull-dedup-progress", (e) => {
+      const p = e.payload;
+      // 전체 해시는 파일을 끝까지 읽어 오래 걸린다 — 장수와 읽은 양을 같이 보인다
+      setBusy(
+        p.phase === "full"
+          ? `중복 확인 — 전체 해시 ${p.full_done.toLocaleString()}/${p.full_total.toLocaleString()} · ${fmtBytes(p.full_bytes)}`
+          : `중복 확인 — 빠른 해시 ${p.hashed.toLocaleString()}/${p.candidates.toLocaleString()}`,
+      );
+    }).then((f) => un.push(f));
     listen("cull-dedup", () => setBusy("중복 완료 — 비슷한 장면 찾는 중")).then(
       (f) => un.push(f),
     );

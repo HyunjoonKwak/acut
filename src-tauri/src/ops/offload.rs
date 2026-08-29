@@ -63,10 +63,12 @@ fn subtree(db: &Db, f: &FolderRow) -> Result<Vec<(i64, String)>> {
     db.read(|c| {
         let mut st = c.prepare(
             "SELECT id, rel_path FROM folders
-              WHERE library_id = ?1 AND (rel_path = ?2 OR rel_path LIKE ?2 || '/%')
+              WHERE library_id = ?1 AND (rel_path = ?2 OR rel_path LIKE ?3 || '/%' ESCAPE '\\')
               ORDER BY rel_path",
         )?;
-        let it = st.query_map(rusqlite::params![f.library_id, f.rel_path], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        // `_`·`%` 가 든 폴더 이름(«2015_여행»)이 «2015년여행»까지 끌어와 재지정하던 길 (리뷰 H14)
+        let esc = crate::db::query::escape_like(&f.rel_path);
+        let it = st.query_map(rusqlite::params![f.library_id, f.rel_path, esc], |r| Ok((r.get(0)?, r.get(1)?)))?;
         it.collect()
     })
 }

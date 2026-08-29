@@ -140,10 +140,12 @@ pub fn parse_range(value: &str, len: u64) -> Option<(u64, u64)> {
         if start >= len {
             return None;
         }
+        // 닫힌 구간도 CHUNK 를 넘지 않는다 — «bytes=0-419430399» 한 번에 400MB 를 메모리에
+        // 올리던 길. 웹뷰가 여러 영상을 훑으면 그만큼 곱이 된다 (리뷰 H11)
         let end = if b.is_empty() {
             (start + CHUNK - 1).min(len - 1)
         } else {
-            b.parse::<u64>().ok()?.min(len - 1)
+            b.parse::<u64>().ok()?.min(start + CHUNK - 1).min(len - 1)
         };
         (start, end)
     };
@@ -180,6 +182,8 @@ mod tests {
         assert_eq!(parse_range("bytes=100-200", 1000), Some((100, 200)));
         // 끝이 파일보다 크면 파일 끝까지
         assert_eq!(parse_range("bytes=900-99999", 1000), Some((900, 999)));
+        // 닫힌 구간도 한 조각(CHUNK)까지만 — 나머지는 다음 요청이 가져간다
+        assert_eq!(parse_range("bytes=0-99999999", 400_000_000), Some((0, CHUNK - 1)));
     }
 
     #[test]

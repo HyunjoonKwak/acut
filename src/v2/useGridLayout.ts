@@ -94,10 +94,11 @@ export function useGridLayout(
     return out;
   }, [grid, gridStyle, contentW, thumbSize]);
 
-  /// 메이슨리 — 상자 자리 전부와, 그중 지금 그릴 것.
-  const masonry = useMemo(() => {
+  /// 메이슨리 — 상자 자리 전부. 스크롤과 무관하다 — 스크롤마다 다시 셈하면 2만 상자를
+  /// 프레임마다 새로 만든다 (리뷰 H18)
+  const masonryAll = useMemo(() => {
     if (gridStyle !== "masonry" || contentW <= 0) return null;
-    const L = masonryOf(
+    return masonryOf(
       rows,
       (r) => r.group,
       (r) => ratio(r.width, r.height),
@@ -106,6 +107,11 @@ export function useGridLayout(
       GAP,
       HEADER_H,
     );
+  }, [gridStyle, rows, contentW, cols]);
+  /// 그중 지금 그릴 것 — 스크롤에 따라
+  const masonry = useMemo(() => {
+    const L = masonryAll;
+    if (L === null) return null;
     const top = scrollTop - OVERSCAN;
     const bottom = scrollTop + viewH + OVERSCAN;
     const visible = L.boxes.filter((b) => b.y + b.h >= top && b.y <= bottom);
@@ -121,7 +127,7 @@ export function useGridLayout(
         : 0,
       onScreen: Math.max(1, onScreen.length),
     };
-  }, [gridStyle, rows, contentW, cols, scrollTop, viewH]);
+  }, [masonryAll, scrollTop, viewH]);
 
   const virt = useVirtualizer({
     count: masonry ? 0 : grid.length,

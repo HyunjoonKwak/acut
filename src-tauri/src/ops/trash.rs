@@ -88,6 +88,28 @@ fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
     })
 }
 
+/// 이 파일들이 속한 라이브러리와 볼륨 마운트를 한 번에 찾아 둔다.
+fn lookups(
+    db: &Db,
+    items: &[Item],
+) -> Result<(
+    std::collections::HashMap<i64, libraries::Library>,
+    std::collections::HashMap<String, Option<PathBuf>>,
+)> {
+    let libs = libraries::list(db)?.into_iter().map(|l| (l.id, l)).collect();
+    let mounts = items
+        .iter()
+        .map(|it| it.volume_uuid.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .map(|u| {
+            let m = crate::db::volumes::find_mount(&u);
+            (u, m)
+        })
+        .collect();
+    Ok((libs, mounts))
+}
+
 /// 겹치지 않는 이름을 찾는다. 같은 이름이 이미 휴지통에 있으면 뒤에 번호를 붙인다.
 pub fn free_path(want: PathBuf) -> PathBuf {
     if !want.exists() {
@@ -141,13 +163,15 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
     let items = load(db, ids, false)?;
     let batch_id = super::open_batch(db, "trash", label)?;
     let mut out = Outcome { batch_id, ..Default::default() };
+    // 라이브러리·마운트는 한 번만 — 파일마다 찾으면 5천 장에 수천만 행 스캔·수만 syscall (리뷰 H16)
+    let (libs, mounts) = lookups(db, &items)?;
 
     for it in &items {
-        let lib = libraries::get(db, it.library_id)?;
+        let lib = libs.get(&it.library_id);
         let (Some(lib_dir), Some(lib_rel), Some(mount)) = (
-            lib.as_ref().and_then(|l| l.dir.clone()),
-            lib.as_ref().map(|l| l.rel_path.clone()),
-            crate::db::volumes::find_mount(&it.volume_uuid),
+            lib.and_then(|l| l.dir.clone()),
+            lib.map(|l| l.rel_path.clone()),
+            mounts.get(&it.volume_uuid).cloned().flatten(),
         ) else {
             super::record(db, batch_id, "trash", it.id, &it.volume_uuid, &it.vol_rel, None,
                 Err("디스크가 연결되어 있지 않습니다"))?;
@@ -206,11 +230,12 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
         let it = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))?;
         it.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()
     })?;
+    let (libs, mounts) = lookups(db, &items)?;
 
     for it in &items {
         let (Some(lib_dir), Some(mount), Some(tp)) = (
-            libraries::get(db, it.library_id)?.and_then(|l| l.dir),
-            crate::db::volumes::find_mount(&it.volume_uuid),
+            libs.get(&it.library_id).and_then(|l| l.dir.clone()),
+            mounts.get(&it.volume_uuid).cloned().flatten(),
             paths.get(&it.id),
         ) else {
             out.failed += 1;
@@ -264,9 +289,10 @@ pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
         it.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()
     })?;
 
+    let (libs, _) = lookups(db, &items)?;
     for it in &items {
         let (Some(lib_dir), Some(tp)) = (
-            libraries::get(db, it.library_id)?.and_then(|l| l.dir),
+            libs.get(&it.library_id).and_then(|l| l.dir.clone()),
             paths.get(&it.id),
         ) else {
             out.failed += 1;

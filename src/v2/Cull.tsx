@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Viewer from "./Viewer";
@@ -203,54 +203,62 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   );
 
   // 스캔 진행
+  // 지금 탭 — 구독은 한 번만 하고 갈래는 ref 로 본다. 탭마다 다시 구독하면 listen 이
+  // 끝나기 전에 바뀐 효과의 정리가 빈 배열을 돌아 구독이 새고, 낡은 클로저가 다른 탭에
+  // 무리를 채웠다 (리뷰 H3)
+  const kindRef = useRef(kind);
   useEffect(() => {
-    const un: Array<() => void> = [];
+    kindRef.current = kind;
+  }, [kind]);
+  useEffect(() => {
+    let alive = true;
+    const subs: Promise<() => void>[] = [];
+    const on = <T,>(name: string, f: (payload: T) => void) => {
+      subs.push(listen<T>(name, (e) => alive && f(e.payload)));
+    };
     // 갈래 하나가 끝날 때마다 위의 숫자와 목록을 새로 읽는다 — 안 그러면 전체
     // 해시를 읽는 한 시간 동안 «같은 순간 0»으로 보여 아무것도 못 찾은 줄 안다.
     const stage = (msg: string) => {
       setBusy(msg);
       loadSummary();
-      loadGroups(kind);
+      loadGroups(kindRef.current);
     };
-    listen<{ found: number; bytes: number }>("cull-junk", () =>
-      stage("잡동사니 완료 — 같은 순간 찾는 중"),
-    ).then((f) => un.push(f));
-    listen("cull-burst", () => stage("같은 순간 완료 — 중복 확인 중")).then(
-      (f) => un.push(f),
-    );
-    listen<{
+    on("cull-junk", () => stage("잡동사니 완료 — 같은 순간 찾는 중"));
+    on("cull-burst", () => stage("같은 순간 완료 — 중복 확인 중"));
+    on<{
       phase: string;
       hashed: number;
       candidates: number;
       full_total: number;
       full_done: number;
       full_bytes: number;
-    }>("cull-dedup-progress", (e) => {
-      const p = e.payload;
+    }>("cull-dedup-progress", (p) => {
       // 전체 해시는 파일을 끝까지 읽어 오래 걸린다 — 장수와 읽은 양을 같이 보인다
       setBusy(
         p.phase === "full"
           ? `중복 확인 — 전체 해시 ${p.full_done.toLocaleString()}/${p.full_total.toLocaleString()} · ${fmtBytes(p.full_bytes)}`
           : `중복 확인 — 빠른 해시 ${p.hashed.toLocaleString()}/${p.candidates.toLocaleString()}`,
       );
-    }).then((f) => un.push(f));
-    listen("cull-dedup", () => stage("중복 완료 — 비슷한 장면 찾는 중")).then(
-      (f) => un.push(f),
-    );
-    listen<{ photos: number; groups: number }>("cull-scene", (e) =>
+    });
+    on("cull-dedup", () => stage("중복 완료 — 비슷한 장면 찾는 중"));
+    on<{ photos: number; groups: number }>("cull-scene", (p) =>
       setBusy(
-        e.payload.photos === 0
+        p.photos === 0
           ? "비슷한 장면은 벡터가 있어야 찾습니다 — 설정 › AI"
-          : `비슷한 장면 ${e.payload.groups}그룹`,
+          : `비슷한 장면 ${p.groups}그룹`,
       ),
-    ).then((f) => un.push(f));
-    listen("cull-done", () => {
+    );
+    on("cull-done", () => {
       setBusy("");
       loadSummary();
-      loadGroups(kind);
-    }).then((f) => un.push(f));
-    return () => un.forEach((f) => f());
-  }, [kind, loadSummary, loadGroups]);
+      loadGroups(kindRef.current);
+    });
+    return () => {
+      alive = false;
+      // 아직 안 끝난 listen 도 끝나는 대로 푼다
+      subs.forEach((p) => p.then((f) => f()));
+    };
+  }, [loadSummary, loadGroups]);
 
   const advance = useCallback(() => {
     setGroups((prev) => prev.filter((_, i) => i !== idx));

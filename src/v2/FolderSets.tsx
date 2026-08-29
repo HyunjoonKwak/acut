@@ -23,12 +23,15 @@ type FolderSet = { folders: FolderIn[]; files: number; bytes: number; pending: b
 type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
 
 const settled = (f: FolderIn) => f.area === 1 || f.area === 2;
+/** 묶음의 열쇠 — 폴더 id 조합. 목록 순번은 새로 읽을 때마다 바뀐다 */
+const setKey = (s: FolderSet) => s.folders.map((f) => f.folder_id).join("-");
 
 export default function FolderSets({ onChanged }: { onChanged: () => void }) {
   const ask = useConfirm();
   const [sets, setSets] = useState<FolderSet[] | null>(null);
-  /// 묶음마다 남길 폴더 — 기본은 맨 앞(정착 구역 우선으로 정렬돼 온다)
-  const [keep, setKeep] = useState<Record<number, number>>({});
+  /// 묶음마다 남길 폴더 — 기본은 맨 앞(정착 구역 우선으로 정렬돼 온다).
+  /// 열쇠는 폴더 id 조합 — 배열 순번으로 두면 목록이 새로 오며 다른 묶음에 붙는다 (리뷰 H4)
+  const [keep, setKeep] = useState<Record<string, number>>({});
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -40,8 +43,8 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
   }, [tick]);
 
   const applyOne = useCallback(
-    async (i: number, s: FolderSet, quiet = false) => {
-      const k = keep[i] ?? 0;
+    async (s: FolderSet, quiet = false) => {
+      const k = Math.min(keep[setKey(s)] ?? 0, s.folders.length - 1);
       const keepF = s.folders[k];
       const drops = s.folders.filter((_, j) => j !== k);
       if (!quiet) {
@@ -73,7 +76,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
     if (!sets) return;
     // NAS(정착 구역) 폴더가 있고 나머지가 전부 NAS 밖인 묶음만 — 위험한 것은 사람이
     const todo = sets
-      .map((s, i) => [s, i] as const)
+      .map((s) => [s] as const)
       .filter(([s]) => s.pending && settled(s.folders[0]) && s.folders.slice(1).every((f) => !settled(f)));
     if (todo.length === 0) {
       toast("NAS 것을 남기고 처리할 묶음이 없습니다");
@@ -86,14 +89,23 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
       confirmLabel: "전부 처리",
     });
     if (!ok) return;
-    for (const [s, i] of todo) {
-      setKeep((m) => ({ ...m, [i]: 0 }));
-      await invoke<ApplyAll>("cull_folder_set_apply", {
-        keepFolderId: s.folders[0].folder_id,
-        dropFolderIds: s.folders.slice(1).map((d) => d.folder_id),
-      });
+    let failed = 0;
+    for (const [s] of todo) {
+      try {
+        await invoke<ApplyAll>("cull_folder_set_apply", {
+          keepFolderId: s.folders[0].folder_id,
+          dropFolderIds: s.folders.slice(1).map((d) => d.folder_id),
+        });
+      } catch {
+        failed += 1;
+      }
     }
-    toast(`${todo.length.toLocaleString()}묶음 처리했습니다 — 격자에서 «치우기»`, "ok");
+    toast(
+      failed
+        ? `${(todo.length - failed).toLocaleString()}묶음 처리 · ${failed}묶음 실패 — 목록을 새로 읽습니다`
+        : `${todo.length.toLocaleString()}묶음 처리했습니다 — 격자에서 «치우기»`,
+      failed ? "drop" : "ok",
+    );
     setTick((t) => t + 1);
     onChanged();
   }, [sets, ask, onChanged]);
@@ -140,11 +152,12 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto scroll-thin">
-        {sets.map((s, i) => {
-          const k = keep[i] ?? 0;
+        {sets.map((s) => {
+          const key = setKey(s);
+          const k = Math.min(keep[key] ?? 0, s.folders.length - 1);
           return (
             <div
-              key={s.folders.map((f) => f.folder_id).join("-")}
+              key={key}
               className={`px-4 py-3 border-b border-line ${s.pending ? "" : "opacity-45"}`}
             >
               <div className="flex items-center gap-3 mb-1.5 text-[12px] text-fg-mute tabular-nums">
@@ -156,7 +169,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                 {s.pending && (
                   <button
                     onClick={async () => {
-                      if (await applyOne(i, s)) {
+                      if (await applyOne(s)) {
                         toast("지우기 표시했습니다 — 격자에서 «치우기»", "ok");
                         setTick((t) => t + 1);
                         onChanged();
@@ -177,9 +190,9 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                     <span className="flex items-center justify-center w-16 text-[11px]">
                       <input
                         type="radio"
-                        name={`keep-${i}`}
+                        name={`keep-${key}`}
                         checked={k === j}
-                        onChange={() => setKeep((m) => ({ ...m, [i]: j }))}
+                        onChange={() => setKeep((m) => ({ ...m, [key]: j }))}
                         className="accent-keep mr-1.5 w-3.5 h-3.5"
                       />
                       <span className={k === j ? "text-keep font-semibold" : "text-fg-mute"}>

@@ -100,18 +100,34 @@ pub fn run() {
             // 끊기면 페이지를 다시 불러온다. 뒷단 작업은 그대로 돈다.
             {
                 let handle = app.handle().clone();
-                std::thread::spawn(move || loop {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    let state = handle.state::<api::AppState>();
-                    let last = state.last_beat.load(std::sync::atomic::Ordering::Relaxed);
-                    let now = chrono::Utc::now().timestamp();
-                    if last > 0 && now - last > 20 {
-                        if let Some(w) = handle.get_webview_window("main") {
-                            log::warn!("화면이 {}초째 조용하다 — 다시 불러온다", now - last);
-                            if let Ok(url) = w.url() {
-                                let _ = w.navigate(url);
-                            }
+                std::thread::spawn(move || {
+                    let mut tick = std::time::Instant::now();
+                    let mut misses = 0u32;
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        let state = handle.state::<api::AppState>();
+                        let now = chrono::Utc::now().timestamp();
+                        // 잠자기에서 깨면 벽시계가 훌쩍 뛴다 — 그건 화면이 죽은 게 아니다.
+                        // 한 틱이 15초 넘게 걸렸으면 박동을 지금으로 맞추고 넘어간다 (리뷰 H13)
+                        let slept = tick.elapsed();
+                        tick = std::time::Instant::now();
+                        if slept > std::time::Duration::from_secs(15) {
                             state.last_beat.store(now, std::sync::atomic::Ordering::Relaxed);
+                            misses = 0;
+                            continue;
+                        }
+                        let last = state.last_beat.load(std::sync::atomic::Ordering::Relaxed);
+                        misses = if last > 0 && now - last > 20 { misses + 1 } else { 0 };
+                        // 두 번 연속 조용해야 죽은 것으로 본다 — 긴 동기 작업 한 번에 새로 부르지 않게
+                        if misses >= 2 {
+                            if let Some(w) = handle.get_webview_window("main") {
+                                log::warn!("화면이 {}초째 조용하다 — 다시 불러온다", now - last);
+                                if let Ok(url) = w.url() {
+                                    let _ = w.navigate(url);
+                                }
+                                state.last_beat.store(now, std::sync::atomic::Ordering::Relaxed);
+                                misses = 0;
+                            }
                         }
                     }
                 });

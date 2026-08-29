@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import Compare from "./Compare";
@@ -253,7 +254,28 @@ export default function App() {
   );
 
   // ── 위에 뜨는 것들 ───────────────────────────────────────────────
-  const ui = useUi();
+  // 쓰는 칸만 얕게 고른다 — 전체를 구독하면 뷰어 화살표·끌기마다 격자 전체가 다시 그려진다 (리뷰 H17)
+  const ui = useUi(
+    useShallow((s) => ({
+      set: s.set,
+      viewerAt: s.viewerAt,
+      viewerFull: s.viewerFull,
+      offload: s.offload,
+      similarFor: s.similarFor,
+      renaming: s.renaming,
+      areaPick: s.areaPick,
+      textSearch: s.textSearch,
+      dragging: s.dragging,
+      culling: s.culling,
+      ctxIds: s.ctxIds,
+      ctxAt: s.ctxAt,
+      comparing: s.comparing,
+      organizing: s.organizing,
+      importing: s.importing,
+      helping: s.helping,
+      dropped: s.dropped,
+    })),
+  );
   // 뷰어가 끝에 다다르면 다음 쪽을 미리 읽는다
   useEffect(() => {
     if (ui.viewerAt !== null && ui.viewerAt >= rows.length - 5) loadMore();

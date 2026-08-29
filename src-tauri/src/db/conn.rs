@@ -126,8 +126,14 @@ impl Db {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
         let mut c = self.write.lock().unwrap_or_else(|e| e.into_inner());
-        let b = rusqlite::backup::Backup::new(&from, &mut c)?;
-        b.run_to_completion(256, std::time::Duration::from_millis(5), None)?;
+        {
+            let b = rusqlite::backup::Backup::new(&from, &mut c)?;
+            b.run_to_completion(256, std::time::Duration::from_millis(5), None)?;
+        }
+        // 옛 사본에는 그 뒤 생긴 열·표가 없다 — 열 때와 똑같이 맞춘다. 안 하면 «no such
+        // column»으로 앱을 다시 켤 때까지 죽는다 (리뷰 H15)
+        c.execute_batch(SCHEMA)?;
+        super::upgrade::run(&c)?;
         Ok(())
     }
 }

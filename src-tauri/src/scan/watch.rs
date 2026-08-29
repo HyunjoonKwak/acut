@@ -178,20 +178,21 @@ impl Watchers {
                 if due.is_empty() {
                     continue;
                 }
-                // 사용자 스캔이 도는 중 — 되돌려 놓고 다음 틱에
-                if running.swap(true, Ordering::AcqRel) {
+                // 사용자 스캔이 도는 중 — 되돌려 놓고 다음 틱에.
+                // 스위치는 JobGuard 로 잡는다 — 직접 켜고 끄면 스캔 중 패닉 한 번에 꺼지지
+                // 않아 모든 작업이 «다른 일이 도는 중»으로 영영 막힌다 (리뷰 H12)
+                let Some(_guard) = crate::api::job::try_start(&running, "에이컷 폴더 감시") else {
                     let mut p = pending.lock().unwrap_or_else(|e| e.into_inner());
                     for k in due {
                         p.entry(k).or_insert_with(Instant::now);
                     }
                     continue;
-                }
+                };
                 for (library_id, dir) in due {
                     if let Some(c) = rescan_dir(&db, &cache_base, library_id, &dir) {
                         on_changed(c);
                     }
                 }
-                running.store(false, Ordering::Release);
             })
             .expect("감시 스레드");
     }

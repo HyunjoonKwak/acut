@@ -203,7 +203,7 @@ pub fn parse_bbox(s: &str) -> Option<[f64; 4]> {
     Some([v[0], v[1], v[2], v[3]])
 }
 
-fn escape_like(s: &str) -> String {
+pub(crate) fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 

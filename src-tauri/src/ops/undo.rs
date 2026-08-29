@@ -86,6 +86,15 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
             ..Default::default()
         });
     }
+    // 영구히 지운 것은 되돌릴 수 없다 — 파일이 디스크에 없다. 되돌리기 후보에도 안 오르지만
+    // (화면이 거른다) 명령으로 와도 거절한다
+    if kind == "delete" {
+        return Ok(Outcome {
+            batch_id,
+            first_error: Some("영구히 지운 사진은 되돌릴 수 없습니다".into()),
+            ..Default::default()
+        });
+    }
 
     // 가져오기는 되돌릴 곳이 없다. 원본은 카드에 그대로 있고, 되돌린다는 건
     // 「들여온 벌을 무른다」는 뜻이다. 그렇다고 지워 버리면 그것대로 되돌릴
@@ -430,6 +439,20 @@ mod tests {
         assert!(r.first_error.is_some());
         let after: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0))).unwrap();
         assert_eq!(before, after, "빈 배치가 생기지 않는다");
+    }
+
+    #[test]
+    fn a_permanent_delete_cannot_be_undone() {
+        let (_d, db, _lib, ids) = setup();
+        trash::to_trash(&db, &ids[..1], "휴지통으로").unwrap();
+        let e = trash::empty(&db, &ids[..1]).unwrap();
+        let u = undo(&db, e.batch_id).unwrap();
+        assert_eq!(u.moved, 0);
+        assert!(u.first_error.as_deref().unwrap_or("").contains("되돌릴 수 없"));
+        let undone: Option<i64> = db
+            .read(|c| c.query_row("SELECT undone_at FROM batches WHERE id=?1", [e.batch_id], |r| r.get(0)))
+            .unwrap();
+        assert!(undone.is_none(), "«되돌린 작업»으로 꾸미지 않는다 — 지운 건 지운 것");
     }
 
     #[test]

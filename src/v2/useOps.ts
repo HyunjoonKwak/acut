@@ -117,7 +117,7 @@ export function useOps(cb: {
   /// 가장 최근의 아직 안 물린 작업을 되돌린다 (⌘Z).
   const undoLast = useCallback(async () => {
     const { batches, setBusy } = useData.getState();
-    const last = batches.find((b) => b.undone_at === null);
+    const last = batches.find((b) => b.undone_at === null && b.kind !== "delete");
     if (!last) return;
     setBusy("되돌리는 중…");
     try {

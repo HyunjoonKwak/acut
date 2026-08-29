@@ -210,7 +210,7 @@ export default function Cull({
                   : `공용·내사진 안에 제외될 사본이 있는 ${dry.skipped.toLocaleString()}무리는 건너뜁니다 — 나중에 하나씩`,
               ]
             : []),
-          "파일은 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
+          "파일은 옮기지 않습니다 — 닫은 뒤 상태바의 «제외한 N장 휴지통으로»가 옮깁니다",
         ],
         confirmLabel: "확정",
       });
@@ -440,8 +440,8 @@ export default function Cull({
         lines: [
           `${dry.groups.toLocaleString()}쌍 — 남김 ${dry.kept.toLocaleString()}장 · 제외 표시 ${dry.rejected.toLocaleString()}장`,
           "두 폴더 사이에서만 겹치는 무리에 적용합니다 — 다른 폴더까지 얽힌 무리는 건너뜁니다",
-          ...(risky ? ["주의: 제외될 쪽이 NAS 동기화 폴더입니다 — 치우면 NAS에서도 지워집니다"] : []),
-          "파일은 아직 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
+          ...(risky ? ["주의: 제외될 쪽이 NAS 동기화 폴더입니다 — 휴지통으로 옮기면 NAS에서도 지워집니다"] : []),
+          "파일은 아직 옮기지 않습니다 — 닫은 뒤 상태바의 «제외한 N장 휴지통으로»가 옮깁니다",
         ],
         confirmLabel: "전부 이렇게",
         danger: risky,
@@ -802,7 +802,7 @@ export default function Cull({
         </span>
         <div className="flex-1" />
         <span className="text-[12px] text-fg-mute">
-          여기서는 판정만 합니다 — 닫으면 「휴지통으로 치우기」가 나옵니다
+          여기서는 판정만 합니다 — 닫으면 상태바에 «제외한 N장 휴지통으로»가 나옵니다
         </span>
       </div>
         </>

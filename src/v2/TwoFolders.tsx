@@ -69,9 +69,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         lines: [
           `${side === "a" ? "B" : "A"}쪽 똑같은 폴더는 그대로 둡니다 · ${fmtBytes(bytes)} 빔`,
           ...(risky.length
-            ? [`주의: ${risky.length}개는 NAS 동기화 폴더입니다 — 치우면 NAS에서도 지워집니다`]
+            ? [`주의: ${risky.length}개는 NAS 동기화 폴더입니다 — 휴지통으로 옮기면 NAS에서도 지워집니다`]
             : []),
-          "파일은 아직 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
+          "파일은 아직 옮기지 않습니다 — 표시한 뒤 위의 «제외한 N장 휴지통으로»를 누르면 옮깁니다",
         ],
         confirmLabel: "제외 표시",
         danger: risky.length > 0,
@@ -94,7 +94,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       toast(
         r.failed
           ? `${r.applied}개 처리 · ${r.failed}개 실패 (${r.first_error ?? ""})`
-          : `${r.applied.toLocaleString()}개 폴더 · ${r.rejected.toLocaleString()}장에 제외 표시했습니다 — 격자에서 «치우기»`,
+          : `${r.applied.toLocaleString()}개 폴더 · ${r.rejected.toLocaleString()}장에 제외 표시했습니다 — 위의 «휴지통으로»로 옮깁니다`,
         r.failed ? "drop" : "ok",
       );
       onChanged();
@@ -129,13 +129,13 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     if (!rows || flagged === 0) return;
     const folderIds = [...new Set(rows.flatMap((r) => [r.a?.folder_id, r.b?.folder_id]).filter((x): x is number => x != null))];
     const ok = await ask({
-      title: `표시한 ${flagged.toLocaleString()}장을 휴지통으로 옮깁니다`,
+      title: `제외한 ${flagged.toLocaleString()}장을 휴지통으로 옮깁니다`,
       lines: [
         "이 비교에 나온 폴더 안의 제외 표시된 사진만 — 라이브러리의 다른 폴더는 건드리지 않습니다",
         "사진이 다 나간 폴더는 디스크에서도 지웁니다",
         "라이브러리 안 .acut/휴지통 으로 옮기는 것이라 되돌릴 수 있습니다 — 영구 삭제는 휴지통 화면에서",
       ],
-      confirmLabel: "치우기",
+      confirmLabel: "휴지통으로",
     });
     if (!ok) return;
     setSweeping(true);
@@ -144,8 +144,8 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       const dirs = r.folders_removed ?? 0;
       toast(
         r.failed
-          ? `${r.moved.toLocaleString()}장 치움 · ${r.failed}장 실패 (${r.first_error ?? ""})`
-          : `${r.moved.toLocaleString()}장 치웠습니다 (${fmtBytes(r.bytes)})${dirs ? ` · 빈 폴더 ${dirs}개 지움` : ""} — 휴지통에서 되돌릴 수 있습니다`,
+          ? `${r.moved.toLocaleString()}장 옮김 · ${r.failed}장 실패 (${r.first_error ?? ""})`
+          : `${r.moved.toLocaleString()}장을 휴지통으로 옮겼습니다 (${fmtBytes(r.bytes)})${dirs ? ` · 빈 폴더 ${dirs}개 지움` : ""} — 휴지통에서 되돌릴 수 있습니다`,
         r.failed ? "drop" : "ok",
       );
     } catch (e) {
@@ -175,7 +175,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         )}
         {sweeping && (
           <span className="flex items-center gap-2 text-keep">
-            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 치우는 중…
+            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 휴지통으로 옮기는 중…
           </span>
         )}
         {rows && !marking && (
@@ -196,10 +196,10 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           <button
             onClick={sweep}
             disabled={locked}
-            title="이 비교에 나온 폴더 안의 제외 표시된 사진을 휴지통으로 — 되돌릴 수 있습니다"
+            title="이 비교에 나온 폴더 안에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다"
             className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
           >
-            표시한 {flagged.toLocaleString()}장 치우기
+            제외한 {flagged.toLocaleString()}장 휴지통으로
           </button>
         )}
         {todo.length > 0 && (

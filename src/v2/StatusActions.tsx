@@ -35,6 +35,7 @@ export default function StatusActions({
   const noThumb = useView((s) => s.picks.no_thumb);
   const hasJob = useJob((s) => s.job !== null);
   const libId = usePrefs((s) => s.libId);
+  const libName = useData((s) => s.libs.find((l) => l.id === libId)?.name ?? null);
   const undoable = batches.find((b) => b.undone_at === null);
 
   return (
@@ -71,10 +72,10 @@ export default function StatusActions({
       {!hasJob && !viewTrash && (toClean?.files ?? 0) > 0 && (
         <button
           onClick={cleanExcluded}
-          title={`${libId === null ? "모든 라이브러리" : "이 라이브러리"}의 제외 ${toClean?.files.toLocaleString()}장 · ${fmtBytes(toClean?.bytes ?? 0)} 확보`}
+          title={`${libName ?? "모든 라이브러리"}에서 제외 표시한 ${toClean?.files.toLocaleString()}장(${fmtBytes(toClean?.bytes ?? 0)})을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다`}
           className="h-5 px-2 rounded bg-keep text-keep-fg font-semibold"
         >
-          {libId === null ? "전체" : "이 라이브러리"} 제외 {toClean?.files.toLocaleString()}장 치우기
+          {libName ?? "전체"}에서 제외한 {toClean?.files.toLocaleString()}장 휴지통으로
         </button>
       )}
       {!hasJob && nasNew && (

@@ -64,7 +64,7 @@ export function useOps(cb: {
         confirmLabel: "옮기기",
       });
       if (!ok) return false;
-      await runTrashOp("trash_files", { ids }, "치우는 중…");
+      await runTrashOp("trash_files", { ids }, "휴지통으로 옮기는 중…");
       return true;
     },
     [ask, runTrashOp],
@@ -76,17 +76,18 @@ export function useOps(cb: {
     const { toClean } = useData.getState();
     const libId = usePrefs.getState().libId;
     if (!toClean || toClean.files === 0) return;
+    const libName = useData.getState().libs.find((l) => l.id === libId)?.name ?? "모든 라이브러리";
     const ok = await ask({
-      title: `${libId === null ? "모든 라이브러리" : "이 라이브러리"}에서 제외한 ${toClean.files.toLocaleString()}장을 치웁니다`,
+      title: `${libName}에서 제외한 ${toClean.files.toLocaleString()}장을 휴지통으로 옮깁니다`,
       lines: [
-        `· ${fmtBytes(toClean.bytes)}가 라이브러리 안 .acut/휴지통 으로 옮겨집니다`,
+        `· ${fmtBytes(toClean.bytes)} — 라이브러리 안 .acut/휴지통 으로 갑니다 (디스크 자리는 휴지통을 비워야 빕니다)`,
         "· 사진이 다 나간 폴더는 디스크에서도 지웁니다",
         "· 언제든 되돌릴 수 있습니다",
       ],
-      confirmLabel: "치우기",
+      confirmLabel: "휴지통으로",
     });
     if (!ok) return;
-    runTrashOp("trash_apply", { libraryId: libId }, "치우는 중…");
+    runTrashOp("trash_apply", { libraryId: libId }, "휴지통으로 옮기는 중…");
   }, [ask, runTrashOp]);
 
   const emptyTrash = useCallback(async () => {

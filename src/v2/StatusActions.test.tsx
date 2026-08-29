@@ -35,10 +35,10 @@ describe("상태바 오른쪽", () => {
     useData.setState({ toClean: { files: 12, bytes: 3_000_000 } });
     render(<StatusActions {...noop} />);
     await userEvent.click(
-      screen.getByRole("button", { name: /제외 12장 치우기$/ }),
+      screen.getByRole("button", { name: /제외한 12장 휴지통으로$/ }),
     );
     expect(noop.cleanExcluded).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /^(전체|이 라이브러리) 제외 12장 치우기$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^전체에서 제외한 12장 휴지통으로$/ })).toBeInTheDocument();
   });
 
   it("«썸네일 없음»을 누르면 그것만 보고, 다시 누르면 풀린다", async () => {

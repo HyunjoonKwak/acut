@@ -55,7 +55,7 @@ pub async fn trash_apply(
         Some(f) => trash::pending_in_folders(&state.db, &f).map_err(err)?,
         None => trash::pending(&state.db, library_id).map_err(err)?,
     };
-    trash::to_trash(&state.db, &ids, "제외한 사진 치우기").map_err(err)
+    trash::to_trash(&state.db, &ids, "제외한 사진 휴지통으로").map_err(err)
 }
 
 /// 고른 것만 휴지통으로.
@@ -64,7 +64,7 @@ pub async fn trash_files(
     state: State<'_, AppState>,
     ids: Vec<i64>,
 ) -> Result<trash::Outcome, String> {
-    trash::to_trash(&state.db, &ids, "고른 사진 치우기").map_err(err)
+    trash::to_trash(&state.db, &ids, "고른 사진 휴지통으로").map_err(err)
 }
 
 /// 휴지통에서 제자리로. `ids`가 비어 있으면 전부.

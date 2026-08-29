@@ -450,7 +450,10 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<(Vec<
             }
         }
     }
-    // 디스크에서 사라진 폴더(Finder 에서 지운 것)는 뺀다 — DB 행만 남아 «없는 폴더»를 읽지 않게
+    // 사진이 바로 아래 없는 폴더 행(휴지통 파일만 가리키거나 빈 것)은 견줄 것이 없다 — 먼저 뺀다.
+    // 그다음 디스크에서 사라진 폴더(Finder 에서 지운 것)를 뺀다 — DB 행만 남아 «없는 폴더»를 읽지 않게.
+    // 실측(2026-08-30): 다시 스캔 뒤에도 «없는 폴더 N개»가 떴는데, 전부 사진이 0장인 옛 폴더 행이었다
+    out.retain(|a| a.files > 0);
     let mut disk = Disk::new();
     let before = out.len();
     out.retain(|a| {
@@ -982,6 +985,24 @@ mod tests {
         assert!(r.rows.iter().all(|row| row.b.is_none()), "사라진 B 는 짝이 되지 않는다: {:?}", r.rows);
         let sets = db.read(|c| identical_sets(c, 100)).unwrap();
         assert!(sets.iter().all(|s| s.folders.iter().all(|f| f.folder != "b")), "폴더 비교도 뺀다: {sets:?}");
+    }
+
+    /// 실제 DB 로 — `ACUT_LIVE_DB=<acut-v2.db> cargo test --lib real_db_compare -- --ignored --nocapture`
+    /// (앱이 열어 둔 DB 도 읽기 전용으로 열린다)
+    #[test]
+    #[ignore = "실제 DB"]
+    fn real_db_compare_missing() {
+        let Ok(path) = std::env::var("ACUT_LIVE_DB") else { return };
+        let c = Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .unwrap();
+        let vol: String = c
+            .query_row("SELECT volume_uuid FROM libraries WHERE name = '통합전후보'", [], |r| r.get(0))
+            .unwrap();
+        let r = compare_two(&c, (&vol, "통합전후보/후보1번/연도별"), (&vol, "통합전후보/후보2번")).unwrap();
+        eprintln!("rows {} missing {}", r.rows.len(), r.missing);
     }
 
     #[test]

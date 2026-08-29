@@ -198,6 +198,21 @@ function Library({ onRescanAll }: { onRescanAll: () => void }) {
           {scanning ? "스캔 중…" : "전부 다시 스캔"}
         </Btn>
       </Row>
+      <Row
+        label="영상 촬영일"
+        hint="영상은 EXIF가 없어 Spotlight가 준 시각을 썼는데, 색인이 없으면 파일을 복사한 날이 잡힙니다. 파일 안에 박힌 촬영 시각을 다시 읽어 고칩니다."
+      >
+        <Btn
+          disabled={scanning}
+          onClick={() =>
+            invoke("video_dates_refresh", { libraryId: null }).catch((e) =>
+              toast(String(e), "drop"),
+            )
+          }
+        >
+          다시 읽기
+        </Btn>
+      </Row>
     </Section>
   );
 }

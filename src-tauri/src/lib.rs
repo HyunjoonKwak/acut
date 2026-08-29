@@ -130,6 +130,7 @@ pub fn run() {
             api::folder_size,
             api::folder_offload,
             api::startup_report,
+            api::video_dates_refresh,
             api::nas::nas_config,
             api::nas::nas_config_set,
             api::nas::nas_check,

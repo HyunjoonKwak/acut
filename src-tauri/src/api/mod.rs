@@ -1198,6 +1198,72 @@ pub async fn startup_report(state: State<'_, AppState>, marks: serde_json::Value
     Ok(info)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct VideoDatesDone {
+    pub checked: usize,
+    pub fixed: usize,
+}
+
+/// 영상의 촬영 시각을 컨테이너에서 다시 읽어 고친다. 진행은 `video-dates-progress`,
+/// 끝나면 `video-dates-done`. Spotlight가 복사한 날을 돌려주던 것을 바로잡는 용도.
+#[tauri::command]
+pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let Some(guard) = job::try_start(&state.running, "에이컷 영상 촬영일") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
+    let db = Arc::clone(&state.db);
+    let cancel = Arc::clone(&state.cancel);
+    cancel.store(false, Ordering::Relaxed);
+    std::thread::spawn(move || {
+        let _guard = guard;
+        let handle = app.clone();
+        let rows: Vec<(i64, String, String, i64)> = db
+            .read(|c| {
+                let mut st = c.prepare(
+                    "SELECT fi.id, fo.volume_uuid, fo.rel_path || '/' || fi.name, fi.taken_at
+                       FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+                      WHERE fi.kind = 1 AND fi.trashed_at IS NULL AND (?1 IS NULL OR fo.library_id = ?1)",
+                )?;
+                let it = st.query_map([library_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+                it.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap_or_default();
+        let mounts: HashMap<String, Option<PathBuf>> = rows
+            .iter()
+            .map(|r| r.1.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .map(|u| (u.clone(), crate::db::volumes::find_mount(&u)))
+            .collect();
+        let total = rows.len();
+        let (mut checked, mut fixed) = (0usize, 0usize);
+        let mut last = std::time::Instant::now();
+        for (id, vol, rel, taken_at) in rows {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            checked += 1;
+            let Some(Some(mount)) = mounts.get(&vol) else { continue };
+            let rel = rel.trim_start_matches('/').to_string();
+            if let Some(t) = crate::media::mp4date::creation_time(&mount.join(&rel)) {
+                if t != taken_at {
+                    let _ = db.write(|c| {
+                        c.execute("UPDATE files SET taken_at = ?2, taken_at_source = 0 WHERE id = ?1", rusqlite::params![id, t])
+                    });
+                    fixed += 1;
+                }
+            }
+            if last.elapsed().as_millis() >= 200 {
+                last = std::time::Instant::now();
+                let _ = handle.emit("video-dates-progress", serde_json::json!({ "done": checked, "total": total }));
+            }
+        }
+        let _ = app.emit("video-dates-done", VideoDatesDone { checked, fixed });
+    });
+    Ok(())
+}
+
 /// 지도의 칸들 — 조건에 맞는 사진을 `precision`도 격자로 묶는다
 #[tauri::command]
 pub async fn map_cells(state: State<'_, AppState>, filter: Filter, precision: f64) -> Result<Vec<query::MapCell>, String> {

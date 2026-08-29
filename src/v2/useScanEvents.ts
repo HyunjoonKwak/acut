@@ -220,6 +220,17 @@ export function useScanEvents(cb: {
         );
       },
     );
+    on<{ done: number; total: number }>("video-dates-progress", (p) =>
+      job().progress({ label: "영상 촬영일", done: p.done, total: p.total }),
+    );
+    on<{ checked: number; fixed: number }>("video-dates-done", (r) => {
+      job().clear();
+      toast(
+        `영상 ${r.checked.toLocaleString()}개 확인 — ${r.fixed.toLocaleString()}개의 촬영일을 고쳤습니다`,
+        "ok",
+      );
+      ref.current.reload();
+    });
     on<string>("nas-error", (e) => {
       job().clear();
       toast(`NAS — ${e}`, "drop");

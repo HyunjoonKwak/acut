@@ -41,8 +41,11 @@ export default function StatusActions({
   const hasJob = useJob((s) => s.job !== null);
   const libId = usePrefs((s) => s.libId);
   const libName = useData((s) => s.libs.find((l) => l.id === libId)?.name ?? null);
-  // 영구히 비운 것(delete)은 되돌릴 수 없다 — 후보에서 뺀다
-  const undoable = batches.find((b) => b.undone_at === null && b.kind !== "delete");
+  // 영구히 비운 것(delete)은 되돌릴 수 없고, 휴지통 오간 것(trash·restore)은 휴지통 화면이 맡는다 —
+  // 상태바의 되돌리기는 정리·이름 바꾸기·가져오기 같은 «다른 곳으로 간 것»만 (사용자 지적 2026-08-30)
+  const undoable = batches.find(
+    (b) => b.undone_at === null && b.kind !== "delete" && b.kind !== "trash" && b.kind !== "restore",
+  );
 
   return (
     <>

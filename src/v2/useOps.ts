@@ -114,6 +114,33 @@ export function useOps(cb: {
     }
   }, [ask, after]);
 
+  /// 휴지통에서 고른 것만 제자리로
+  const restoreFiles = useCallback(
+    async (ids: number[]) => {
+      if (ids.length === 0) return false;
+      await runTrashOp("trash_restore", { libraryId: null, ids }, "되돌리는 중…");
+      return true;
+    },
+    [runTrashOp],
+  );
+
+  /// 휴지통에서 고른 것만 영구히 — 되돌릴 수 없다
+  const deleteFiles = useCallback(
+    async (ids: number[]) => {
+      if (ids.length === 0) return false;
+      const ok = await ask({
+        title: `고른 ${ids.length.toLocaleString()}장을 영구히 지웁니다`,
+        lines: ["· 디스크에서 사라집니다", "· 되돌릴 수 없습니다"],
+        confirmLabel: "영구히 지우기",
+        danger: true,
+      });
+      if (!ok) return false;
+      await runTrashOp("trash_empty", { libraryId: null, ids }, "지우는 중…");
+      return true;
+    },
+    [ask, runTrashOp],
+  );
+
   const emptyTrash = useCallback(async () => {
     const { trash } = useData.getState();
     const libId = usePrefs.getState().libId;
@@ -190,6 +217,8 @@ export function useOps(cb: {
     trashFiles,
     cleanExcluded,
     unmarkExcluded,
+    restoreFiles,
+    deleteFiles,
     emptyTrash,
     restoreAll,
     undoLast,

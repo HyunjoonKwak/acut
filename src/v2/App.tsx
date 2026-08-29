@@ -535,6 +535,8 @@ export default function App() {
           compareIds={compareIds}
           markPicked={markPicked}
           onTrash={ops.trashFiles}
+          onRestore={ops.restoreFiles}
+          onDelete={ops.deleteFiles}
         />
       )}
 

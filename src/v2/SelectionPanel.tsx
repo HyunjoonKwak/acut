@@ -4,6 +4,7 @@ import { useSelection } from "./selectionStore";
 import { Sep } from "./ui";
 import { useUi } from "./uiStore";
 import { useData } from "./dataStore";
+import { useView } from "./viewStore";
 import { areaLabel, nextArea } from "./areaItems";
 import type { FileRow, Mark } from "./types";
 
@@ -22,9 +23,13 @@ export default function SelectionPanel({
   compareIds: number[];
   markPicked: (patch: Mark) => void;
   onTrash: (ids: number[]) => Promise<boolean>;
+  /** 휴지통 화면에서 — 고른 것만 되돌리기 / 영구히 지우기 */
+  onRestore?: (ids: number[]) => Promise<boolean>;
+  onDelete?: (ids: number[]) => Promise<boolean>;
 }) {
   const picked = useSelection((s) => s.picked);
   const clearPicked = useSelection((s) => s.clearPicked);
+  const viewTrash = useView((s) => s.viewTrash);
   const setUi = useUi((s) => s.set);
   const [libId] = usePref("libId");
   const libs = useData((s) => s.libs);
@@ -35,6 +40,43 @@ export default function SelectionPanel({
   const bytes = rows
     .filter((r) => picked.has(r.id))
     .reduce((a, r) => a + r.size, 0);
+
+  // 휴지통에서는 «되돌릴지 / 영구히 지울지»만 — 남김·제외 판정은 여기서 할 일이 아니다 (사용자 지적 2026-08-30)
+  if (viewTrash) {
+    return (
+      <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line">
+        <div className="w-[176px] shrink-0 flex items-baseline gap-2 tabular-nums overflow-hidden">
+          <span className="text-accent font-semibold text-[13px] whitespace-nowrap">
+            {picked.size.toLocaleString()}장 선택
+          </span>
+          <span className="text-[11.5px] text-fg-mute whitespace-nowrap truncate">{fmtBytes(bytes)}</span>
+        </div>
+        <Sep />
+        <button
+          onClick={async () => {
+            if (await onRestore?.([...picked])) clearPicked();
+          }}
+          title="고른 사진을 원래 폴더로 되돌립니다"
+          className="h-control px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px]"
+        >
+          되돌리기
+        </button>
+        <button
+          onClick={async () => {
+            if (await onDelete?.([...picked])) clearPicked();
+          }}
+          title="고른 사진을 디스크에서 영구히 지웁니다 — 되돌릴 수 없습니다"
+          className="h-control px-3 rounded-md text-drop ring-1 ring-drop text-[12.5px]"
+        >
+          영구히 지우기
+        </button>
+        <div className="flex-1" />
+        <button onClick={clearPicked} className="h-control px-2 rounded-md text-fg-dim text-[12.5px]">
+          선택 해제 <span className="text-[10px] font-mono">Esc</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line">

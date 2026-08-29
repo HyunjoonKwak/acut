@@ -156,6 +156,33 @@ pub fn from_filename(name: &str) -> Option<i64> {
         // 건너뛰면 뒤의 진짜 날짜를 놓친다. 파일명은 짧으므로 비용은 무시할 만하다.
         i += 1;
     }
+    // 날짜 꼴이 하나도 없을 때만 — 13자리 순수 숫자 덩어리는 유닉스 밀리초다.
+    // `kakaotalk_1525225566458.mp4`·`FB_IMG_…` 처럼 메신저·SNS가 저장한 파일은
+    // 이것 말고는 촬영 시각 단서가 없다 (컨테이너 시각은 0, 파일 시각은 복사한 날).
+    epoch_ms_run(&digits)
+}
+
+/// 앞뒤가 숫자가 아닌, 정확히 13자리 숫자 덩어리를 밀리초로 읽는다.
+/// 덩어리의 일부(꼬리)는 보지 않는다 — `20261301_120000`의 꼬리를 시각으로 오인한다.
+/// 열 자리 초는 믿지 않는다 — 웹 이미지 id와 구분이 안 된다.
+fn epoch_ms_run(b: &[u8]) -> Option<i64> {
+    let mut i = 0;
+    while i < b.len() {
+        if !b[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i - start == 13 {
+            let ms = b[start..i].iter().fold(0i64, |a, &c| a * 10 + (c - b'0') as i64);
+            if let Some(t) = epoch_secs(ms / 1000) {
+                return Some(t);
+            }
+        }
+    }
     None
 }
 
@@ -194,6 +221,11 @@ fn parse_digits(d: &[u8]) -> Option<i64> {
     None
 }
 
+/// 2000-01-01 ≤ t < 2030-03-17. 그 밖은 시각이 아니라 다른 숫자로 본다.
+fn epoch_secs(t: i64) -> Option<i64> {
+    (946_684_800..1_900_000_000).contains(&t).then_some(t)
+}
+
 fn valid_date(y: i64, mo: i64, da: i64) -> bool {
     (1990..=2100).contains(&y) && (1..=12).contains(&mo) && (1..=31).contains(&da)
 }
@@ -225,6 +257,22 @@ mod tests {
     }
 
     // ── 파일명 파싱 ────────────────────────────────────────────────────
+    #[test]
+    fn unix_epoch_ms_in_names() {
+        // 카카오톡·페이스북 저장본 — 13자리 밀리초
+        assert_eq!(from_filename("kakaotalk_1525225566458.mp4"), Some(1_525_225_566));
+        assert_eq!(from_filename("FB_IMG_1525225566458.jpg"), Some(1_525_225_566));
+        // 열 자리 초는 믿지 않는다 — 웹 이미지 id와 구분이 안 된다
+        assert_eq!(from_filename("1525225566.jpg"), None);
+        // 13자리라도 2000~2030년 밖이면 시각이 아니다
+        assert_eq!(from_filename("IMG_0900000000000.jpg"), None);
+        // 날짜 꼴이 같이 있으면 날짜가 이긴다
+        assert_eq!(
+            from_filename("20180305_171923_1525225566458.mp4"),
+            Some(civil_to_unix(2018, 3, 5, 17, 19, 23))
+        );
+    }
+
     #[test]
     fn galaxy_format() {
         assert_eq!(from_filename("20260101_123456.jpg"), Some(t(2026, 1, 1, 12, 34, 56)));

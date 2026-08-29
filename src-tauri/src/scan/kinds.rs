@@ -42,6 +42,8 @@ pub fn is_skipped_dir(name: &str) -> bool {
             // 우리 자신의 캐시, NAS에서 받다 만 파일(nas/ssh.rs PARTIAL_DIR)
             | ".acut"
             | ".rsync-partial"
+            // Synology Drive Client가 받다 만 조각을 두는 곳
+            | ".SynologyWorkingDirectory"
     ) || name.starts_with(".git")
 }
 

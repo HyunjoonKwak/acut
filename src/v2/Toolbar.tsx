@@ -39,22 +39,24 @@ export default function Toolbar({
   const [thumbSize, setThumbSize] = usePref("thumbSize");
 
   return (
-    <div className="h-12 shrink-0 flex items-center gap-2 px-3 overflow-hidden bg-chrome border-b border-line">
-      <Breadcrumb
-        libs={libs}
-        libId={libId}
-        folder={sel?.path ?? null}
-        viewTrash={viewTrash}
-        matched={matched}
-      />
+    <div className="h-12 shrink-0 flex items-center gap-2 px-3 bg-chrome border-b border-line">
+      {/* 줄어들고 잘리는 건 이 왼쪽 묶음뿐 — 툴바 자체가 overflow-hidden이면
+          정렬·묶기 메뉴(absolute)가 사진 밑으로 잘려 안 보인다 */}
+      <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
+        <Breadcrumb
+          libs={libs}
+          libId={libId}
+          folder={sel?.path ?? null}
+          viewTrash={viewTrash}
+          matched={matched}
+        />
 
-      <FilterChips
-        value={picks}
-        onChange={setPicks}
-        tagName={(id) => tags.get(id)}
-      />
-
-      <div className="flex-1" />
+        <FilterChips
+          value={picks}
+          onChange={setPicks}
+          tagName={(id) => tags.get(id)}
+        />
+      </div>
 
       <NasBadge />
 

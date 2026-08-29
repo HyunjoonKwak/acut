@@ -4,6 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import Viewer from "./Viewer";
 import { fmtBytes } from "./format";
 import { useJob } from "./jobStore";
+import { useConfirm } from "./confirmContext";
+import { toast } from "./toastStore";
 
 type Group = {
   id: number;
@@ -23,6 +25,22 @@ type Member = {
   score: number | null;
   thumb: string | null;
   culling_flag: number;
+  library: string;
+  folder: string;
+  area: number;
+};
+type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
+type DupFolder = {
+  folder_id: number;
+  library: string;
+  folder: string;
+  area: number;
+  files: number;
+  copies: number;
+  bytes: number;
+  keeper_library: string | null;
+  keeper_folder: string | null;
+  keeper_copies: number;
 };
 type Summary = {
   kind: number;
@@ -48,6 +66,11 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   );
   const [summary, setSummary] = useState<Summary[]>([]);
   const [busy, setBusy] = useState("");
+  const ask = useConfirm();
+  // 폴더별 보기 — 폴더 통째로 사본인 것을 한 번에
+  const [byFolder, setByFolder] = useState(false);
+  /// null 이면 아직 세는 중 — 실측 8초(무리 7만 개의 자기 결합)라 «없음»과 구분해야 한다
+  const [folders, setFolders] = useState<DupFolder[] | null>(null);
   // 상태바의 잡 — 고르기 화면을 닫았다 열어도 «도는 중»을 안다
   const job = useJob((s) => s.job);
   const jobRunning = job?.label.startsWith("고르기") ?? false;
@@ -96,6 +119,59 @@ export default function Cull({ onClose }: { onClose: () => void }) {
     setGroups(g);
     setIdx(0);
   }, []);
+
+  const loadFolders = useCallback(async (k: number) => {
+    setFolders(await invoke<DupFolder[]>("cull_dup_folders", { kind: k }));
+  }, []);
+
+  /// 무리를 한꺼번에 확정한다 — 먼저 세어 보여 주고 묻는다. 정착 구역(내사진·
+  /// 공용)에 제외될 사본이 있는 무리는 건너뛴다: 거기서 지우면 NAS에서도 지워진다.
+  const applyAll = useCallback(
+    async (folderId: number | null, what: string) => {
+      const dry = await invoke<ApplyAll>("cull_apply_all", {
+        kind,
+        skipSettled: true,
+        dryRun: true,
+        folderId,
+      });
+      if (dry.groups === 0) {
+        toast(
+          dry.skipped > 0
+            ? `확정할 것이 없습니다 — 공용·내사진 안의 사본이 있는 ${dry.skipped.toLocaleString()}무리는 하나씩 봐야 합니다`
+            : "확정할 것이 없습니다",
+        );
+        return;
+      }
+      const ok = await ask({
+        title: `${what} ${dry.groups.toLocaleString()}무리를 확정`,
+        lines: [
+          `남김 ${dry.kept.toLocaleString()}장 · 제외 표시 ${dry.rejected.toLocaleString()}장`,
+          ...(dry.skipped > 0
+            ? [
+                `공용·내사진 안에 제외될 사본이 있는 ${dry.skipped.toLocaleString()}무리는 건너뜁니다 — 나중에 하나씩`,
+              ]
+            : []),
+          "파일은 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
+        ],
+        confirmLabel: "확정",
+      });
+      if (!ok) return;
+      const r = await invoke<ApplyAll>("cull_apply_all", {
+        kind,
+        skipSettled: true,
+        dryRun: false,
+        folderId,
+      });
+      toast(
+        `${r.groups.toLocaleString()}무리 확정 — 제외 ${r.rejected.toLocaleString()}장`,
+        "ok",
+      );
+      loadSummary();
+      loadGroups(kind);
+      if (byFolder) loadFolders(kind);
+    },
+    [kind, ask, loadSummary, loadGroups, loadFolders, byFolder],
+  );
 
   // 갈래를 바꾸면 요약과 그룹을 새로 읽는다. 다른 데서 쓰는 loadSummary·
   // loadGroups를 여기서 부르지 않는 이유: 컴파일러가 그 안의 setState를
@@ -232,6 +308,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (viewerAt !== null) return; // 크게 보기가 열려 있으면 뷰어가 키를 가져간다
+      if (byFolder && e.key !== "Escape") return; // 폴더별 보기에는 무리가 없다
       if (e.key === " ") {
         e.preventDefault();
         apply();
@@ -246,7 +323,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [apply, skip, pick, members, onClose, viewerAt]);
+  }, [apply, skip, pick, members, onClose, viewerAt, byFolder]);
 
   /// 크게 본 상태에서 P(남김)를 누르면 그 사진이 이 그룹의 남길 것이 된다
   const viewerMark = useCallback(
@@ -267,6 +344,18 @@ export default function Cull({ onClose }: { onClose: () => void }) {
     },
     [pick],
   );
+
+  // 폴더별 보기를 켜면 읽는다. loadFolders를 안 부르는 이유는 위 loadGroups와 같다.
+  useEffect(() => {
+    if (!byFolder) return;
+    let live = true;
+    invoke<DupFolder[]>("cull_dup_folders", { kind }).then(
+      (r) => live && setFolders(r),
+    );
+    return () => {
+      live = false;
+    };
+  }, [byFolder, kind]);
 
   const cur = groups[idx];
   const total = summary.reduce((a, s) => a + s.reclaimable, 0);
@@ -296,6 +385,26 @@ export default function Cull({ onClose }: { onClose: () => void }) {
             </button>
           );
         })}
+        {!scanning && (kind === 0 || kind === 1) && groups.length > 0 && (
+          <button
+            onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "")}
+            title="미결 무리를 한꺼번에 확정 — 공용·내사진 안의 사본이 있는 무리는 건너뜁니다"
+            className="h-control px-3 rounded-md text-[12.5px] bg-keep text-keep-fg font-semibold"
+          >
+            모두 확정
+          </button>
+        )}
+        {kind === 0 && (
+          <button
+            onClick={() => setByFolder((v) => !v)}
+            aria-pressed={byFolder}
+            className={`h-control px-3 rounded-md text-[12.5px] ${
+              byFolder ? "bg-raised text-white ring-1 ring-line-strong" : "text-fg-dim"
+            }`}
+          >
+            폴더별
+          </button>
+        )}
         {scanning ? (
           // 찾는 중에는 멈출 수 있어야 한다. 해시를 읽느라 오래 걸린다.
           <button
@@ -362,7 +471,15 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       {/* 스크롤은 안쪽 div가 맡는다. 바깥이 스크롤하면 덮개가 같이 밀려 올라간다. */}
       <div className="flex-1 relative min-h-0">
         <div className="absolute inset-0 overflow-y-auto p-4">
-          {!cur && (
+          {byFolder && (
+            <FolderTable
+              rows={folders}
+              onApply={(f) =>
+                applyAll(f.folder_id, `«${f.library} · ${f.folder || "/"}» 폴더의 사본`)
+              }
+            />
+          )}
+          {!byFolder && !cur && (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute">
               {scanning ? (
                 <>
@@ -378,7 +495,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
               )}
             </div>
           )}
-          {cur && (
+          {!byFolder && cur && (
             <div
               className="grid gap-3"
               style={{
@@ -438,6 +555,15 @@ export default function Cull({ onClose }: { onClose: () => void }) {
                         {fmtBytes(m.size)}
                       </span>
                     </div>
+                    {/* 어디 있는 사본인가 — 어느 쪽을 남길지는 결국 폴더로 정한다 */}
+                    <div
+                      className={`text-[10.5px] truncate ${
+                        m.area === 1 || m.area === 2 ? "text-keep" : "text-fg-mute"
+                      }`}
+                      title={`${m.library} / ${m.folder || "/"}`}
+                    >
+                      {m.library} · {m.folder || "/"}
+                    </div>
                   </button>
                 );
               })}
@@ -465,7 +591,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line">
         <button
           onClick={apply}
-          disabled={!cur}
+          disabled={!cur || byFolder}
           className="h-control px-3.5 rounded-lg bg-keep text-keep-fg font-semibold text-[13px] disabled:opacity-40 flex items-center gap-2"
         >
           이대로 확정
@@ -475,7 +601,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         </button>
         <button
           onClick={skip}
-          disabled={!cur}
+          disabled={!cur || byFolder}
           className="h-control px-3.5 rounded-lg text-fg-dim text-[13px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
         >
           나중에
@@ -500,4 +626,94 @@ export default function Cull({ onClose }: { onClose: () => void }) {
 function fmtElapsed(sec: number): string {
   const m = Math.floor(sec / 60);
   return m > 0 ? `${m}분 ${sec % 60}초` : `${sec}초`;
+}
+
+/** 폴더별 사본 표 — «이 폴더는 저 폴더의 사본이다»가 보이게 */
+function FolderTable({
+  rows,
+  onApply,
+}: {
+  rows: DupFolder[] | null;
+  onApply: (f: DupFolder) => void;
+}) {
+  if (rows === null)
+    return (
+      <div className="h-full flex items-center justify-center gap-2 text-fg-mute">
+        <i className="w-2 h-2 rounded-full bg-keep animate-pulse" />
+        폴더별로 세는 중… (몇 초 걸립니다)
+      </div>
+    );
+  if (rows.length === 0)
+    return (
+      <div className="h-full flex items-center justify-center text-fg-mute">
+        제외될 사본이 있는 폴더가 없습니다
+      </div>
+    );
+  return (
+    <table className="w-full text-[12px] tabular-nums">
+      <thead className="text-[10.5px] text-fg-mute uppercase tracking-wider">
+        <tr className="text-left">
+          <th className="py-1.5 pr-3 font-medium">사본이 있는 폴더</th>
+          <th className="py-1.5 pr-3 font-medium text-right">사본 / 전체</th>
+          <th className="py-1.5 pr-3 font-medium text-right">용량</th>
+          <th className="py-1.5 pr-3 font-medium">대표가 있는 폴더</th>
+          <th className="py-1.5 font-medium"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((f) => {
+          const settled = f.area === 1 || f.area === 2;
+          const whole = f.copies === f.files;
+          return (
+            <tr key={f.folder_id} className="border-t border-line align-top">
+              <td className="py-2 pr-3 max-w-[420px]">
+                <div className="text-fg truncate" title={`${f.library} / ${f.folder || "/"}`}>
+                  <span className={settled ? "text-keep" : "text-fg-mute"}>{f.library}</span>
+                  {" · "}
+                  {f.folder || "/"}
+                </div>
+                {whole && (
+                  <span className="inline-block mt-1 px-1.5 h-4 rounded bg-drop/20 text-drop text-[10px] font-semibold">
+                    폴더 통째로 사본
+                  </span>
+                )}
+                {settled && (
+                  <span className="inline-block mt-1 ml-1 px-1.5 h-4 rounded bg-keep/20 text-keep text-[10px] font-semibold">
+                    공용·내사진 — Drive로 NAS에서도 지워짐, 하나씩 봅니다
+                  </span>
+                )}
+              </td>
+              <td className="py-2 pr-3 text-right whitespace-nowrap">
+                {f.copies.toLocaleString()} / {f.files.toLocaleString()}
+              </td>
+              <td className="py-2 pr-3 text-right whitespace-nowrap">{fmtBytes(f.bytes)}</td>
+              <td className="py-2 pr-3 max-w-[420px]">
+                {f.keeper_folder !== null ? (
+                  <div
+                    className="text-fg-dim truncate"
+                    title={`${f.keeper_library} / ${f.keeper_folder || "/"}`}
+                  >
+                    {f.keeper_library} · {f.keeper_folder || "/"}
+                    <span className="text-fg-mute"> ({f.keeper_copies.toLocaleString()}장)</span>
+                  </div>
+                ) : (
+                  <span className="text-fg-faint">—</span>
+                )}
+              </td>
+              <td className="py-2 text-right whitespace-nowrap">
+                <button
+                  onClick={() => onApply(f)}
+                  disabled={settled}
+                  title={settled ? "공용·내사진 안의 사본은 하나씩 봅니다" : "이 폴더의 사본을 전부 제외로 표시"}
+                  className="h-7 px-2.5 rounded-md text-[12px] bg-keep text-keep-fg font-semibold disabled:opacity-40"
+                >
+                  이 폴더 사본 확정
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
 }

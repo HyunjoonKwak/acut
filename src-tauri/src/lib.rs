@@ -209,6 +209,8 @@ pub fn run() {
             api::cull::cull_members,
             api::cull::cull_set_best,
             api::cull::cull_apply,
+            api::cull::cull_apply_all,
+            api::cull::cull_dup_folders,
             api::cull::cull_skip,
             api::cull::cull_summary,
         ])

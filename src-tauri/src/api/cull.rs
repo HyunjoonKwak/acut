@@ -4,7 +4,7 @@
 //! 진행 상황을 이벤트로 흘린다. 조회는 즉시 돌아온다.
 
 use crate::api::{err, AppState};
-use crate::cull::{burst, dedup, junk, scene};
+use crate::cull::{apply, burst, dedup, junk, scene};
 use super::job;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -44,6 +44,11 @@ pub struct MemberRow {
     pub library_id: Option<i64>,
     pub thumb: Option<String>,
     pub culling_flag: i32,
+    /// 어디 있는 사본인가 — 라이브러리 이름과 라이브러리 기준 폴더. 어느 쪽을
+    /// 남길지 고를 때 이게 없으면 판단할 근거가 없다.
+    pub library: String,
+    pub folder: String,
+    pub area: i32,
 }
 
 /// 세 갈래를 순서대로 돌린다. 가벼운 것부터 — 결과가 빨리 보이게.
@@ -158,16 +163,27 @@ pub async fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<V
         .read(|c| {
             let mut st = c.prepare(
                 "SELECT m.file_id, f.name, f.size, f.taken_at, f.width, f.height,
-                        m.is_best, m.score, t.rel_path, f.culling_flag, fo.library_id
+                        m.is_best, m.score, t.rel_path, f.culling_flag, fo.library_id,
+                        l.name, l.rel_path, fo.rel_path, fo.area
                  FROM group_members m
                  JOIN files f ON f.id = m.file_id
                  JOIN folders fo ON fo.id = f.folder_id
+                 LEFT JOIN libraries l ON l.id = fo.library_id
                  LEFT JOIN thumbs t ON t.file_id = f.id AND t.state = 1
                  WHERE m.group_id = ?1
                  ORDER BY m.is_best DESC, m.score DESC, f.size DESC",
             )?;
             let it = st.query_map([group_id], |r| {
+                let lib_rel: Option<String> = r.get(12)?;
+                let rel: String = r.get(13)?;
+                let folder = match lib_rel.as_deref().and_then(|l| rel.strip_prefix(l)) {
+                    Some(rest) => rest.trim_start_matches('/').to_string(),
+                    None => rel.clone(),
+                };
                 Ok(MemberRow {
+                    library: r.get::<_, Option<String>>(11)?.unwrap_or_default(),
+                    folder,
+                    area: r.get(14)?,
                     file_id: r.get(0)?,
                     name: r.get(1)?,
                     size: r.get(2)?,
@@ -255,6 +271,28 @@ pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Resu
         })
         .map_err(err)?;
     Ok(ApplyResult { kept, rejected })
+}
+
+/// 갈래의 미결 무리를 한꺼번에 확정한다 (규칙은 cull::apply). `dry_run`이면 세기만.
+#[tauri::command]
+pub async fn cull_apply_all(
+    state: State<'_, AppState>,
+    kind: i32,
+    skip_settled: bool,
+    dry_run: bool,
+    folder_id: Option<i64>,
+) -> Result<apply::ApplyAll, String> {
+    state
+        .db
+        .transaction(|tx| apply::apply_all(tx, kind, skip_settled, dry_run, folder_id))
+        .map_err(err)
+}
+
+/// 제외될 사본이 있는 폴더들 — 폴더 통째로 사본인 것을 한 번에 처리하려고.
+#[tauri::command]
+pub async fn cull_dup_folders(state: State<'_, AppState>, kind: i32) -> Result<Vec<apply::DupFolder>, String> {
+    // 임시 표 없이 CTE만 쓰므로 읽기 연결로 충분하다
+    state.db.read(|c| apply::dup_folders(c, kind, 300)).map_err(err)
 }
 
 /// 그룹을 보류한다 — 목록에서 빠지되 판정은 하지 않는다.

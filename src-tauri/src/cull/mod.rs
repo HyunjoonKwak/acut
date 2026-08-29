@@ -7,6 +7,7 @@
 //!
 //! 판정 결과는 `files.culling_flag`에 남는다. 그룹은 작업 단위일 뿐이다.
 
+pub mod apply;
 pub mod burst;
 pub mod dedup;
 pub mod hash;

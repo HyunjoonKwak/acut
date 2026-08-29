@@ -449,9 +449,9 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         {byFolder ? (
           // 폴더별 보기에는 «지금 무리»가 없다 — 표를 읽는 법을 적는다
           <span className="text-fg-dim truncate">
-            줄마다 «왼쪽 폴더의 사진들은 오른쪽 폴더에 똑같은 파일이 있다»는 뜻입니다.
-            버튼을 누르면 왼쪽 폴더의 사본에 제외 표시를 하고 오른쪽 것을 남깁니다 —
-            파일은 아직 옮기지 않습니다.
+            왼쪽 폴더의 사진은 오른쪽 폴더에 원본이 있어 지워도 됩니다. 버튼을 누르면
+            왼쪽 사본에 «지울 것(제외)» 도장을 찍습니다 — 실제로 지우는 건 나중에
+            격자의 «제외 N장 치우기»입니다.
           </span>
         ) : (
           <>
@@ -664,10 +664,10 @@ function FolderTable({
     <table className="w-full text-[12px] tabular-nums">
       <thead className="text-[10.5px] text-fg-mute uppercase tracking-wider">
         <tr className="text-left">
-          <th className="py-1.5 pr-3 font-medium">제외될 쪽 — 사본이 있는 폴더</th>
+          <th className="py-1.5 pr-3 font-medium">지워도 되는 사본이 있는 폴더</th>
           <th className="py-1.5 pr-3 font-medium text-right">사본 / 폴더 전체</th>
           <th className="py-1.5 pr-3 font-medium text-right">비는 용량</th>
-          <th className="py-1.5 pr-3 font-medium">남는 쪽 — 똑같은 파일이 있는 폴더</th>
+          <th className="py-1.5 pr-3 font-medium">원본이 있는 폴더 (그대로 둠)</th>
           <th className="py-1.5 font-medium"></th>
         </tr>
       </thead>
@@ -715,10 +715,14 @@ function FolderTable({
                 <button
                   onClick={() => onApply(f)}
                   disabled={settled}
-                  title={settled ? "공용·내사진 안의 사본은 하나씩 봅니다" : "왼쪽 폴더의 사본에 제외 표시 — 오른쪽 폴더 것을 남깁니다"}
+                  title={
+                    settled
+                      ? "공용·내사진 안의 사본은 하나씩 봅니다"
+                      : `${f.library}의 이 폴더 사본 ${f.copies.toLocaleString()}장에 «지울 것» 도장 — 오른쪽 원본은 그대로`
+                  }
                   className="h-7 px-2.5 rounded-md text-[12px] bg-keep text-keep-fg font-semibold disabled:opacity-40"
                 >
-                  이 폴더 사본 제외 표시
+                  {f.library} 사본 지우기 표시
                 </button>
               </td>
             </tr>

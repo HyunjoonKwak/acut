@@ -95,6 +95,27 @@ pub fn run() {
                 });
             }
 
+            // 검은 창 감시 — 메모리가 모자라 macOS가 웹뷰 프로세스를 내리면 창이
+            // 검게 남는다(실측: 스왑 15GB 상태). 화면의 «살아 있음»이 20초 넘게
+            // 끊기면 페이지를 다시 불러온다. 뒷단 작업은 그대로 돈다.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let state = handle.state::<api::AppState>();
+                    let last = state.last_beat.load(std::sync::atomic::Ordering::Relaxed);
+                    let now = chrono::Utc::now().timestamp();
+                    if last > 0 && now - last > 20 {
+                        if let Some(w) = handle.get_webview_window("main") {
+                            log::warn!("화면이 {}초째 조용하다 — 다시 불러온다", now - last);
+                            if let Ok(url) = w.url() {
+                                let _ = w.navigate(url);
+                            }
+                            state.last_beat.store(now, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -130,6 +151,7 @@ pub fn run() {
             api::folder_size,
             api::folder_offload,
             api::startup_report,
+            api::heartbeat,
             api::video_dates_refresh,
             api::nas::nas_config,
             api::nas::nas_config_set,

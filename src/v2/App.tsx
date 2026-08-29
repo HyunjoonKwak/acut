@@ -151,6 +151,13 @@ export default function App() {
     onReload: refreshMeta,
     onSeek: () => resetScroll.current(),
   });
+  // 살아 있음 — 5초마다. 뒷단이 20초 넘게 못 들으면 화면을 다시 불러온다
+  useEffect(() => {
+    const beat = () => invoke("heartbeat").catch(() => {});
+    beat();
+    const t = window.setInterval(beat, 5_000);
+    return () => window.clearInterval(t);
+  }, []);
   // 첫 그리드가 그려지면 한 번 — 시작 시간을 잰다 (설정 › 정보에 보인다)
   const reported = useRef(false);
   useEffect(() => {

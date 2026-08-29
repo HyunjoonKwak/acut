@@ -55,6 +55,9 @@ pub struct AppState {
     pub backup_plans: Mutex<Option<Vec<backup::Planned>>>,
     /// DB가 준비된 순간까지 걸린 시간 — 시작 시간 재기(0단계 성능 목표 «1초»)
     pub db_ready_ms: u64,
+    /// 화면이 마지막으로 «살아 있음»을 보낸 시각(유닉스 초). 0이면 아직 한 번도.
+    /// 메모리가 모자라면 macOS가 웹뷰 프로세스만 내려 창이 검게 된다 — 이걸로 알아챈다.
+    pub last_beat: std::sync::atomic::AtomicI64,
     /// 라이브러리 id → 실제 폴더.
     ///
     /// `thumb://`는 **썸네일 한 장마다** 이걸 부른다. 한 화면에 200장이면
@@ -75,6 +78,7 @@ impl AppState {
             ai_text: Mutex::new(None),
             backup_plans: Mutex::new(None),
             db_ready_ms: crate::started().elapsed().as_millis() as u64,
+            last_beat: std::sync::atomic::AtomicI64::new(0),
             dirs: Mutex::new(HashMap::new()),
         }
     }
@@ -1179,6 +1183,14 @@ pub struct StartupInfo {
     pub page_started_ms: u64,
     #[serde(default)]
     pub page_finished_ms: u64,
+}
+
+/// 화면이 5초마다 부른다 — 살아 있다는 신호. 뒷단의 감시 스레드가 20초 넘게
+/// 못 받으면 웹뷰를 다시 불러온다 (lib.rs watchdog).
+#[tauri::command]
+pub async fn heartbeat(state: State<'_, AppState>) -> Result<(), String> {
+    state.last_beat.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
+    Ok(())
 }
 
 /// 첫 그리드가 그려진 순간 화면이 부른다 — 시작 시간을 재서 설정에 남긴다.

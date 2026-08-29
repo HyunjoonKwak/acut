@@ -18,6 +18,8 @@ type Outcome = { moved: number; failed: number; first_error: string | null; byte
 type FolderIn = NonNullable<PairRow["a"]>;
 
 const settled = (f: FolderIn) => f.area === 1 || f.area === 2;
+/** 줄의 열쇠 — 폴더 id 조합 */
+const rowKey = (r: PairRow) => `${r.a?.folder_id ?? "x"}-${r.b?.folder_id ?? "x"}`;
 
 export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const ask = useConfirm();
@@ -58,7 +60,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
 
   /// 짝에서 한쪽에 제외 표시. side = 제외할 쪽 — 그쪽 사진이 반대쪽에 다 있는 짝만
   const mark = useCallback(
-    async (targets: PairRow[], side: "a" | "b") => {
+    async (targets: PairRow[], side: "a" | "b", confirmed = false) => {
       // 처리된 짝은 뺀다 — B쪽을 지운 줄에서 A쪽을 또 누르면 방금 남긴 B가 뒤집힌다
       const pairs = targets.filter((r) => droppable(r, side) && doneSide(r) === null);
       if (pairs.length === 0) {
@@ -71,7 +73,8 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       const risky = pairs.filter((r) => settled(drop(r)));
       const bytes = pairs.reduce((s, r) => s + r.bytes, 0);
       const files = pairs.reduce((s, r) => s + (side === "a" ? r.files_a : r.files_b), 0);
-      const ok = await ask({
+      // 검토 목록에서 «제외 표시»를 눌러 온 것이면 확인 창을 한 번 더 띄우지 않는다
+      const ok = confirmed || (await ask({
         title: `${side === "a" ? "A" : "B"}쪽 폴더 ${pairs.length.toLocaleString()}개의 사진 ${files.toLocaleString()}장에 제외 표시`,
         lines: [
           `${side === "a" ? "B" : "A"}쪽은 그대로 둡니다(하위 폴더 포함) · ${fmtBytes(bytes)} 빔`,
@@ -82,7 +85,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         ],
         confirmLabel: "제외 표시",
         danger: risky.length > 0,
-      });
+      }));
       if (!ok) return;
       // 잠그고 한 명령으로 — 짝마다 보내면 도는 동안 «A쪽 전부»를 또 눌러 두 루프가 얽힌다
       setMarking({ total: pairs.length });
@@ -129,6 +132,18 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   /// 이미 제외 표시가 다 붙은 폴더 수 — 쪽별
   const doneB = useMemo(() => (rows ?? []).filter((r) => doneSide(r) === "b").length, [rows]);
   const doneA = useMemo(() => (rows ?? []).filter((r) => doneSide(r) === "a").length, [rows]);
+  /// 검토 단계 — «B쪽 폴더 N개 제외 표시»를 누르면 먼저 그 폴더들만 보여 주고, 여기서 확인한다.
+  /// 체크를 풀면 그 폴더는 이번에 빠진다 (사용자 요청 2026-08-30)
+  const [review, setReview] = useState<{ side: "a" | "b"; unchecked: Set<string> } | null>(null);
+  const reviewRows = useMemo(
+    () => (review ? (review.side === "b" ? todoB : todoA) : []),
+    [review, todoA, todoB],
+  );
+  const reviewPicked = useMemo(
+    () => reviewRows.filter((r) => !review?.unchecked.has(rowKey(r))),
+    [reviewRows, review],
+  );
+  const shownRows = review ? reviewRows : rows;
   /// 폴더 비교로 붙인 표시(남김·제외)를 되돌린다 — 휴지통에 가기 전이면 언제든
   const unmark = useCallback(
     async (targets: PairRow[]) => {
@@ -214,8 +229,41 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         )}
       </div>
 
+      {/* 검토 단계 — 제외 표시할 폴더만 보이고, 여기서 확인한다 */}
+      {rows && review && (
+        <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line bg-keep/10 text-[12.5px] flex-wrap">
+          <span className="text-fg">
+            <b>{review.side === "a" ? "A" : "B"}쪽 제외 표시할 폴더 {reviewRows.length.toLocaleString()}개</b>
+            <span className="text-fg-dim"> — 아래 목록을 확인하세요. 체크를 풀면 그 폴더는 이번에 빠집니다.</span>
+          </span>
+          <div className="flex-1" />
+          <span className="text-fg-dim tabular-nums">
+            {reviewPicked.length.toLocaleString()}개 폴더 · {reviewPicked.reduce((s, r) => s + (review.side === "a" ? r.files_a : r.files_b), 0).toLocaleString()}장
+          </span>
+          <button
+            onClick={() => setReview(null)}
+            disabled={locked}
+            className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+          >
+            돌아가기
+          </button>
+          <button
+            onClick={async () => {
+              const side = review.side;
+              const picked = reviewPicked;
+              setReview(null);
+              await mark(picked, side, true);
+            }}
+            disabled={locked || reviewPicked.length === 0}
+            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
+          >
+            제외 표시 ({reviewPicked.length.toLocaleString()})
+          </button>
+        </div>
+      )}
+
       {/* 다음에 할 일 — 세 단계를 순서대로. 지금 어디까지 왔는지가 문장에 보인다 */}
-      {rows && (
+      {rows && !review && (
         <div className="shrink-0 flex items-center gap-x-4 gap-y-1 px-4 py-1.5 border-b border-line bg-raised/40 text-[12.5px] flex-wrap">
           <span className="text-fg-mute">① 비교 끝</span>
           <span className="text-fg-faint">→</span>
@@ -229,7 +277,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
               <>
                 {todoB.length > 0 && (
                   <button
-                    onClick={() => mark(todoB, "b")}
+                    onClick={() => setReview({ side: "b", unchecked: new Set() })}
                     disabled={locked}
                     title="B쪽 사진이 전부 A쪽에 있는 폴더 — B쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다. 파일은 아직 그대로"
                     className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
@@ -239,7 +287,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                 )}
                 {todoA.length > 0 && (
                   <button
-                    onClick={() => mark(todoA, "a")}
+                    onClick={() => setReview({ side: "a", unchecked: new Set() })}
                     disabled={locked}
                     title="A쪽 사진이 전부 B쪽에 있는 폴더 — A쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다. 반대 방향이니 A를 남기는 중이면 누르지 마세요"
                     className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
@@ -312,6 +360,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           <table className="w-full text-[12.5px] tabular-nums">
             <thead className="text-[10.5px] text-fg-mute uppercase tracking-wider sticky top-0 bg-canvas">
               <tr className="text-left">
+                {review && <th className="py-1.5 pl-4 w-8 font-medium"></th>}
                 <th className="py-1.5 px-4 font-medium">A · {a && `${a.library} · ${a.path || "/"}`}</th>
                 <th className="py-1.5 pr-3 font-medium">B · {b && `${b.library} · ${b.path || "/"}`}</th>
                 <th className="py-1.5 pr-3 font-medium text-right">장수</th>
@@ -320,13 +369,34 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {(shownRows ?? []).map((r) => {
                 const done = doneSide(r);
+                const key = rowKey(r);
+                const checked = review ? !review.unchecked.has(key) : false;
                 return (
                 <tr
-                  key={`${r.a?.folder_id ?? "x"}-${r.b?.folder_id ?? "x"}`}
-                  className={`border-t border-line align-middle ${done ? "opacity-45" : ""}`}
+                  key={key}
+                  className={`border-t border-line align-middle ${done ? "opacity-45" : ""} ${review && !checked ? "opacity-40" : ""}`}
                 >
+                  {review && (
+                    <td className="py-1.5 pl-4">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setReview((cur) => {
+                            if (!cur) return cur;
+                            const next = new Set(cur.unchecked);
+                            if (next.has(key)) next.delete(key);
+                            else next.add(key);
+                            return { ...cur, unchecked: next };
+                          })
+                        }
+                        className="accent-keep w-3.5 h-3.5"
+                        title="체크를 풀면 이번 제외 표시에서 뺍니다"
+                      />
+                    </td>
+                  )}
                   <td className="py-1.5 px-4 max-w-[380px]">
                     <Cell f={r.a} sub={a} tree={r.a_ids.length > 1} />
                   </td>
@@ -369,7 +439,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                           취소
                         </button>
                       </span>
-                    ) : (
+                    ) : review ? null : (
                       <>
                         {droppable(r, "b") && (
                           <button

@@ -4,7 +4,7 @@ import { fmtBytes } from "./format";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { doneSide, overlaps, type FolderHit, type PairRow } from "./twoFoldersLogic";
+import { doneSide, droppable, overlaps, verdict, type FolderHit, type PairRow } from "./twoFoldersLogic";
 
 /**
  * 두 폴더 비교 — «후보1번/연도별»과 «후보2번»처럼 내가 고른 두 폴더 아래를 견준다.
@@ -50,24 +50,25 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     };
   }, [a, b, tick]);
 
-  /// 같은 폴더 짝에서 한쪽에 제외 표시. side = 제외할 쪽
+  /// 짝에서 한쪽에 제외 표시. side = 제외할 쪽 — 그쪽 사진이 반대쪽에 다 있는 짝만
   const mark = useCallback(
     async (targets: PairRow[], side: "a" | "b") => {
       // 처리된 짝은 뺀다 — B쪽을 지운 줄에서 A쪽을 또 누르면 방금 남긴 B가 뒤집힌다
-      const pairs = targets.filter((r) => r.same && r.a && r.b && doneSide(r) === null);
+      const pairs = targets.filter((r) => droppable(r, side) && doneSide(r) === null);
       if (pairs.length === 0) {
-        toast("제외 표시할 똑같은 폴더 짝이 없습니다");
+        toast(`${side === "a" ? "A" : "B"}쪽을 지워도 되는 짝이 없습니다`);
         return;
       }
       const drop = (r: PairRow) => (side === "a" ? r.a! : r.b!);
-      const keep = (r: PairRow) => (side === "a" ? r.b! : r.a!);
+      const dropIds = (r: PairRow) => (side === "a" ? r.a_ids : r.b_ids);
+      const keepIds = (r: PairRow) => (side === "a" ? r.b_ids : r.a_ids);
       const risky = pairs.filter((r) => settled(drop(r)));
       const bytes = pairs.reduce((s, r) => s + r.bytes, 0);
-      const files = pairs.reduce((s, r) => s + r.common, 0);
+      const files = pairs.reduce((s, r) => s + (side === "a" ? r.files_a : r.files_b), 0);
       const ok = await ask({
         title: `${side === "a" ? "A" : "B"}쪽 폴더 ${pairs.length.toLocaleString()}개의 사진 ${files.toLocaleString()}장에 제외 표시`,
         lines: [
-          `${side === "a" ? "B" : "A"}쪽 똑같은 폴더는 그대로 둡니다 · ${fmtBytes(bytes)} 빔`,
+          `${side === "a" ? "B" : "A"}쪽은 그대로 둡니다(하위 폴더 포함) · ${fmtBytes(bytes)} 빔`,
           ...(risky.length
             ? [`주의: ${risky.length}개는 NAS 동기화 폴더입니다 — 휴지통으로 옮기면 NAS에서도 지워집니다`]
             : []),
@@ -82,7 +83,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       let r: PairsApplied;
       try {
         r = await invoke<PairsApplied>("cull_folder_pairs_apply", {
-          pairs: pairs.map((p) => [keep(p).folder_id, drop(p).folder_id]),
+          pairs: pairs.map((p) => ({ keep: keepIds(p), drop: dropIds(p) })),
         });
       } catch (e) {
         setMarking(null);
@@ -116,12 +117,14 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   );
 
   const same = useMemo(() => rows?.filter((r) => r.same) ?? [], [rows]);
-  const todo = useMemo(() => same.filter((r) => doneSide(r) === null), [same]);
-  const sameBytes = todo.reduce((s, r) => s + r.bytes, 0);
+  /// 지워도 되는 짝 — B 쪽 / A 쪽
+  const todoB = useMemo(() => (rows ?? []).filter((r) => droppable(r, "b") && doneSide(r) === null), [rows]);
+  const todoA = useMemo(() => (rows ?? []).filter((r) => droppable(r, "a") && doneSide(r) === null), [rows]);
+  const sameBytes = todoB.reduce((s, r) => s + r.bytes, 0);
   /// 폴더 비교로 붙인 표시(남김·제외)를 되돌린다 — 휴지통에 가기 전이면 언제든
   const unmark = useCallback(
     async (targets: PairRow[]) => {
-      const ids = [...new Set(targets.flatMap((r) => [r.a?.folder_id, r.b?.folder_id]).filter((x): x is number => x != null))];
+      const ids = [...new Set(targets.flatMap((r) => [...r.a_ids, ...r.b_ids]))];
       const n = targets.reduce((s, r) => s + r.flagged_a + r.flagged_b, 0);
       if (ids.length === 0 || n === 0) return;
       const ok = await ask({
@@ -151,7 +154,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   /// 라이브러리 전체가 아니라 이 비교의 폴더들만
   const sweep = useCallback(async () => {
     if (!rows || flagged === 0) return;
-    const folderIds = [...new Set(rows.flatMap((r) => [r.a?.folder_id, r.b?.folder_id]).filter((x): x is number => x != null))];
+    const folderIds = [...new Set(rows.flatMap((r) => [...r.a_ids, ...r.b_ids]))];
     const ok = await ask({
       title: `제외한 ${flagged.toLocaleString()}장을 휴지통으로 옮깁니다`,
       lines: [
@@ -204,13 +207,12 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         )}
         {rows && !marking && (
           <span className="text-fg-dim tabular-nums">
-            똑같은 폴더 <b className="text-fg">{same.length.toLocaleString()}</b>쌍
-            {same.length > todo.length && (
-              <> · 처리됨 {(same.length - todo.length).toLocaleString()}</>
-            )}
-            {todo.length > 0 && (
+            B쪽을 지워도 되는 짝 <b className="text-fg">{todoB.length.toLocaleString()}</b>
+            {same.length > 0 && <> (그중 똑같음 {same.length.toLocaleString()})</>}
+            {todoA.length > 0 && <> · A쪽을 지워도 되는 짝 {todoA.length.toLocaleString()}</>}
+            {todoB.length > 0 && (
               <>
-                {" "}· 한쪽을 지우면 <b className="text-keep">{fmtBytes(sameBytes)}</b> 빔
+                {" "}· B쪽을 지우면 <b className="text-keep">{fmtBytes(sameBytes)}</b> 빔
               </>
             )}
           </span>
@@ -236,23 +238,25 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
             </button>
           </>
         )}
-        {todo.length > 0 && (
-          <>
-            <button
-              onClick={() => mark(todo, "b")}
-              disabled={locked}
-              className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
-            >
-              B쪽 똑같은 폴더 전부 제외 표시
-            </button>
-            <button
-              onClick={() => mark(todo, "a")}
-              disabled={locked}
-              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
-            >
-              A쪽 전부
-            </button>
-          </>
+        {todoB.length > 0 && (
+          <button
+            onClick={() => mark(todoB, "b")}
+            disabled={locked}
+            title="B쪽 사진이 전부 A쪽에 있는 짝 — B쪽(하위 폴더 포함)에 제외 표시"
+            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
+          >
+            B쪽 전부 제외 표시 ({todoB.length.toLocaleString()}짝)
+          </button>
+        )}
+        {todoA.length > 0 && (
+          <button
+            onClick={() => mark(todoA, "a")}
+            disabled={locked}
+            title="A쪽 사진이 전부 B쪽에 있는 짝 — A쪽(하위 폴더 포함)에 제외 표시"
+            className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+          >
+            A쪽 전부 ({todoA.length.toLocaleString()}짝)
+          </button>
         )}
       </div>
 
@@ -286,10 +290,10 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                   className={`border-t border-line align-middle ${done ? "opacity-45" : ""}`}
                 >
                   <td className="py-1.5 px-4 max-w-[380px]">
-                    <Cell f={r.a} sub={a} />
+                    <Cell f={r.a} sub={a} tree={r.a_ids.length > 1} />
                   </td>
                   <td className="py-1.5 pr-3 max-w-[380px]">
-                    <Cell f={r.b} sub={b} />
+                    <Cell f={r.b} sub={b} tree={r.b_ids.length > 1} />
                   </td>
                   <td className="py-1.5 pr-3 text-right whitespace-nowrap text-fg-dim">
                     {r.same
@@ -299,18 +303,20 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                         : (r.files_a || r.files_b).toLocaleString()}
                   </td>
                   <td className="py-1.5 pr-3 whitespace-nowrap">
-                    {r.same ? (
-                      <span className="text-ok font-semibold">✓ 똑같음 · {fmtBytes(r.bytes)}</span>
-                    ) : r.a && r.b ? (
-                      <span className="text-keep">
-                        {r.common.toLocaleString()}장 똑같음{" "}
-                        <span className="text-fg-mute">— 나머지는 개별 비교에서</span>
-                      </span>
-                    ) : r.a ? (
-                      <span className="text-fg-mute">A에만 있음</span>
-                    ) : (
-                      <span className="text-fg-mute">B에만 있음</span>
-                    )}
+                    {(() => {
+                      const v = verdict(r);
+                      if (v.kind === "same")
+                        return <span className="text-ok font-semibold">{v.text} · {fmtBytes(r.bytes)}</span>;
+                      if (v.kind === "b_in_a" || v.kind === "a_in_b")
+                        return <span className="text-ok">{v.text} · {fmtBytes(r.bytes)}</span>;
+                      if (v.kind === "partial")
+                        return (
+                          <span className="text-keep">
+                            {v.text} <span className="text-fg-mute">— 나머지는 개별 비교에서</span>
+                          </span>
+                        );
+                      return <span className="text-fg-mute">{v.text}</span>;
+                    })()}
                   </td>
                   <td className="py-1.5 pr-4 text-right whitespace-nowrap">
                     {done ? (
@@ -326,26 +332,28 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                         </button>
                       </span>
                     ) : (
-                      r.same && (
-                        <>
+                      <>
+                        {droppable(r, "b") && (
                           <button
                             onClick={() => mark([r], "b")}
                             disabled={locked}
                             className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong mr-1 disabled:opacity-40"
-                            title="B쪽 폴더의 사진에 제외 표시"
+                            title="B쪽 폴더(하위 포함)의 사진에 제외 표시 — 전부 A쪽에 있습니다"
                           >
                             B쪽 제외
                           </button>
+                        )}
+                        {droppable(r, "a") && (
                           <button
                             onClick={() => mark([r], "a")}
                             disabled={locked}
                             className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
-                            title="A쪽 폴더의 사진에 제외 표시"
+                            title="A쪽 폴더(하위 포함)의 사진에 제외 표시 — 전부 B쪽에 있습니다"
                           >
                             A쪽 제외
                           </button>
-                        </>
-                      )
+                        )}
+                      </>
                     )}
                   </td>
                 </tr>
@@ -360,7 +368,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
 }
 
 /** 폴더 칸 — 고른 뿌리 아래 경로만 보인다 */
-function Cell({ f, sub }: { f: FolderIn | null; sub: FolderHit | null }) {
+function Cell({ f, sub, tree }: { f: FolderIn | null; sub: FolderHit | null; tree?: boolean }) {
   if (!f) return <span className="text-fg-faint">—</span>;
   // 고른 뿌리 아래 경로만 — 뿌리가 라이브러리 자체(경로 "")면 전체를 보인다
   const rootPath = sub?.path ?? "";
@@ -372,6 +380,7 @@ function Cell({ f, sub }: { f: FolderIn | null; sub: FolderHit | null }) {
     <span className="truncate block" title={`${f.library} / ${f.folder || "/"}`}>
       {settled(f) && <span className="text-keep text-[10px] mr-1">NAS</span>}
       {shown}
+      {tree && <span className="text-fg-mute text-[10.5px] ml-1" title="하위 폴더까지 합쳐서 본 줄">/…</span>}
     </span>
   );
 }

@@ -173,31 +173,36 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
     Ok(out)
 }
 
-/// 폴더 묶음 하나를 처리한다 — `keep` 폴더의 파일은 남김, `drops` 폴더의 파일은 지우기 표시.
+/// 폴더 묶음 하나를 처리한다 — `keep` 폴더의 파일은 남김, `drops` 폴더의 파일은 제외 표시.
 /// 이 폴더들 안에서만 얽힌 완전 중복 무리는 확정으로 돌려 개별 비교에 다시 안 나오게.
 pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result<ApplyAll> {
-    if drops.contains(&keep) || drops.is_empty() {
+    apply_trees(tx, &[keep], drops)
+}
+
+/// 폴더 «나무» 둘 — 남길 쪽 폴더들(`keep`)과 제외할 쪽 폴더들(`drop`). 두 폴더 비교가 하위
+/// 폴더까지 통째로 짝지을 때 쓴다. 제외는 **남길 쪽 나무 어딘가에 같은 내용이 지금 있는**
+/// 파일에만 붙는다 — 남길 쪽에 없는 사진이 지워지는 일은 없다 (리뷰 C12)
+pub fn apply_trees(tx: &Transaction, keep: &[i64], drop: &[i64]) -> rusqlite::Result<ApplyAll> {
+    if keep.is_empty() || drop.is_empty() || keep.iter().any(|k| drop.contains(k)) {
         return Err(rusqlite::Error::InvalidQuery);
     }
+    let keep_list = keep.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    let drop_list = drop.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
     let kept = tx.execute(
-        "UPDATE files SET culling_flag = 1 WHERE folder_id = ?1 AND trashed_at IS NULL",
-        [keep],
+        &format!("UPDATE files SET culling_flag = 1 WHERE folder_id IN ({keep_list}) AND trashed_at IS NULL"),
+        [],
     )?;
-    // 남길 폴더에 **같은 내용이 지금 있는** 파일만 지우기 표시 — 목록을 본 뒤 남길 폴더에서
-    // 파일이 지워졌거나 바뀌었으면 그 사본은 마지막 한 벌이다 (리뷰 C12)
-    let mut rejected = 0;
-    for d in drops {
-        rejected += tx.execute(
+    let rejected = tx.execute(
+        &format!(
             "UPDATE files SET culling_flag = 2
-             WHERE folder_id = ?1 AND trashed_at IS NULL AND culling_flag <> 1
+             WHERE folder_id IN ({drop_list}) AND trashed_at IS NULL AND culling_flag <> 1
                AND full_hash IS NOT NULL
                AND full_hash IN (SELECT k.full_hash FROM files k
-                                 WHERE k.folder_id = ?2 AND k.trashed_at IS NULL AND k.full_hash IS NOT NULL)",
-            params![d, keep],
-        )?;
-    }
-    let all: Vec<i64> = std::iter::once(keep).chain(drops.iter().copied()).collect();
-    let list = all.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+                                 WHERE k.folder_id IN ({keep_list}) AND k.trashed_at IS NULL AND k.full_hash IS NOT NULL)"
+        ),
+        [],
+    )?;
+    let list = format!("{keep_list},{drop_list}");
     let groups = tx.execute(
         &format!(
             "UPDATE groups SET state = 1 WHERE kind = 0 AND state = 0
@@ -310,10 +315,10 @@ pub struct PairsApplied {
     pub rejected: usize,
 }
 
-pub fn apply_pairs(tx: &Transaction, pairs: &[(i64, i64)]) -> rusqlite::Result<PairsApplied> {
+pub fn apply_pairs(tx: &Transaction, pairs: &[(Vec<i64>, Vec<i64>)]) -> rusqlite::Result<PairsApplied> {
     let mut out = PairsApplied::default();
-    for &(keep, drop) in pairs {
-        match apply_set(tx, keep, &[drop]) {
+    for (keep, drop) in pairs {
+        match apply_trees(tx, keep, drop) {
             Ok(r) => {
                 out.applied += 1;
                 out.kept += r.kept;
@@ -342,9 +347,16 @@ pub struct PairRow {
     pub common: i64,
     /// 같은 쪽 하나를 지우면 비는 용량(same 일 때) — 아니면 공통 파일의 용량
     pub bytes: i64,
-    /// 이미 지우기 표시된 파일 수 — 한쪽이 전부면 그 짝은 «처리됨»
+    /// 이미 제외 표시된 파일 수 — 한쪽이 전부면 그 짝은 «처리됨»
     pub flagged_a: i64,
     pub flagged_b: i64,
+    /// B 쪽 사진이 전부 A 쪽(하위 폴더 포함)에 있다 — B 를 지워도 잃는 것이 없다
+    pub b_in_a: bool,
+    /// A 쪽 사진이 전부 B 쪽에 있다
+    pub a_in_b: bool,
+    /// 이 줄이 대표하는 폴더 행들(하위 폴더 포함) — 표시·휴지통으로가 이 목록에 건다
+    pub a_ids: Vec<i64>,
+    pub b_ids: Vec<i64>,
 }
 
 struct Agg {
@@ -439,10 +451,51 @@ pub fn roots_overlap((a_vol, a_rel): (&str, &str), (b_vol, b_rel): (&str, &str))
     under(a_rel, b_rel) || under(b_rel, a_rel)
 }
 
+/// 폴더 나무 하나의 «내용» — 하위 폴더까지 합친 해시 다중집합
+struct Tree {
+    /// 이 나무에 든 폴더들의 순번(`Agg` 목록 기준)
+    members: Vec<usize>,
+    files: i64,
+    bytes: i64,
+    flagged: i64,
+    counts: HashMap<String, i64>,
+    all_hashed: bool,
+}
+
+fn tree_of(aggs: &[Agg], root: usize) -> Tree {
+    let sub = &aggs[root].sub;
+    let members: Vec<usize> = (0..aggs.len())
+        .filter(|&i| i == root || sub.is_empty() || aggs[i].sub.starts_with(&format!("{sub}/")))
+        .collect();
+    let mut t = Tree { members: Vec::new(), files: 0, bytes: 0, flagged: 0, counts: HashMap::new(), all_hashed: true };
+    for &i in &members {
+        let g = &aggs[i];
+        t.files += g.files;
+        t.bytes += g.bytes;
+        t.flagged += g.flagged;
+        t.all_hashed &= g.all_hashed;
+        for h in &g.hashes {
+            *t.counts.entry(h.clone()).or_default() += 1;
+        }
+    }
+    t.members = members;
+    t
+}
+
+/// `inner` 의 파일이 전부 `outer` 에 있나 (같은 내용은 장수까지)
+fn contained(inner: &Tree, outer: &Tree) -> bool {
+    inner.all_hashed
+        && inner.files > 0
+        && inner.counts.iter().all(|(h, n)| outer.counts.get(h).copied().unwrap_or(0) >= *n)
+}
+
 /// 두 폴더(와 그 아래)를 견준다 — «후보1번/연도별»과 «후보2번»처럼.
 ///
-/// 내용이 완전히 같은 폴더끼리 짝(same), 이름이 같은데 내용이 다른 폴더끼리는 공통
-/// 파일 수와 함께 짝(partial), 한쪽에만 있는 폴더는 홀로. 같은 쪽 큰 것부터.
+/// 폴더는 **나무째** 본다: 하위 폴더까지 합친 내용으로 «B 쪽이 A 에 다 있다 / A 쪽이 B 에 다
+/// 있다 / 둘 다(똑같다)»를 가린다. 한쪽이 다른 쪽에 다 들어 있으면 그 나무는 한 줄로 끝나고
+/// 하위 폴더는 따로 안 나온다 — 실측: `2011-04-24(주말농장-2번째)` 는 후보1번에만 «블로그»
+/// 하위 폴더가 더 있어 «똑같음»이 아니었지만 후보2번 쪽 191장은 전부 후보1번에 있었다.
+/// 어느 쪽도 다른 쪽을 품지 못하면 «부분»으로 적고 하위 폴더는 저마다 제 줄로 내려간다.
 pub fn compare_two(
     c: &Connection,
     (a_vol, a_rel): (&str, &str),
@@ -453,96 +506,115 @@ pub fn compare_two(
     }
     let a = folders_under(c, a_vol, a_rel)?;
     let b = folders_under(c, b_vol, b_rel)?;
-    // B 쪽 서명·이름 색인
-    let sig = |g: &Agg| -> Option<String> {
-        (g.files > 0 && g.all_hashed && !g.has_children).then(|| g.hashes.join(","))
-    };
-    let mut b_by_sig: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut b_by_sub: HashMap<String, usize> = HashMap::new();
+    let mut b_by_sub: HashMap<&str, usize> = HashMap::new();
     for (i, g) in b.iter().enumerate() {
-        if let Some(s) = sig(g) {
-            b_by_sig.entry(s).or_default().push(i);
-        }
-        b_by_sub.entry(g.sub.clone()).or_insert(i);
+        b_by_sub.entry(g.sub.as_str()).or_insert(i);
     }
+    let mut used_a = vec![false; a.len()];
     let mut used_b = vec![false; b.len()];
     // (정렬 열쇠 = 뿌리 기준 경로, 줄)
     let mut out: Vec<(String, PairRow)> = Vec::new();
-    for ga in &a {
-        if ga.files == 0 {
-            continue; // 사진이 바로 아래 없는 폴더(치워서 비었거나 하위만 있는) — 하위는 제 줄로 나온다
+    // 경로 순으로 — 위 폴더가 먼저 나와 나무째 짝지어지면 아래는 건너뛴다
+    let mut order: Vec<usize> = (0..a.len()).collect();
+    order.sort_by(|&x, &y| a[x].sub.cmp(&a[y].sub));
+    for ia in order {
+        if used_a[ia] {
+            continue;
         }
-        // 1) 내용이 같은 B 폴더 — 이름까지 같은 것을 먼저
-        if let Some(s) = sig(ga) {
-            if let Some(cands) = b_by_sig.get(&s) {
-                let pick = cands
-                    .iter()
-                    .copied()
-                    .filter(|&i| !used_b[i])
-                    .min_by_key(|&i| (b[i].sub != ga.sub, i));
-                if let Some(i) = pick {
-                    used_b[i] = true;
-                    out.push((ga.sub.clone(), PairRow {
-                        a: Some(ga.info.clone()),
-                        b: Some(b[i].info.clone()),
-                        files_a: ga.files,
-                        files_b: b[i].files,
-                        same: true,
-                        common: ga.files,
-                        bytes: ga.bytes,
-                        flagged_a: ga.flagged,
-                        flagged_b: b[i].flagged,
-                    }));
-                    continue;
-                }
-            }
-        }
-        // 2) 이름이 같은 B 폴더 — 공통 파일 수
-        if let Some(&i) = b_by_sub.get(&ga.sub) {
-            if !used_b[i] {
-                used_b[i] = true;
-                let gb = &b[i];
-                let mut counts: HashMap<&str, i64> = HashMap::new();
-                for h in &gb.hashes {
-                    *counts.entry(h.as_str()).or_default() += 1;
-                }
-                let mut common = 0i64;
-                let mut bytes = 0i64;
-                let per = if ga.files > 0 { ga.bytes / ga.files } else { 0 };
-                for h in &ga.hashes {
-                    if let Some(n) = counts.get_mut(h.as_str()) {
-                        if *n > 0 {
-                            *n -= 1;
-                            common += 1;
-                            bytes += per;
-                        }
-                    }
-                }
+        let ga = &a[ia];
+        let Some(&ib) = b_by_sub.get(ga.sub.as_str()) else {
+            // 이름이 같은 짝이 없다 — 사진이 있으면 «A 에만»
+            if ga.files > 0 {
+                used_a[ia] = true;
                 out.push((ga.sub.clone(), PairRow {
                     a: Some(ga.info.clone()),
-                    b: Some(gb.info.clone()),
+                    b: None,
                     files_a: ga.files,
-                    files_b: gb.files,
+                    files_b: 0,
                     same: false,
-                    common,
-                    bytes,
+                    common: 0,
+                    bytes: 0,
                     flagged_a: ga.flagged,
-                    flagged_b: gb.flagged,
+                    flagged_b: 0,
+                    b_in_a: false,
+                    a_in_b: false,
+                    a_ids: vec![ga.info.folder_id],
+                    b_ids: Vec::new(),
                 }));
-                continue;
+            }
+            continue;
+        };
+        if used_b[ib] {
+            continue;
+        }
+        let ta = tree_of(&a, ia);
+        let tb = tree_of(&b, ib);
+        let b_in_a = contained(&tb, &ta);
+        let a_in_b = contained(&ta, &tb);
+        if b_in_a || a_in_b {
+            // 나무째 한 줄 — 하위 폴더는 이 줄이 대표한다
+            for &i in &ta.members {
+                used_a[i] = true;
+            }
+            for &i in &tb.members {
+                used_b[i] = true;
+            }
+            let common = ta.files.min(tb.files);
+            out.push((ga.sub.clone(), PairRow {
+                a: Some(ga.info.clone()),
+                b: Some(b[ib].info.clone()),
+                files_a: ta.files,
+                files_b: tb.files,
+                same: b_in_a && a_in_b,
+                common,
+                // 지울 수 있는 쪽의 용량 — 둘 다면 작은 쪽
+                bytes: if b_in_a && a_in_b { ta.bytes.min(tb.bytes) } else if b_in_a { tb.bytes } else { ta.bytes },
+                flagged_a: ta.flagged,
+                flagged_b: tb.flagged,
+                b_in_a,
+                a_in_b,
+                a_ids: ta.members.iter().map(|&i| a[i].info.folder_id).collect(),
+                b_ids: tb.members.iter().map(|&i| b[i].info.folder_id).collect(),
+            }));
+            continue;
+        }
+        // 부분 — 바로 아래 파일끼리 겹치는 수. 하위 폴더는 저마다 제 줄로
+        used_a[ia] = true;
+        used_b[ib] = true;
+        let gb = &b[ib];
+        if ga.files == 0 && gb.files == 0 {
+            continue;
+        }
+        let mut counts: HashMap<&str, i64> = HashMap::new();
+        for h in &gb.hashes {
+            *counts.entry(h.as_str()).or_default() += 1;
+        }
+        let mut common = 0i64;
+        let mut bytes = 0i64;
+        let per = if ga.files > 0 { ga.bytes / ga.files } else { 0 };
+        for h in &ga.hashes {
+            if let Some(n) = counts.get_mut(h.as_str()) {
+                if *n > 0 {
+                    *n -= 1;
+                    common += 1;
+                    bytes += per;
+                }
             }
         }
-        // 3) A 에만
         out.push((ga.sub.clone(), PairRow {
             a: Some(ga.info.clone()),
-            b: None,
+            b: Some(gb.info.clone()),
             files_a: ga.files,
-            files_b: 0,
+            files_b: gb.files,
             same: false,
-            common: 0,
-            bytes: 0,
+            common,
+            bytes,
             flagged_a: ga.flagged,
-            flagged_b: 0,
+            flagged_b: gb.flagged,
+            b_in_a: false,
+            a_in_b: false,
+            a_ids: vec![ga.info.folder_id],
+            b_ids: vec![gb.info.folder_id],
         }));
     }
     for (i, gb) in b.iter().enumerate() {
@@ -559,11 +631,14 @@ pub fn compare_two(
             bytes: 0,
             flagged_a: 0,
             flagged_b: gb.flagged,
+            b_in_a: false,
+            a_in_b: false,
+            a_ids: Vec::new(),
+            b_ids: vec![gb.info.folder_id],
         }));
     }
-    // 경로 순 — Finder 를 나란히 놓은 것처럼 읽힌다. «같은 것 → 부분 → 한쪽만, 용량 큰
-    // 순»으로 두었더니 «오름차순도 내림차순도 아니다»(사용자 지적)
-    out.sort_by(|x, y| x.0.cmp(&y.0).then(x.1.same.cmp(&y.1.same)));
+    // 경로 순 — Finder 를 나란히 놓은 것처럼 읽힌다 (사용자 지적: «오름차순도 내림차순도 아니다»)
+    out.sort_by(|x, y| x.0.cmp(&y.0));
     Ok(out.into_iter().map(|(_, r)| r).collect())
 }
 
@@ -811,11 +886,48 @@ mod tests {
         let s = &sets[0];
         let (keep, drop) = (s.folders[0].folder_id, s.folders[1].folder_id);
         let r = db
-            .transaction(|tx| apply_pairs(tx, &[(keep, keep), (keep, drop)]))
+            .transaction(|tx| apply_pairs(tx, &[(vec![keep], vec![keep]), (vec![keep], vec![drop])]))
             .unwrap();
         assert_eq!((r.applied, r.failed), (1, 1), "{r:?}");
         assert!(r.first_error.is_some());
         assert_eq!(r.rejected, 2);
+    }
+
+    /// 후보1번에만 «블로그» 하위 폴더가 더 있는 경우 — 후보2번 쪽은 전부 후보1번에 있으니
+    /// «B 쪽이 A 에 다 있음»으로 한 줄에 잡히고, 하위 폴더는 따로 안 나온다
+    #[test]
+    fn a_tree_that_contains_the_other_side_is_paired_whole() {
+        let (dir, db) = setup();
+        let blog = dir.path().join("a/블로그");
+        std::fs::create_dir_all(&blog).unwrap();
+        std::fs::write(blog.join("b1.jpg"), b"BLOG ".repeat(300)).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let root_of = |name: &str| -> (String, String, i64) {
+            db.read(|c| {
+                c.query_row(
+                    "SELECT volume_uuid, rel_path, id FROM folders WHERE rel_path LIKE ?1",
+                    [format!("%{name}")],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+            })
+            .unwrap()
+        };
+        let (a, b) = (root_of("a"), root_of("b"));
+        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&b.0, &b.1))).unwrap();
+        assert_eq!(rows.len(), 1, "하위 폴더 «블로그»는 제 줄로 안 나온다: {rows:?}");
+        let r = &rows[0];
+        assert!(r.b_in_a && !r.a_in_b && !r.same, "{r:?}");
+        assert_eq!((r.files_a, r.files_b), (3, 2), "A 는 나무째 3장");
+        assert_eq!(r.a_ids.len(), 2, "A 쪽 폴더 행 둘(a, a/블로그)");
+        assert_eq!(r.b_ids, vec![b.2]);
+        // 거꾸로 견줘도 같은 판정 — 이번엔 «A 쪽이 B 에 다 있음»
+        let rows = db.read(|c| compare_two(c, (&b.0, &b.1), (&a.0, &a.1))).unwrap();
+        assert!(rows[0].a_in_b && !rows[0].b_in_a);
+        // 나무째 표시 — B(2장) 제외, A 쪽은 남김. «블로그»의 한 장은 B 에 없으니 제외 대상이 아니다
+        let out = db.transaction(|tx| apply_trees(tx, &r.a_ids, &r.b_ids)).unwrap();
+        assert_eq!((out.kept, out.rejected), (3, 2), "{out:?}");
+        assert!(db.transaction(|tx| apply_trees(tx, &r.a_ids, &r.a_ids)).is_err(), "겹치는 나무는 거절");
     }
 
     #[test]
@@ -835,7 +947,7 @@ mod tests {
         // a 와 b 는 내용이 같다 — 뿌리끼리도 짝이 된다
         let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&b.0, &b.1))).unwrap();
         assert_eq!(rows.len(), 1, "{rows:?}");
-        assert!(rows[0].same && rows[0].common == 2);
+        assert!(rows[0].same && rows[0].b_in_a && rows[0].a_in_b && rows[0].common == 2);
         // a 와 d 는 한 장만 겹친다 — 뿌리 이름은 다르지만 뿌리끼리는 sub 가 같다("")
         let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&d.0, &d.1))).unwrap();
         assert_eq!(rows.len(), 1, "{rows:?}");

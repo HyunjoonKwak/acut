@@ -364,12 +364,20 @@ pub async fn cull_folder_set_unapply(
 #[tauri::command]
 pub async fn cull_folder_pairs_apply(
     state: State<'_, AppState>,
-    pairs: Vec<(i64, i64)>,
+    pairs: Vec<PairIds>,
 ) -> Result<folders::PairsApplied, String> {
     if pairs.is_empty() {
         return Ok(folders::PairsApplied::default());
     }
+    let pairs: Vec<(Vec<i64>, Vec<i64>)> = pairs.into_iter().map(|p| (p.keep, p.drop)).collect();
     state.db.transaction(|tx| folders::apply_pairs(tx, &pairs)).map_err(err)
+}
+
+/// 두 폴더 비교의 짝 하나 — 남길 쪽 폴더 행들과 제외할 쪽 폴더 행들(하위 폴더 포함)
+#[derive(Debug, serde::Deserialize)]
+pub struct PairIds {
+    pub keep: Vec<i64>,
+    pub drop: Vec<i64>,
 }
 
 /// 폴더 비교 — 내용이 완전히 같은 폴더 묶음들.

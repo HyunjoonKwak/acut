@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { doneSide, overlaps, type FolderHit, type PairRow } from "./twoFoldersLogic.ts";
+import { doneSide, droppable, overlaps, verdict, type FolderHit, type PairRow } from "./twoFoldersLogic.ts";
 
 const hit = (volume_uuid: string, vol_rel: string): FolderHit => ({
   id: null,
@@ -23,7 +23,24 @@ const pair = (o: Partial<PairRow>): PairRow => ({
   bytes: 30,
   flagged_a: 0,
   flagged_b: 0,
+  b_in_a: true,
+  a_in_b: true,
+  a_ids: [1],
+  b_ids: [2],
   ...o,
+});
+
+test("한쪽이 다른 쪽에 다 들어 있으면 그쪽만 지울 수 있다 — 하위 폴더까지 합쳐 본 결과", () => {
+  const r = pair({ same: false, b_in_a: true, a_in_b: false, files_a: 207, files_b: 191 });
+  assert.equal(droppable(r, "b"), true);
+  assert.equal(droppable(r, "a"), false);
+  assert.equal(verdict(r).kind, "b_in_a");
+  assert.equal(verdict(pair({})).kind, "same");
+  assert.equal(droppable(pair({}), "a"), true, "똑같으면 어느 쪽이든");
+  const partial = pair({ same: false, b_in_a: false, a_in_b: false, common: 3 });
+  assert.equal(verdict(partial).text, "3장 똑같음");
+  assert.equal(droppable(partial, "b"), false, "부분만 겹치면 지울 수 없다");
+  assert.equal(verdict(pair({ b: null })).kind, "a_only");
 });
 
 test("한쪽이 다른 쪽의 위 폴더면 겹친다", () => {

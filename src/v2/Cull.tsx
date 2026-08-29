@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Viewer from "./Viewer";
 import { fmtBytes } from "./format";
+import { useJob } from "./jobStore";
 
 type Group = {
   id: number;
@@ -47,6 +48,29 @@ export default function Cull({ onClose }: { onClose: () => void }) {
   );
   const [summary, setSummary] = useState<Summary[]>([]);
   const [busy, setBusy] = useState("");
+  // 상태바의 잡 — 고르기 화면을 닫았다 열어도 «도는 중»을 안다
+  const job = useJob((s) => s.job);
+  const jobRunning = job?.label.startsWith("고르기") ?? false;
+  const scanning = busy !== "" || jobRunning;
+  const scanText =
+    busy ||
+    (job
+      ? job.total > 0
+        ? `${job.label} ${job.done.toLocaleString()}/${job.total.toLocaleString()}`
+        : job.label
+      : "찾는 중…");
+  // 경과 시간 — 숫자가 안 바뀌는 단계(전체 해시)에서도 «살아 있음»을 보인다.
+  // 1초마다 센다. 화면을 다시 열면 그때부터 센다 — 시작 시각은 뒷단이 모른다.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!scanning) return;
+    const t0 = Date.now();
+    const id = window.setInterval(
+      () => setElapsed(Math.floor((Date.now() - t0) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(id);
+  }, [scanning]);
   /// 크게 보기 — 어느 그룹의 몇 번째. 그룹이 바뀌면 저절로 닫힌다.
   const [viewer, setViewer] = useState<{ groupId: number; at: number } | null>(
     null,
@@ -265,7 +289,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
             </button>
           );
         })}
-        {busy ? (
+        {scanning ? (
           // 찾는 중에는 멈출 수 있어야 한다. 해시를 읽느라 오래 걸린다.
           <button
             onClick={async () => {
@@ -279,6 +303,7 @@ export default function Cull({ onClose }: { onClose: () => void }) {
         ) : (
           <button
             onClick={() => {
+              setElapsed(0);
               setBusy("찾는 중…");
               invoke("cull_scan").catch((e) => setBusy(String(e)));
             }}
@@ -287,8 +312,12 @@ export default function Cull({ onClose }: { onClose: () => void }) {
             다시 찾기
           </button>
         )}
-        {busy && (
-          <span className="text-keep text-[12px] tabular-nums">{busy}</span>
+        {scanning && (
+          <span className="flex items-center gap-2 text-keep text-[12px] tabular-nums">
+            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" />
+            {scanText}
+            <span className="text-fg-mute">· {fmtElapsed(elapsed)}</span>
+          </span>
         )}
         <div className="flex-1" />
         <span className="text-[12px] text-fg-mute tabular-nums">
@@ -327,10 +356,19 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       <div className="flex-1 relative min-h-0">
         <div className="absolute inset-0 overflow-y-auto p-4">
           {!cur && (
-            <div className="h-full flex items-center justify-center text-fg-mute">
-              {busy
-                ? busy
-                : "정리할 그룹이 없습니다 — 「다시 찾기」를 눌러보세요"}
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute">
+              {scanning ? (
+                <>
+                  <i className="w-3 h-3 rounded-full bg-keep animate-pulse" />
+                  <div className="text-fg-dim tabular-nums">{scanText}</div>
+                  <div className="text-[12px] tabular-nums">
+                    {fmtElapsed(elapsed)} 지남 — 디스크를 읽는 동안은 숫자가
+                    단계마다 갱신됩니다. 멈춰도 읽은 해시는 남습니다.
+                  </div>
+                </>
+              ) : (
+                "정리할 그룹이 없습니다 — 「다시 찾기」를 눌러보세요"
+              )}
             </div>
           )}
           {cur && (
@@ -449,4 +487,10 @@ export default function Cull({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   );
+}
+
+/** 경과 시간 — «3분 12초» */
+function fmtElapsed(sec: number): string {
+  const m = Math.floor(sec / 60);
+  return m > 0 ? `${m}분 ${sec % 60}초` : `${sec}초`;
 }

@@ -5,6 +5,7 @@
 
 use crate::api::{err, AppState};
 use crate::cull::{burst, dedup, junk, scene};
+use super::job;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -51,9 +52,15 @@ pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
+    // 스캔·벡터와 같은 스위치 — 같이 돌면 DB와 디스크를 다툰다. 상태바에 보이고
+    // 창이 뒤로 가도 App Nap에 걸리지 않는다 (해시는 한 시간도 걸린다).
+    let Some(guard) = job::try_start(&state.running, "에이컷 고르기") else {
+        return Err("다른 일이 도는 중입니다 — 끝난 뒤 «다시 찾기»를 눌러 주세요".into());
+    };
     cancel.store(false, Ordering::Relaxed);
 
     std::thread::spawn(move || {
+        let _guard = guard;
         // 1. 잡동사니 — 파일을 열지 않는다. 즉시 끝난다
         match junk::scan(&db) {
             Ok(p) => {

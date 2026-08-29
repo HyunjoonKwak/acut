@@ -88,7 +88,7 @@ export default function StatusActions({
             <button
               onClick={unmarkExcluded}
               title={`취소 = 제외 표시 ${toClean?.files.toLocaleString()}장을 지웁니다 — 파일은 그대로, 미판정으로`}
-              className="h-5 px-2 rounded text-fg-dim ring-1 ring-line-strong hover:bg-hover"
+              className="h-5 px-2 rounded bg-accent text-accent-fg font-semibold"
             >
               취소
             </button>

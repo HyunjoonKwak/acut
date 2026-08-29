@@ -74,23 +74,26 @@ export default function StatusActions({
           </button>
         </>
       )}
-      {!hasJob && !viewTrash && (toClean?.files ?? 0) > 0 && unmarkExcluded && (
-        <button
-          onClick={unmarkExcluded}
-          title={`${libName ?? "모든 라이브러리"}에서 제외 표시한 ${toClean?.files.toLocaleString()}장의 표시를 지웁니다 — 파일은 그대로`}
-          className="h-5 px-2 rounded text-fg-dim ring-1 ring-line-strong hover:bg-hover"
-        >
-          제외 표시 취소
-        </button>
-      )}
+      {/* 제외 표시의 짝 — «확정»은 휴지통으로, «취소»는 표시만 지움. 양옆 경계선으로 사진 정보·다른 단추와 가른다 */}
       {!hasJob && !viewTrash && (toClean?.files ?? 0) > 0 && (
-        <button
-          onClick={cleanExcluded}
-          title={`${libName ?? "모든 라이브러리"}에서 제외 표시한 ${toClean?.files.toLocaleString()}장(${fmtBytes(toClean?.bytes ?? 0)})을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다`}
-          className="h-5 px-2 rounded bg-keep text-keep-fg font-semibold"
-        >
-          {libName ?? "전체"}에서 제외한 {toClean?.files.toLocaleString()}장 휴지통으로
-        </button>
+        <span className="flex items-center gap-1.5 pl-3 pr-3 border-l border-r border-line-strong">
+          <button
+            onClick={cleanExcluded}
+            title={`확정 = ${libName ?? "모든 라이브러리"}에서 제외 표시한 ${toClean?.files.toLocaleString()}장(${fmtBytes(toClean?.bytes ?? 0)})을 라이브러리 안 휴지통으로 옮깁니다 — 휴지통에서 되돌릴 수 있습니다`}
+            className="h-5 px-2 rounded bg-keep text-keep-fg font-semibold"
+          >
+            확정 ({toClean?.files.toLocaleString()})
+          </button>
+          {unmarkExcluded && (
+            <button
+              onClick={unmarkExcluded}
+              title={`취소 = 제외 표시 ${toClean?.files.toLocaleString()}장을 지웁니다 — 파일은 그대로, 미판정으로`}
+              className="h-5 px-2 rounded text-fg-dim ring-1 ring-line-strong hover:bg-hover"
+            >
+              취소
+            </button>
+          )}
+        </span>
       )}
       {!hasJob && nasNew && (
         <button

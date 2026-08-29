@@ -32,16 +32,14 @@ describe("상태바 오른쪽", () => {
     expect(noop.stopJob).toHaveBeenCalled();
   });
 
-  it("제외한 것이 있으면 치우기 버튼이 뜬다 — 범위(전체/이 라이브러리)를 이름에 단다", async () => {
+  it("제외한 것이 있으면 «확정 (N)» 과 «취소» 가 짝으로 뜬다 — 확정은 휴지통으로, 취소는 표시만 지움", async () => {
     useData.setState({ toClean: { files: 12, bytes: 3_000_000 } });
     render(<StatusActions {...noop} />);
-    await userEvent.click(
-      screen.getByRole("button", { name: /제외한 12장 휴지통으로$/ }),
-    );
+    const ok = screen.getByRole("button", { name: "확정 (12)" });
+    expect(ok.title).toMatch(/휴지통으로/);
+    await userEvent.click(ok);
     expect(noop.cleanExcluded).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /^전체에서 제외한 12장 휴지통으로$/ })).toBeInTheDocument();
-    // «휴지통으로» 옆엔 늘 «제외 표시 취소»가 나란히 — 표시만 지우는 반대 단추
-    await userEvent.click(screen.getByRole("button", { name: "제외 표시 취소" }));
+    await userEvent.click(screen.getByRole("button", { name: "취소" }));
     expect(noop.unmarkExcluded).toHaveBeenCalled();
   });
 

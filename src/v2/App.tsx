@@ -552,6 +552,7 @@ export default function App() {
             restoreAll={ops.restoreAll}
             emptyTrash={ops.emptyTrash}
             cleanExcluded={ops.cleanExcluded}
+            unmarkExcluded={ops.unmarkExcluded}
             undoLast={ops.undoLast}
           />
         </StatusBar>

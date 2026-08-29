@@ -228,6 +228,7 @@ pub fn run() {
             api::cull::cull_apply_pair,
             api::cull::cull_folder_pairs_apply,
             api::cull::cull_folder_set_unapply,
+            api::trash::files_unmark_excluded,
             api::cull::cull_folder_sets,
             api::cull::cull_folder_set_apply,
             api::cull::cull_compare_folders,

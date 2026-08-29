@@ -92,6 +92,28 @@ export function useOps(cb: {
     runTrashOp("trash_apply", { libraryId: libId }, "휴지통으로 옮기는 중…");
   }, [ask, runTrashOp]);
 
+  /// 제외 표시를 전부 되돌린다 — 휴지통으로 보내기 전. 파일은 그대로
+  const unmarkExcluded = useCallback(async () => {
+    const { toClean } = useData.getState();
+    const libId = usePrefs.getState().libId;
+    if (!toClean || toClean.files === 0) return;
+    const libName = useData.getState().libs.find((l) => l.id === libId)?.name ?? "모든 라이브러리";
+    const ok = await ask({
+      title: `${libName}의 제외 표시 ${toClean.files.toLocaleString()}장을 되돌립니다`,
+      lines: ["· 표시만 지웁니다 — 파일은 그대로, 미판정으로 돌아갑니다", "· 닫혀 있던 완전 중복 무리는 개별 비교에 다시 나옵니다"],
+      confirmLabel: "표시 취소",
+    });
+    if (!ok) return;
+    try {
+      const n = await invoke<number>("files_unmark_excluded", { libraryId: libId });
+      toast(`${n.toLocaleString()}장의 제외 표시를 되돌렸습니다`, "ok");
+      await after();
+      useData.getState().refreshTrash(libId);
+    } catch (e) {
+      toast(String(e), "drop");
+    }
+  }, [ask, after]);
+
   const emptyTrash = useCallback(async () => {
     const { trash } = useData.getState();
     const libId = usePrefs.getState().libId;
@@ -167,6 +189,7 @@ export function useOps(cb: {
     runTrashOp,
     trashFiles,
     cleanExcluded,
+    unmarkExcluded,
     emptyTrash,
     restoreAll,
     undoLast,

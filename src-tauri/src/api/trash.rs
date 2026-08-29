@@ -58,6 +58,34 @@ pub async fn trash_apply(
     trash::to_trash(&state.db, &ids, "제외한 사진 휴지통으로").map_err(err)
 }
 
+/// 제외 표시를 되돌린다 — 휴지통으로 보내기 전이면 언제든. 라이브러리 범위(없으면 전부).
+/// 닫혀 있던 완전 중복 무리도 다시 연다. 되돌린 장수를 돌려준다.
+#[tauri::command]
+pub async fn files_unmark_excluded(
+    state: State<'_, AppState>,
+    library_id: Option<i64>,
+) -> Result<usize, String> {
+    state
+        .db
+        .transaction(|tx| {
+            tx.execute_batch("DROP TABLE IF EXISTS temp.un; CREATE TEMP TABLE un(id INTEGER PRIMARY KEY);")?;
+            tx.execute(
+                "INSERT INTO temp.un SELECT fi.id FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+                 WHERE fi.culling_flag = 2 AND fi.trashed_at IS NULL AND (?1 IS NULL OR fo.library_id = ?1)",
+                [library_id],
+            )?;
+            let n = tx.execute("UPDATE files SET culling_flag = 0 WHERE id IN (SELECT id FROM temp.un)", [])?;
+            tx.execute(
+                "UPDATE groups SET state = 0 WHERE kind = 0 AND state = 1
+                   AND id IN (SELECT group_id FROM group_members WHERE file_id IN (SELECT id FROM temp.un))",
+                [],
+            )?;
+            tx.execute_batch("DROP TABLE temp.un;")?;
+            Ok(n)
+        })
+        .map_err(err)
+}
+
 /// 고른 것만 휴지통으로.
 #[tauri::command]
 pub async fn trash_files(

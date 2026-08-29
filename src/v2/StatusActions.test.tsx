@@ -11,6 +11,7 @@ const noop = {
   restoreAll: vi.fn(),
   emptyTrash: vi.fn(),
   cleanExcluded: vi.fn(),
+  unmarkExcluded: vi.fn(),
   undoLast: vi.fn(),
 };
 
@@ -39,6 +40,9 @@ describe("상태바 오른쪽", () => {
     );
     expect(noop.cleanExcluded).toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /^전체에서 제외한 12장 휴지통으로$/ })).toBeInTheDocument();
+    // «휴지통으로» 옆엔 늘 «제외 표시 취소»가 나란히 — 표시만 지우는 반대 단추
+    await userEvent.click(screen.getByRole("button", { name: "제외 표시 취소" }));
+    expect(noop.unmarkExcluded).toHaveBeenCalled();
   });
 
   it("«썸네일 없음»을 누르면 그것만 보고, 다시 누르면 풀린다", async () => {

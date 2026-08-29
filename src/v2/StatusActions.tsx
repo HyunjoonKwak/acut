@@ -18,12 +18,15 @@ export default function StatusActions({
   restoreAll,
   emptyTrash,
   cleanExcluded,
+  unmarkExcluded,
   undoLast,
 }: {
   stopJob: () => void;
   restoreAll: () => void;
   emptyTrash: () => void;
   cleanExcluded: () => void;
+  /** 제외 표시를 되돌린다 — «휴지통으로»의 반대. 표시가 있는 곳엔 늘 둘이 나란히 */
+  unmarkExcluded?: () => void;
   undoLast: () => void;
 }) {
   const busy = useData((s) => s.busy);
@@ -70,6 +73,15 @@ export default function StatusActions({
             영구히 비우기
           </button>
         </>
+      )}
+      {!hasJob && !viewTrash && (toClean?.files ?? 0) > 0 && unmarkExcluded && (
+        <button
+          onClick={unmarkExcluded}
+          title={`${libName ?? "모든 라이브러리"}에서 제외 표시한 ${toClean?.files.toLocaleString()}장의 표시를 지웁니다 — 파일은 그대로`}
+          className="h-5 px-2 rounded text-fg-dim ring-1 ring-line-strong hover:bg-hover"
+        >
+          제외 표시 취소
+        </button>
       )}
       {!hasJob && !viewTrash && (toClean?.files ?? 0) > 0 && (
         <button

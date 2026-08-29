@@ -32,6 +32,10 @@ export default function OffloadDialog({
   const [dest, setDest] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const targets = libs.filter((l) => l.id !== libraryId);
+  // 내사진·공용은 Drive가 보는 폴더 — 여기서 옮기면 NAS에서도 지워진다
+  const synced = [1, 2].includes(
+    libs.find((l) => l.id === libraryId)?.area ?? 3,
+  );
 
   useEffect(() => {
     invoke<Size>("folder_size", { folderId })
@@ -109,6 +113,13 @@ export default function OffloadDialog({
           </div>
         )}
 
+        {synced && (
+          <div className="mb-3 px-3 py-2 rounded-md text-[12px] text-drop ring-1 ring-drop/50 bg-drop/10">
+            이 라이브러리는 내사진/공용 — Drive Client가 NAS와 양방향으로 맞추는
+            폴더입니다. 여기서 옮기면 <b>NAS에서도 지워집니다.</b> 자리를 내려면
+            Drive Client의 선택 동기화(폴더 해제)를 쓰세요.
+          </div>
+        )}
         <div className="text-[11.5px] text-fg-mute mb-4">
           다른 디스크면 파일마다 복사해 확인한 뒤 원본을 지웁니다. 중간에 멈추면
           복사한 것을 지우고 원본은 그대로 둡니다.

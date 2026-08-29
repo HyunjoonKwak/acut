@@ -17,6 +17,8 @@ export default function SelectionPanel({
   compareIds,
   markPicked,
   onTrash,
+  onRestore,
+  onDelete,
 }: {
   rows: FileRow[];
   /** 나란히 놓을 것 — 목록 순서로 앞의 넷 */

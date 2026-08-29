@@ -28,6 +28,10 @@ const EVERY_MS = 30 * 60_000;
  */
 export function useNasAuto() {
   const mode = usePrefs((s) => s.nasAuto);
+  // 작업대 라이브러리가 새로 등록되면 곧바로 다시 살핀다 — 30분을 기다리게 하지 않는다
+  const deskId = useData(
+    (s) => s.libs.find((l) => l.area === 0 && l.online)?.id ?? null,
+  );
   useEffect(() => {
     if (mode === "off") {
       useData.getState().setNasStatus(null);
@@ -71,12 +75,12 @@ export function useNasAuto() {
           });
       }
     };
-    const t0 = window.setTimeout(probe, FIRST_MS);
+    const t0 = window.setTimeout(probe, deskId === null ? FIRST_MS : 1_000);
     const t = window.setInterval(probe, EVERY_MS);
     return () => {
       live = false;
       window.clearTimeout(t0);
       window.clearInterval(t);
     };
-  }, [mode]);
+  }, [mode, deskId]);
 }

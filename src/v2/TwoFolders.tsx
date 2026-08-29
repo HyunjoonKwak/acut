@@ -241,8 +241,8 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                   <button
                     onClick={() => mark(todoA, "a")}
                     disabled={locked}
-                    title="A쪽 사진이 전부 B쪽에 있는 폴더 — A쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다"
-                    className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+                    title="A쪽 사진이 전부 B쪽에 있는 폴더 — A쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다. 반대 방향이니 A를 남기는 중이면 누르지 마세요"
+                    className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
                   >
                     A쪽 폴더 {todoA.length.toLocaleString()}개 제외 표시
                   </button>

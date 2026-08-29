@@ -146,6 +146,37 @@ export type MasonryBox<T> = {
   h: number;
 };
 export type MasonryHeader = { label: string; count: number; y: number };
+
+/**
+ * y 오름차순 상자 목록에서 [top, bottom] 과 겹칠 수 있는 구간 [start, end).
+ *
+ * 메이슨리는 «가장 짧은 열»에 놓으므로 상자의 y 는 순번대로 줄지 않는다 — 이분 탐색이
+ * 된다. `maxH` 는 가장 큰 상자 높이: 그보다 위에서 시작한 상자는 top 에 닿지 못한다.
+ * 스크롤마다 2만 상자를 두 번 훑던 길(리뷰 H18)을 O(log n + 보이는 수)로.
+ */
+export function visibleRange(
+  boxes: { y: number }[],
+  top: number,
+  bottom: number,
+  maxH: number,
+): [number, number] {
+  const t = top - maxH;
+  let lo = 0;
+  let hi = boxes.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (boxes[mid].y < t) lo = mid + 1;
+    else hi = mid;
+  }
+  const start = lo;
+  hi = boxes.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (boxes[mid].y <= bottom) lo = mid + 1;
+    else hi = mid;
+  }
+  return [start, lo];
+}
 export type MasonryLayout<T> = {
   boxes: MasonryBox<T>[];
   headers: MasonryHeader[];

@@ -243,13 +243,16 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         p.push(Box::new(format!("{}/%", escape_like(p_))));
     }
     if let Some(id) = f.folder_id {
-        // 하위 폴더까지 포함한다. rel_path 접두사로 찾는다.
+        // 하위 폴더까지 포함한다. rel_path 접두사로 찾는다 — LIKE 는 폴더명의 `_`·`%`가
+        // 와일드카드가 되니 substr 로 정확히 비교한다 (폴더 행 2만 개, 값싸다)
         w.push(
             "fi.folder_id IN (SELECT id FROM folders WHERE id = ?
               OR (volume_uuid = (SELECT volume_uuid FROM folders WHERE id = ?)
-                  AND rel_path LIKE (SELECT rel_path FROM folders WHERE id = ?) || '/%'))"
+                  AND substr(rel_path, 1, length((SELECT rel_path FROM folders WHERE id = ?)) + 1)
+                      = (SELECT rel_path FROM folders WHERE id = ?) || '/'))"
                 .into(),
         );
+        p.push(Box::new(id));
         p.push(Box::new(id));
         p.push(Box::new(id));
         p.push(Box::new(id));

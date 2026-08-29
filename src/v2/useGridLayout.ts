@@ -11,6 +11,7 @@ import {
   ratio,
   type GridStyle,
   type JustifiedRow,
+  visibleRange,
 } from "./gridStyle";
 import type { FileRow } from "./types";
 
@@ -98,7 +99,7 @@ export function useGridLayout(
   /// 프레임마다 새로 만든다 (리뷰 H18)
   const masonryAll = useMemo(() => {
     if (gridStyle !== "masonry" || contentW <= 0) return null;
-    return masonryOf(
+    const L = masonryOf(
       rows,
       (r) => r.group,
       (r) => ratio(r.width, r.height),
@@ -107,25 +108,37 @@ export function useGridLayout(
       GAP,
       HEADER_H,
     );
+    // 가장 큰 상자 — 보이는 구간을 이분 탐색으로 자를 때의 여유
+    let maxH = 0;
+    for (const b of L.boxes) if (b.h > maxH) maxH = b.h;
+    return { ...L, maxH };
   }, [gridStyle, rows, contentW, cols]);
-  /// 그중 지금 그릴 것 — 스크롤에 따라
+  /// 그중 지금 그릴 것 — 스크롤에 따라. 이분 탐색으로 구간만 본다 (리뷰 H18)
   const masonry = useMemo(() => {
     const L = masonryAll;
     if (L === null) return null;
     const top = scrollTop - OVERSCAN;
     const bottom = scrollTop + viewH + OVERSCAN;
-    const visible = L.boxes.filter((b) => b.y + b.h >= top && b.y <= bottom);
+    const [s, e] = visibleRange(L.boxes, top, bottom, L.maxH);
+    const visible = L.boxes
+      .slice(s, e)
+      .filter((b) => b.y + b.h >= top && b.y <= bottom);
     // 스크롤바가 쓸 «맨 위 사진 순번»과 «한 화면 장수»
-    const onScreen = L.boxes.filter(
-      (b) => b.y + b.h >= scrollTop && b.y <= scrollTop + viewH,
-    );
+    const [s2, e2] = visibleRange(L.boxes, scrollTop, scrollTop + viewH, L.maxH);
+    let first = -1;
+    let n = 0;
+    for (let i = s2; i < e2; i++) {
+      const b = L.boxes[i];
+      if (b.y + b.h >= scrollTop && b.y <= scrollTop + viewH) {
+        n += 1;
+        if (first < 0 || b.index < first) first = b.index;
+      }
+    }
     return {
       ...L,
       visible,
-      firstIndex: onScreen.length
-        ? Math.min(...onScreen.map((b) => b.index))
-        : 0,
-      onScreen: Math.max(1, onScreen.length),
+      firstIndex: first < 0 ? 0 : first,
+      onScreen: Math.max(1, n),
     };
   }, [masonryAll, scrollTop, viewH]);
 

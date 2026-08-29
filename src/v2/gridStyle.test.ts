@@ -10,6 +10,7 @@ import {
   GAP,
   PAD,
   CAPTION_H,
+  visibleRange,
 } from "./gridStyle.ts";
 
 const r = (x: number) => x; // 비를 그대로 쓰는 항목
@@ -214,4 +215,29 @@ test("메이슨리 — 빈 목록·폭 0", () => {
     ).boxes.length,
     0,
   );
+});
+
+test("보이는 구간 — y 오름차순 상자에서 이분 탐색으로 자른 구간이 전수 검사와 같다", () => {
+  // 높이가 들쭉날쭉한 상자 2,000개, y 는 줄지 않는다(메이슨리의 «가장 짧은 열» 성질)
+  const boxes: { y: number; h: number }[] = [];
+  let y = 0;
+  for (let i = 0; i < 2000; i++) {
+    const h = 50 + ((i * 37) % 200);
+    boxes.push({ y, h });
+    if (i % 3 === 2) y += 40 + ((i * 11) % 90);
+  }
+  const maxH = Math.max(...boxes.map((b) => b.h));
+  for (const [top, bottom] of [
+    [0, 800],
+    [1234, 2034],
+    [30000, 30800],
+    [-500, 100],
+    [10 ** 9, 10 ** 9 + 800],
+  ]) {
+    const [s, e] = visibleRange(boxes, top, bottom, maxH);
+    const got = boxes.slice(s, e).filter((b) => b.y + b.h >= top && b.y <= bottom);
+    const want = boxes.filter((b) => b.y + b.h >= top && b.y <= bottom);
+    assert.deepEqual(got, want, `[${top}, ${bottom}]`);
+  }
+  assert.deepEqual(visibleRange([], 0, 100, 10), [0, 0]);
 });

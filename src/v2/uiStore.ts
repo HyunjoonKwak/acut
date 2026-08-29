@@ -65,8 +65,21 @@ export const useUi = create<Store>()((set) => ({
 }));
 
 /** 무언가 떠 있어 그리드가 키를 맡지 않아야 하는가 */
+/** 위에 무언가 떠 있어 격자가 키를 받으면 안 되는 상태 — 비슷한 사진·글로 찾기·가져오기·
+ *  이름 바꾸기·옮겨두기·구역 고르기·우클릭 메뉴까지. 빠뜨리면 Esc 가 선택을 지우고
+ *  x·p·숫자키가 뒤의 격자에 찍힌다 (리뷰 MEDIUM) */
 export const useOverlayOpen = () =>
   useUi(
     (s) =>
-      s.viewerAt !== null || s.culling || s.organizing || s.comparing !== null,
+      s.viewerAt !== null ||
+      s.culling ||
+      s.organizing ||
+      s.comparing !== null ||
+      s.similarFor !== null ||
+      s.textSearch !== null ||
+      s.importing ||
+      s.renaming !== null ||
+      s.offload !== null ||
+      s.areaPick !== null ||
+      s.ctxAt !== null,
   );

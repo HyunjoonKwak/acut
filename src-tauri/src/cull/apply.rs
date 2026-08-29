@@ -5,7 +5,7 @@
 //! 구역(내사진·공용)에 제외될 사본이 있는 것 — 만 건너뛰어 사람이 본다.
 //! 거기서 지우면 Drive 동기화가 NAS에서도 지운다.
 
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Transaction};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -122,91 +122,25 @@ pub fn apply_all(
         (k, r)
     };
     if !dry_run {
-        tx.execute("UPDATE groups SET state = 1 WHERE id IN (SELECT id FROM temp.todo)", [])?;
+        // 잡동사니에서 정착 구역 구성원을 건너뛴 무리는 «확정»이 아니라 «보류» — 건너뛴 사진이
+        // 조용히 사라지지 않게. 나머지는 확정
+        if kind == 1 && skip_settled {
+            tx.execute(
+                "UPDATE groups SET state = CASE WHEN EXISTS (
+                     SELECT 1 FROM group_members m JOIN files f ON f.id = m.file_id
+                     JOIN folders fo ON fo.id = f.folder_id
+                     WHERE m.group_id = groups.id AND fo.area IN (1, 2)) THEN 2 ELSE 1 END
+                 WHERE id IN (SELECT id FROM temp.todo)",
+                [],
+            )?;
+        } else {
+            tx.execute("UPDATE groups SET state = 1 WHERE id IN (SELECT id FROM temp.todo)", [])?;
+        }
     }
     tx.execute_batch("DROP TABLE temp.todo;")?;
     // 잡동사니의 skipped 는 «건너뛴 사진 수», 나머지 갈래는 «건너뛴 무리 수»
     let groups = if kind == 1 { total } else { total - skipped };
     Ok(ApplyAll { groups, kept, rejected, skipped })
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DupFolder {
-    pub folder_id: i64,
-    pub library: String,
-    /// 라이브러리 기준 경로. 뿌리면 빈 문자열
-    pub folder: String,
-    pub area: i32,
-    /// 폴더의 전체 장수 (휴지통 제외)
-    pub files: i64,
-    /// 이 폴더에서 제외될 사본 수·용량
-    pub copies: i64,
-    pub bytes: i64,
-    /// 사본들의 대표가 가장 많이 있는 폴더 — «이 폴더는 저 폴더의 사본이다»
-    pub keeper_library: Option<String>,
-    pub keeper_folder: Option<String>,
-    pub keeper_copies: i64,
-}
-
-/// 라이브러리 기준 경로 — 볼륨 기준 경로에서 라이브러리 뿌리를 뗀다.
-fn in_lib(lib_rel: &str, rel: &str) -> String {
-    rel.strip_prefix(lib_rel)
-        .map(|s| s.trim_start_matches('/'))
-        .unwrap_or(rel)
-        .to_string()
-}
-
-/// 제외될 사본이 있는 폴더들 — 용량 큰 순. `files == copies`면 폴더 통째로 사본이다.
-pub fn dup_folders(c: &Connection, kind: i32, limit: usize) -> rusqlite::Result<Vec<DupFolder>> {
-    let mut st = c.prepare(
-        "WITH pend AS MATERIALIZED (
-           SELECT m.group_id, m.is_best, f.folder_id, f.size
-           FROM group_members m
-           JOIN groups g ON g.id = m.group_id
-           JOIN files f ON f.id = m.file_id
-           WHERE g.kind = ?1 AND g.state = 0),
-         copies AS (
-           SELECT folder_id, COUNT(*) n, SUM(size) bytes FROM pend WHERE is_best = 0 GROUP BY folder_id),
-         pairs AS (
-           SELECT p.folder_id src, k.folder_id dst, COUNT(*) n
-           FROM pend p JOIN pend k ON k.group_id = p.group_id AND k.is_best = 1
-           WHERE p.is_best = 0 GROUP BY p.folder_id, k.folder_id),
-         top AS (
-           SELECT src, MAX(n) n, dst FROM pairs GROUP BY src)
-         SELECT fo.id, l.name, l.rel_path, fo.rel_path, fo.area,
-                (SELECT COUNT(*) FROM files x WHERE x.folder_id = fo.id AND x.trashed_at IS NULL),
-                c.n, c.bytes, kl.name, kl.rel_path, kfo.rel_path, COALESCE(t.n, 0)
-         FROM copies c
-         JOIN folders fo ON fo.id = c.folder_id
-         JOIN libraries l ON l.id = fo.library_id
-         LEFT JOIN top t ON t.src = c.folder_id
-         LEFT JOIN folders kfo ON kfo.id = t.dst
-         LEFT JOIN libraries kl ON kl.id = kfo.library_id
-         ORDER BY c.bytes DESC
-         LIMIT ?2",
-    )?;
-    let rows = st.query_map(params![kind, limit as i64], |r| {
-        let lib_rel: String = r.get(2)?;
-        let rel: String = r.get(3)?;
-        let k_lib_rel: Option<String> = r.get(9)?;
-        let k_rel: Option<String> = r.get(10)?;
-        Ok(DupFolder {
-            folder_id: r.get(0)?,
-            library: r.get(1)?,
-            folder: in_lib(&lib_rel, &rel),
-            area: r.get(4)?,
-            files: r.get(5)?,
-            copies: r.get(6)?,
-            bytes: r.get(7)?,
-            keeper_library: r.get(8)?,
-            keeper_folder: match (k_lib_rel, k_rel) {
-                (Some(l), Some(f)) => Some(in_lib(&l, &f)),
-                _ => None,
-            },
-            keeper_copies: r.get(11)?,
-        })
-    })?;
-    rows.collect()
 }
 
 #[cfg(test)]
@@ -281,24 +215,6 @@ mod tests {
         // 건너뛰지 않으면 확정된다 — 대표는 b 의 이른 것, 나머지 셋은 제외
         let r = db.transaction(|tx| apply_all(tx, 0, false, true, None, None)).unwrap();
         assert_eq!(r, ApplyAll { groups: 1, kept: 1, rejected: 3, skipped: 0 });
-    }
-
-    #[test]
-    fn folder_summary_points_at_the_keeper_folder() {
-        let (_d, db) = setup(false);
-        let rows = db.read(|c| dup_folders(c, 0, 10)).unwrap();
-        assert_eq!(rows.len(), 1, "사본이 있는 폴더는 a 뿐: {rows:?}");
-        let a = &rows[0];
-        assert_eq!(a.folder, "a");
-        assert_eq!((a.copies, a.files), (2, 3), "사본 둘, 전체 셋(alone 포함)");
-        assert_eq!(a.keeper_folder.as_deref(), Some("b"));
-        assert_eq!(a.keeper_copies, 2);
-        // 폴더만 확정
-        let r = db
-            .transaction(|tx| apply_all(tx, 0, true, false, Some(a.folder_id), None))
-            .unwrap();
-        assert_eq!(r.groups, 1);
-        assert!(db.read(|c| dup_folders(c, 0, 10)).unwrap().is_empty());
     }
 
 

@@ -9,7 +9,7 @@ import { toast } from "./toastStore";
  *
  * 후보1번에도, 후보2번에도, 공용에도 같은 폴더가 있으면 셋을 한 줄에. 사진은
  * 보여 주지 않는다 — 폴더가 같은데 사진을 볼 이유가 없다. 남길 폴더 하나를
- * 고르고(NAS 것이 기본) 나머지에 지우기 표시.
+ * 고르고(NAS 것이 기본) 나머지에 제외 표시 — 격자·상태바와 같은 낱말.
  */
 
 type FolderIn = {
@@ -50,7 +50,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
       if (!quiet) {
         const risky = drops.filter(settled);
         const ok = await ask({
-          title: `«${keepF.library} · ${keepF.folder || "/"}»만 남기고 나머지 ${drops.length}개 폴더에 지우기 표시`,
+          title: `«${keepF.library} · ${keepF.folder || "/"}»만 남기고 나머지 ${drops.length}개 폴더에 제외 표시`,
           lines: [
             `${drops.map((d) => `${d.library} · ${d.folder || "/"}`).join(" / ")} — ${s.files.toLocaleString()}장씩, ${fmtBytes(s.bytes * drops.length)} 빔`,
             ...(risky.length
@@ -58,7 +58,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
               : []),
             "파일은 아직 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
           ],
-          confirmLabel: "지우기 표시",
+          confirmLabel: "제외 표시",
           danger: risky.length > 0,
         });
         if (!ok) return false;
@@ -88,7 +88,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
     }
     const bytes = todo.reduce((a, s) => a + s.bytes * (s.folders.length - 1), 0);
     const ok = await ask({
-      title: `${todo.length.toLocaleString()}묶음 — NAS 폴더를 남기고 나머지에 지우기 표시`,
+      title: `${todo.length.toLocaleString()}묶음 — NAS 폴더를 남기고 나머지에 제외 표시`,
       lines: [
         `${fmtBytes(bytes)} 빔`,
         "NAS 밖(T7·작업대) 폴더에만 표시합니다",
@@ -150,7 +150,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
           )}
         </span>
         <span className="text-fg-mute">
-          — 남길 폴더의 ○을 누르면 ● 남김이 되고 나머지는 지움. 건너뛰려면 그냥 두세요
+          — 남길 폴더의 ○을 누르면 ● 남김이 되고 나머지는 제외. 건너뛰려면 그냥 두세요
         </span>
         <div className="flex-1" />
         {pending.length > 0 && (
@@ -182,14 +182,14 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                   <button
                     onClick={async () => {
                       if (await applyOne(s)) {
-                        toast("지우기 표시했습니다 — 격자에서 «치우기»", "ok");
+                        toast("제외 표시했습니다 — 격자에서 «치우기»", "ok");
                         setTick((t) => t + 1);
                         onChanged();
                       }
                     }}
                     className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12px]"
                   >
-                    고른 것만 남기고 나머지 지우기 표시
+                    고른 것만 남기고 나머지 제외 표시
                   </button>
                 )}
               </div>
@@ -208,7 +208,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                         className="accent-keep mr-1.5 w-3.5 h-3.5"
                       />
                       <span className={k === j ? "text-keep font-semibold" : "text-fg-mute"}>
-                        {k === j ? "남김" : "지움"}
+                        {k === j ? "남김" : "제외"}
                       </span>
                     </span>
                     <span className="truncate text-[13px]" title={`${f.library} / ${f.folder || "/"}`}>

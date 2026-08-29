@@ -208,6 +208,80 @@ pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result
 }
 
 
+/// 두 폴더 사이의 완전 중복 무리를 한꺼번에 — `keep` 폴더 것을 남기고 `drop` 폴더 것에 제외
+/// 표시. 두 폴더 밖까지 얽힌 무리는 건너뛴다(그건 개별 비교에서). 개별 비교의 «이 폴더 쌍
+/// 전부 이렇게» 단추가 쓴다.
+pub fn apply_pair(tx: &Transaction, keep: i64, drop: i64) -> rusqlite::Result<ApplyAll> {
+    if keep == drop {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    tx.execute_batch(
+        "DROP TABLE IF EXISTS temp.todo; CREATE TEMP TABLE todo(id INTEGER PRIMARY KEY);",
+    )?;
+    tx.execute(
+        "INSERT INTO temp.todo
+         SELECT g.id FROM groups g
+         WHERE g.kind = 0 AND g.state = 0
+           AND EXISTS (SELECT 1 FROM group_members m JOIN files f ON f.id = m.file_id
+                       WHERE m.group_id = g.id AND f.folder_id = ?1)
+           AND EXISTS (SELECT 1 FROM group_members m JOIN files f ON f.id = m.file_id
+                       WHERE m.group_id = g.id AND f.folder_id = ?2)
+           AND NOT EXISTS (SELECT 1 FROM group_members m JOIN files f ON f.id = m.file_id
+                           WHERE m.group_id = g.id AND f.folder_id NOT IN (?1, ?2))",
+        params![keep, drop],
+    )?;
+    let groups = tx.query_row("SELECT COUNT(*) FROM temp.todo", [], |r| r.get::<_, i64>(0))? as usize;
+    tx.execute(
+        "UPDATE group_members SET is_best = CASE WHEN file_id IN (SELECT id FROM files WHERE folder_id = ?1) THEN 1 ELSE 0 END
+         WHERE group_id IN (SELECT id FROM temp.todo)",
+        [keep],
+    )?;
+    let kept = tx.execute(
+        "UPDATE files SET culling_flag = 1 WHERE id IN (
+           SELECT file_id FROM group_members WHERE group_id IN (SELECT id FROM temp.todo) AND is_best = 1)",
+        [],
+    )?;
+    // 이미 «남김»인 파일은 내리지 않는다 — 다른 갈래와 같은 규칙 (리뷰 C11)
+    let rejected = tx.execute(
+        "UPDATE files SET culling_flag = 2 WHERE culling_flag <> 1 AND id IN (
+           SELECT file_id FROM group_members WHERE group_id IN (SELECT id FROM temp.todo) AND is_best = 0)",
+        [],
+    )?;
+    tx.execute("UPDATE groups SET state = 1 WHERE id IN (SELECT id FROM temp.todo)", [])?;
+    tx.execute_batch("DROP TABLE temp.todo;")?;
+    Ok(ApplyAll { groups, kept, rejected, skipped: 0 })
+}
+
+/// 두 폴더 비교의 «전부» — 짝마다 `apply_set`. 한 트랜잭션이라 화면이 짝마다 명령을 보내며
+/// 잠금 없이 두 루프가 얽히던 길이 없다. 못 한 짝은 세어 알린다
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PairsApplied {
+    pub applied: usize,
+    pub failed: usize,
+    pub first_error: Option<String>,
+    pub kept: usize,
+    pub rejected: usize,
+}
+
+pub fn apply_pairs(tx: &Transaction, pairs: &[(i64, i64)]) -> rusqlite::Result<PairsApplied> {
+    let mut out = PairsApplied::default();
+    for &(keep, drop) in pairs {
+        match apply_set(tx, keep, &[drop]) {
+            Ok(r) => {
+                out.applied += 1;
+                out.kept += r.kept;
+                out.rejected += r.rejected;
+            }
+            Err(rusqlite::Error::InvalidQuery) => {
+                out.failed += 1;
+                out.first_error.get_or_insert_with(|| "같은 폴더를 남기고 지울 수는 없습니다".to_string());
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(out)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PairRow {
     /// A 뿌리 아래 폴더 (뿌리 기준 경로). 없으면 B 에만 있는 폴더
@@ -599,6 +673,71 @@ mod tests {
         sorted.sort();
         assert_eq!(subs, sorted, "경로 오름차순: {subs:?}");
         assert!(rows.iter().all(|r| !r.same), "내용이 다 다르니 같은 짝은 없다");
+    }
+
+    /// a/ (작업대): 사본 둘 + 혼자인 것 하나 + T7끼리만 겹치는 둘.
+    /// b/ (공용): 원본 하나. c/ (공용): b 와 겹치는 것 하나 — 정착 구역 안 겹침.
+    fn setup_pair() -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b, c) = (dir.path().join("a"), dir.path().join("b"), dir.path().join("c"));
+        for d in [&a, &b, &c] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let same = b"SAME CONTENT ".repeat(100);
+        let inner = b"INNER ONLY ".repeat(100);
+        let pair = b"PAIR IN NAS ".repeat(100);
+        std::fs::write(a.join("20200101_120000.jpg"), &same).unwrap();
+        std::fs::write(a.join("copy.jpg"), &same).unwrap();
+        std::fs::write(a.join("alone.jpg"), b"unique").unwrap();
+        std::fs::write(a.join("20200102_120000.jpg"), &inner).unwrap();
+        std::fs::write(a.join("inner-copy.jpg"), &inner).unwrap();
+        std::fs::write(b.join("20200101_120001.jpg"), &same).unwrap();
+        std::fs::write(b.join("20200103_120000.jpg"), &pair).unwrap();
+        std::fs::write(c.join("20200103_120001.jpg"), &pair).unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 1, |_| {}).unwrap();
+        db.write(|cn| {
+            cn.execute("UPDATE folders SET area = 0", [])?;
+            cn.execute("UPDATE folders SET area = 2 WHERE rel_path LIKE '%b' OR rel_path LIKE '%c'", [])
+        })
+        .unwrap();
+        dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn pair_apply_keeps_one_folder_and_marks_the_other() {
+        let (_d, db) = setup_pair();
+        let (fb, fc): (i64, i64) = db
+            .read(|c| {
+                Ok((
+                    c.query_row("SELECT id FROM folders WHERE rel_path LIKE '%b'", [], |r| r.get(0))?,
+                    c.query_row("SELECT id FROM folders WHERE rel_path LIKE '%c'", [], |r| r.get(0))?,
+                ))
+            })
+            .unwrap();
+        // c 를 남기고 b 것에 표시 — 대표가 b 였어도 뒤집힌다
+        let r = db.transaction(|tx| apply_pair(tx, fc, fb)).unwrap();
+        assert_eq!((r.groups, r.kept, r.rejected), (1, 1, 1));
+        let flag: i32 = db
+            .read(|c| c.query_row("SELECT culling_flag FROM files WHERE name = '20200103_120000.jpg'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(flag, 2, "b 의 것이 제외 표시");
+        assert!(db.transaction(|tx| apply_pair(tx, fb, fb)).is_err(), "같은 폴더끼리는 거절");
+    }
+
+    #[test]
+    fn pairs_apply_counts_failures_without_aborting_the_batch() {
+        let (_d, db) = setup();
+        let sets = db.read(|c| identical_sets(c, 100)).unwrap();
+        let s = &sets[0];
+        let (keep, drop) = (s.folders[0].folder_id, s.folders[1].folder_id);
+        let r = db
+            .transaction(|tx| apply_pairs(tx, &[(keep, keep), (keep, drop)]))
+            .unwrap();
+        assert_eq!((r.applied, r.failed), (1, 1), "{r:?}");
+        assert!(r.first_error.is_some());
+        assert_eq!(r.rejected, 2);
     }
 
     #[test]

@@ -164,50 +164,6 @@ pub async fn library_remove(state: State<'_, AppState>, id: i64) -> Result<(), S
     r
 }
 
-/// 등록된 볼륨 목록 (연결 여부 포함).
-#[derive(Debug, Serialize)]
-pub struct VolumeRow {
-    pub uuid: String,
-    pub name: String,
-    pub role: String,
-    pub is_online: bool,
-    pub total_bytes: Option<i64>,
-    pub free_bytes: Option<i64>,
-    pub current_mount: Option<String>,
-}
-
-#[tauri::command]
-pub async fn volumes_list(state: State<'_, AppState>) -> Result<Vec<VolumeRow>, String> {
-    let rows: Vec<(String, String, String, Option<i64>, Option<i64>)> = state
-        .db
-        .read(|c| {
-            let mut st =
-                c.prepare("SELECT uuid,name,role,total_bytes,free_bytes FROM volumes ORDER BY name")?;
-            let it = st.query_map([], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-            })?;
-            it.collect::<rusqlite::Result<Vec<_>>>()
-        })
-        .map_err(err)?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(uuid, name, role, total, free)| {
-            // 지금 실제로 붙어 있는지 UUID로 확인한다.
-            let mount = crate::db::volumes::find_mount(&uuid);
-            VolumeRow {
-                is_online: mount.is_some(),
-                current_mount: mount.map(|p| p.to_string_lossy().into_owned()),
-                uuid,
-                name,
-                role,
-                total_bytes: total,
-                free_bytes: free,
-            }
-        })
-        .collect())
-}
-
 // ── 스캔 ───────────────────────────────────────────────────────────────
 
 /// 옛 위치(볼륨 안 `.acut/thumbs`)의 캐시를 앱 폴더로 옮긴다.
@@ -316,12 +272,6 @@ pub async fn files_page(
     query::page(&state.db, &filter, cursor, limit, group.unwrap_or_default()).map_err(err)
 }
 
-#[derive(Debug, Serialize)]
-pub struct Summary {
-    pub count: i64,
-    pub bytes: i64,
-}
-
 /// 월별 분포 — 우측 스크러버용.
 #[tauri::command]
 pub async fn files_timeline(
@@ -349,12 +299,6 @@ pub async fn files_facets(
     kind: query::FacetKind,
 ) -> Result<Vec<query::Facet>, String> {
     query::facets(&state.db, &filter, kind).map_err(err)
-}
-
-#[tauri::command]
-pub async fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result<Summary, String> {
-    let (count, bytes) = query::summary(&state.db, &filter).map_err(err)?;
-    Ok(Summary { count, bytes })
 }
 
 // ── 사이드바 ───────────────────────────────────────────────────────────

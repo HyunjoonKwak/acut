@@ -41,7 +41,7 @@ type Summary = {
 };
 
 const KINDS = [
-  { id: -3, label: "폴더 비교", hint: "내용이 완전히 같은 폴더들 — 하나만 남기고 나머지 지우기" },
+  { id: -3, label: "폴더 비교", hint: "내용이 완전히 같은 폴더들 — 하나만 남기고 나머지는 제외" },
   { id: -4, label: "두 폴더 비교", hint: "내가 고른 두 폴더 아래를 견준다 — 후보1번/연도별 ⇔ 후보2번" },
   { id: 0, label: "개별 비교", hint: "바이트가 같은 사진 무리 — 한 장씩 보며" },
   { id: 2, label: "같은 순간", hint: "연달아 찍은 것" },
@@ -103,7 +103,11 @@ export default function Cull({
       : null;
 
   const loadSummary = useCallback(async () => {
-    setSummary(await invoke<Summary[]>("cull_summary"));
+    try {
+      setSummary(await invoke<Summary[]>("cull_summary"));
+    } catch (e) {
+      toast(String(e), "drop");
+    }
   }, []);
 
   // 지금 탭 — 이벤트 경로에서 «어느 갈래를 새로 읽나»를 최신으로 본다
@@ -120,11 +124,13 @@ export default function Cull({
       setIdx(0);
       return;
     }
-    const g = await invoke<Group[]>("cull_groups", {
-      kind: k,
-      limit: 200,
-      offset: 0,
-    });
+    let g: Group[];
+    try {
+      g = await invoke<Group[]>("cull_groups", { kind: k, limit: 200, offset: 0 });
+    } catch (e) {
+      toast(String(e), "drop");
+      return;
+    }
     if (gen !== groupsGen.current || k !== kindRef.current) return;
     setGroups(g);
     setIdx(0);
@@ -135,12 +141,18 @@ export default function Cull({
   /// 공용)에 제외될 사본이 있는 무리는 건너뛴다: 거기서 지우면 NAS에서도 지워진다.
   const applyAll = useCallback(
     async (folderId: number | null, what: string) => {
-      const dry = await invoke<ApplyAll>("cull_apply_all", {
-        kind,
-        skipSettled: true,
-        dryRun: true,
-        folderId,
-      });
+      let dry: ApplyAll;
+      try {
+        dry = await invoke<ApplyAll>("cull_apply_all", {
+          kind,
+          skipSettled: true,
+          dryRun: true,
+          folderId,
+        });
+      } catch (e) {
+        toast(String(e), "drop");
+        return;
+      }
       // 잡동사니의 skipped 는 «건너뛴 사진 수», 나머지 갈래는 «건너뛴 무리 수»
       const unit = kind === 1 ? "장" : "무리";
       if (dry.groups === 0 || (kind === 1 && dry.rejected === 0)) {
@@ -167,12 +179,18 @@ export default function Cull({
         confirmLabel: "확정",
       });
       if (!ok) return;
-      const r = await invoke<ApplyAll>("cull_apply_all", {
+      let r: ApplyAll;
+      try {
+        r = await invoke<ApplyAll>("cull_apply_all", {
         kind,
         skipSettled: true,
         dryRun: false,
         folderId,
       });
+      } catch (e) {
+        toast(String(e), "drop");
+        return;
+      }
       toast(
         `${r.groups.toLocaleString()}무리 확정 — 제외 ${r.rejected.toLocaleString()}장`,
         "ok",
@@ -189,7 +207,9 @@ export default function Cull({
   useEffect(() => {
     let live = true;
     const gen = ++groupsGen.current;
-    invoke<Summary[]>("cull_summary").then((s) => live && setSummary(s));
+    invoke<Summary[]>("cull_summary")
+      .then((s) => live && setSummary(s))
+      .catch((e) => live && toast(String(e), "drop"));
     // 폴더 탭은 무리를 안 쓴다 — 비우되, 효과 안에서 바로 setState 하지 않는다(컴파일러 규칙)
     const load =
       kind === -3 || kind === -4
@@ -214,7 +234,7 @@ export default function Cull({
     let live = true;
     invoke<Member[]>("cull_members", { groupId: current.id }).then(
       (list) => live && setGot({ groupId: current.id, list }),
-    );
+    ).catch((e) => toast(String(e), "drop"));
     return () => {
       live = false;
     };
@@ -292,7 +312,12 @@ export default function Cull({
   const apply = useCallback(async () => {
     const g = groups[idx];
     if (!g) return;
-    await invoke("cull_apply", { groupIds: [g.id] });
+    try {
+      await invoke("cull_apply", { groupIds: [g.id] });
+    } catch (e) {
+      toast(String(e), "drop");
+      return;
+    }
     advance();
     loadSummary();
   }, [groups, idx, advance, loadSummary]);
@@ -300,7 +325,12 @@ export default function Cull({
   const skip = useCallback(async () => {
     const g = groups[idx];
     if (!g) return;
-    await invoke("cull_skip", { groupIds: [g.id] });
+    try {
+      await invoke("cull_skip", { groupIds: [g.id] });
+    } catch (e) {
+      toast(String(e), "drop");
+      return;
+    }
     advance();
   }, [groups, idx, advance]);
 
@@ -308,7 +338,12 @@ export default function Cull({
     async (fileId: number) => {
       const g = groups[idx];
       if (!g) return;
-      await invoke("cull_set_best", { groupId: g.id, fileId });
+      try {
+        await invoke("cull_set_best", { groupId: g.id, fileId });
+      } catch (e) {
+        toast(String(e), "drop");
+        return;
+      }
       setGot((cur) =>
         cur && cur.groupId === g.id
           ? {
@@ -324,13 +359,18 @@ export default function Cull({
     [groups, idx],
   );
 
-  /// 공용 안 겹침 — 이 사진을 남기고 같은 무리의 나머지에 지우기 표시
+  /// 공용 안 겹침 — 이 사진을 남기고 같은 무리의 나머지에 제외 표시
   const keepThis = useCallback(
     async (m: Member) => {
       const g = groups[idx];
       if (!g) return;
-      await invoke("cull_set_best", { groupId: g.id, fileId: m.file_id });
-      await invoke("cull_apply", { groupIds: [g.id] });
+      try {
+        await invoke("cull_set_best", { groupId: g.id, fileId: m.file_id });
+        await invoke("cull_apply", { groupIds: [g.id] });
+      } catch (e) {
+        toast(String(e), "drop");
+        return;
+      }
       advance();
       loadSummary();
     },
@@ -342,7 +382,7 @@ export default function Cull({
       const other = members.find((x) => x.file_id !== m.file_id);
       if (!other) return;
       const ok = await ask({
-        title: `«${m.folder || "/"}»을 남기고 «${other.folder || "/"}» 것에 지우기 표시`,
+        title: `«${m.folder || "/"}»을 남기고 «${other.folder || "/"}» 것에 제외 표시`,
         lines: [
           "두 폴더 사이에서 겹치는 사진 전부에 적용합니다 — 다른 폴더까지 얽힌 무리는 건너뜁니다",
           "파일은 아직 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
@@ -350,11 +390,17 @@ export default function Cull({
         confirmLabel: "전부 이렇게",
       });
       if (!ok) return;
-      const r = await invoke<ApplyAll>("cull_apply_pair", {
-        keepFolderId: m.folder_id,
-        dropFolderId: other.folder_id,
-      });
-      toast(`${r.groups.toLocaleString()}쌍 처리 — 지우기 표시 ${r.rejected.toLocaleString()}장`, "ok");
+      let r: ApplyAll;
+      try {
+        r = await invoke<ApplyAll>("cull_apply_pair", {
+          keepFolderId: m.folder_id,
+          dropFolderId: other.folder_id,
+        });
+      } catch (e) {
+        toast(String(e), "drop");
+        return;
+      }
+      toast(`${r.groups.toLocaleString()}쌍 처리 — 제외 표시 ${r.rejected.toLocaleString()}장`, "ok");
       loadSummary();
       loadGroups(kind);
     },
@@ -392,12 +438,17 @@ export default function Cull({
         await pick(fileId);
         return;
       }
-      await invoke("files_mark", {
-        ids: [fileId],
-        rating: patch.rating ?? null,
-        cullingFlag: patch.cullingFlag ?? null,
-        favorite: patch.favorite ?? null,
-      });
+      try {
+        await invoke("files_mark", {
+          ids: [fileId],
+          rating: patch.rating ?? null,
+          cullingFlag: patch.cullingFlag ?? null,
+          favorite: patch.favorite ?? null,
+        });
+      } catch (e) {
+        toast(String(e), "drop");
+        return;
+      }
     },
     [pick],
   );

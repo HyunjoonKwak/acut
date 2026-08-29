@@ -4,7 +4,7 @@
 //! 진행 상황을 이벤트로 흘린다. 조회는 즉시 돌아온다.
 
 use crate::api::{err, AppState};
-use crate::cull::{apply, burst, cleanup, dedup, folders, junk, scene};
+use crate::cull::{apply, burst, dedup, folders, junk, scene};
 use super::job;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -278,7 +278,7 @@ pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Resu
                 // 정착 구역(내사진·공용)의 사본은 제외하지 않는다 — 치우면 Drive가 NAS에서도
                 // 지운다. 이미 «남김»인 파일도 내리지 않는다 (리뷰 C13·C11).
                 let best = if kind == 1 { "" } else { " AND m.is_best = 0" };
-                rejected += tx.execute(
+                let rej = tx.execute(
                     &format!(
                         "UPDATE files SET culling_flag=2 WHERE culling_flag <> 1 AND id IN
                          (SELECT m.file_id FROM group_members m
@@ -288,7 +288,7 @@ pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Resu
                     ),
                     [gid],
                 )?;
-                skipped += tx.query_row(
+                let skp = tx.query_row(
                     &format!(
                         "SELECT COUNT(*) FROM group_members m
                           JOIN files f ON f.id = m.file_id
@@ -298,6 +298,8 @@ pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Resu
                     [gid],
                     |r| r.get::<_, i64>(0),
                 )? as usize;
+                rejected += rej;
+                skipped += skp;
                 if kind != 1 {
                     kept += tx.execute(
                         "UPDATE files SET culling_flag=1 WHERE id IN
@@ -305,7 +307,9 @@ pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Resu
                         [gid],
                     )?;
                 }
-                tx.execute("UPDATE groups SET state=1 WHERE id=?1", [gid])?;
+                // 건너뛴 것뿐이면 «확정»이 아니라 «보류» — 정착 구역 사본이 조용히 잊히지 않게
+                let state_v = if rej == 0 && skp > 0 { 2 } else { 1 };
+                tx.execute("UPDATE groups SET state=?2 WHERE id=?1", rusqlite::params![gid, state_v])?;
             }
             Ok((kept, rejected, skipped))
         })
@@ -329,38 +333,28 @@ pub async fn cull_apply_all(
         .map_err(err)
 }
 
-/// 정리 화면 — 라이브러리의 폴더들을 «NAS에 이미 있음 / 없음»으로.
-#[tauri::command]
-pub async fn cleanup_folders(state: State<'_, AppState>, library_id: i64) -> Result<Vec<cleanup::CleanupFolder>, String> {
-    state.db.read(|c| cleanup::folders(c, library_id)).map_err(err)
-}
-
-/// 폴더 하나의 사진들 — 셋으로 나뉘어.
-#[tauri::command]
-pub async fn cleanup_files(state: State<'_, AppState>, folder_id: i64) -> Result<Vec<cleanup::CleanupFile>, String> {
-    state.db.read(|c| cleanup::files(c, folder_id)).map_err(err)
-}
-
-/// 라이브러리 합계와 정착 구역 안 겹침의 크기.
-#[tauri::command]
-pub async fn cleanup_summary(state: State<'_, AppState>, library_id: i64) -> Result<cleanup::CleanupSummary, String> {
-    state.db.read(|c| cleanup::summary(c, library_id)).map_err(err)
-}
-
 /// 두 폴더 사이의 무리를 한꺼번에 — keep 것을 남기고 drop 것에 지우기 표시.
 #[tauri::command]
 pub async fn cull_apply_pair(state: State<'_, AppState>, keep_folder_id: i64, drop_folder_id: i64) -> Result<apply::ApplyAll, String> {
+    if keep_folder_id == drop_folder_id {
+        return Err("같은 폴더를 남기고 지울 수는 없습니다".into());
+    }
     state
         .db
-        .transaction(|tx| cleanup::apply_pair(tx, keep_folder_id, drop_folder_id))
+        .transaction(|tx| folders::apply_pair(tx, keep_folder_id, drop_folder_id))
         .map_err(err)
 }
 
-/// 제외될 사본이 있는 폴더들 — 폴더 통째로 사본인 것을 한 번에 처리하려고.
+/// 두 폴더 비교의 «전부» — (남길 폴더, 지울 폴더) 짝 목록을 한 트랜잭션에.
 #[tauri::command]
-pub async fn cull_dup_folders(state: State<'_, AppState>, kind: i32) -> Result<Vec<apply::DupFolder>, String> {
-    // 임시 표 없이 CTE만 쓰므로 읽기 연결로 충분하다
-    state.db.read(|c| apply::dup_folders(c, kind, 300)).map_err(err)
+pub async fn cull_folder_pairs_apply(
+    state: State<'_, AppState>,
+    pairs: Vec<(i64, i64)>,
+) -> Result<folders::PairsApplied, String> {
+    if pairs.is_empty() {
+        return Ok(folders::PairsApplied::default());
+    }
+    state.db.transaction(|tx| folders::apply_pairs(tx, &pairs)).map_err(err)
 }
 
 /// 폴더 비교 — 내용이 완전히 같은 폴더 묶음들.

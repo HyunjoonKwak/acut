@@ -13,7 +13,7 @@ import { doneSide, overlaps, type FolderHit, type PairRow } from "./twoFoldersLo
  * «n/m 똑같음», 한쪽에만 있으면 그대로. 같은 것은 어느 쪽을 지울지 골라 한 번에.
  */
 
-type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
+type PairsApplied = { applied: number; failed: number; first_error: string | null; kept: number; rejected: number };
 type FolderIn = NonNullable<PairRow["a"]>;
 
 const settled = (f: FolderIn) => f.area === 1 || f.area === 2;
@@ -25,7 +25,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const [rows, setRows] = useState<PairRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   /** 표시 진행 — n/총. null 이면 표시 중이 아니다 */
-  const [marking, setMarking] = useState<{ done: number; total: number } | null>(null);
+  const [marking, setMarking] = useState<{ total: number } | null>(null);
   const [tick, setTick] = useState(0);
 
   // 두 폴더가 정해지면 바로 견준다 — «비교» 단추를 따로 누를 이유가 없다.
@@ -49,13 +49,13 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     };
   }, [a, b, tick]);
 
-  /// 같은 폴더 짝에서 한쪽에 지우기 표시. side = 지울 쪽
+  /// 같은 폴더 짝에서 한쪽에 제외 표시. side = 제외할 쪽
   const mark = useCallback(
     async (targets: PairRow[], side: "a" | "b") => {
       // 처리된 짝은 뺀다 — B쪽을 지운 줄에서 A쪽을 또 누르면 방금 남긴 B가 뒤집힌다
       const pairs = targets.filter((r) => r.same && r.a && r.b && doneSide(r) === null);
       if (pairs.length === 0) {
-        toast("지우기 표시할 똑같은 폴더 짝이 없습니다");
+        toast("제외 표시할 똑같은 폴더 짝이 없습니다");
         return;
       }
       const drop = (r: PairRow) => (side === "a" ? r.a! : r.b!);
@@ -64,7 +64,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       const bytes = pairs.reduce((s, r) => s + r.bytes, 0);
       const files = pairs.reduce((s, r) => s + r.common, 0);
       const ok = await ask({
-        title: `${side === "a" ? "A" : "B"}쪽 폴더 ${pairs.length.toLocaleString()}개의 사진 ${files.toLocaleString()}장에 지우기 표시`,
+        title: `${side === "a" ? "A" : "B"}쪽 폴더 ${pairs.length.toLocaleString()}개의 사진 ${files.toLocaleString()}장에 제외 표시`,
         lines: [
           `${side === "a" ? "B" : "A"}쪽 똑같은 폴더는 그대로 둡니다 · ${fmtBytes(bytes)} 빔`,
           ...(risky.length
@@ -72,35 +72,29 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
             : []),
           "파일은 아직 옮기지 않습니다 — 격자의 «제외 N장 치우기»로 휴지통에 보냅니다",
         ],
-        confirmLabel: "지우기 표시",
+        confirmLabel: "제외 표시",
         danger: risky.length > 0,
       });
       if (!ok) return;
-      // 잠근다 — 도는 동안 «A쪽 전부»를 또 누르면 두 루프가 같은 짝을 반대로 건다
-      setMarking({ done: 0, total: pairs.length });
-      let failed = 0;
-      let firstErr = "";
+      // 잠그고 한 명령으로 — 짝마다 보내면 도는 동안 «A쪽 전부»를 또 눌러 두 루프가 얽힌다
+      setMarking({ total: pairs.length });
+      let r: PairsApplied;
       try {
-        for (const [i, r] of pairs.entries()) {
-          try {
-            await invoke<ApplyAll>("cull_folder_set_apply", {
-              keepFolderId: keep(r).folder_id,
-              dropFolderIds: [drop(r).folder_id],
-            });
-          } catch (e) {
-            failed += 1;
-            firstErr ||= String(e);
-          }
-          setMarking({ done: i + 1, total: pairs.length });
-        }
+        r = await invoke<PairsApplied>("cull_folder_pairs_apply", {
+          pairs: pairs.map((p) => [keep(p).folder_id, drop(p).folder_id]),
+        });
+      } catch (e) {
+        setMarking(null);
+        toast(String(e), "drop");
+        return;
       } finally {
         setMarking(null);
       }
       toast(
-        failed
-          ? `${pairs.length - failed}개 처리 · ${failed}개 실패 (${firstErr})`
-          : `${pairs.length.toLocaleString()}개 폴더에 지우기 표시했습니다 — 격자에서 «치우기»`,
-        failed ? "drop" : "ok",
+        r.failed
+          ? `${r.applied}개 처리 · ${r.failed}개 실패 (${r.first_error ?? ""})`
+          : `${r.applied.toLocaleString()}개 폴더 · ${r.rejected.toLocaleString()}장에 제외 표시했습니다 — 격자에서 «치우기»`,
+        r.failed ? "drop" : "ok",
       );
       onChanged();
       setTick((t) => t + 1);
@@ -138,7 +132,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         )}
         {marking && (
           <span className="flex items-center gap-2 text-keep tabular-nums">
-            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 표시 중 {marking.done}/{marking.total}
+            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> {marking.total.toLocaleString()}쌍에 표시 중…
           </span>
         )}
         {rows && !marking && (
@@ -162,7 +156,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
               disabled={locked}
               className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
             >
-              B쪽 똑같은 폴더 전부 지우기 표시
+              B쪽 똑같은 폴더 전부 제외 표시
             </button>
             <button
               onClick={() => mark(todo, "a")}
@@ -233,7 +227,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                   </td>
                   <td className="py-1.5 pr-4 text-right whitespace-nowrap">
                     {done ? (
-                      <span className="text-ok text-[11.5px]">처리됨 — {done === "a" ? "A" : "B"}쪽 지움</span>
+                      <span className="text-ok text-[11.5px]">처리됨 — {done === "a" ? "A" : "B"}쪽 제외</span>
                     ) : (
                       r.same && (
                         <>
@@ -241,17 +235,17 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                             onClick={() => mark([r], "b")}
                             disabled={locked}
                             className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong mr-1 disabled:opacity-40"
-                            title="B쪽 폴더의 사진에 지우기 표시"
+                            title="B쪽 폴더의 사진에 제외 표시"
                           >
-                            B쪽 지우기
+                            B쪽 제외
                           </button>
                           <button
                             onClick={() => mark([r], "a")}
                             disabled={locked}
                             className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
-                            title="A쪽 폴더의 사진에 지우기 표시"
+                            title="A쪽 폴더의 사진에 제외 표시"
                           >
-                            A쪽 지우기
+                            A쪽 제외
                           </button>
                         </>
                       )

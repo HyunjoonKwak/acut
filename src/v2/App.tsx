@@ -24,7 +24,7 @@ import StatusActions from "./StatusActions";
 import StatusBar from "./StatusBar";
 import Toasts from "./Toasts";
 import Toolbar from "./Toolbar";
-import Viewer from "./Viewer";
+import ViewerHost from "./ViewerHost";
 import { contextItems } from "./contextItems";
 import { useData } from "./dataStore";
 import { usePref } from "./prefs";
@@ -259,8 +259,6 @@ export default function App() {
   const ui = useUi(
     useShallow((s) => ({
       set: s.set,
-      viewerAt: s.viewerAt,
-      viewerFull: s.viewerFull,
       offload: s.offload,
       similarFor: s.similarFor,
       renaming: s.renaming,
@@ -277,23 +275,6 @@ export default function App() {
       dropped: s.dropped,
     })),
   );
-  // 뷰어가 끝에 다다르면 다음 쪽을 미리 읽는다
-  useEffect(() => {
-    if (ui.viewerAt !== null && ui.viewerAt >= rows.length - 5) loadMore();
-  }, [ui.viewerAt, rows.length, loadMore]);
-  // 목록이 줄어 뷰어의 순번이 밖으로 나가면 마지막 장으로 당긴다 — 휴지통에
-  // 보내거나 다시 읽어 목록이 짧아졌을 때. 비면 닫는다.
-  useEffect(() => {
-    const at = useUi.getState().viewerAt;
-    if (at === null || at < rows.length) return;
-    useUi
-      .getState()
-      .set(
-        rows.length === 0
-          ? { viewerAt: null, viewerFull: false }
-          : { viewerAt: rows.length - 1 },
-      );
-  }, [rows.length]);
 
   /// 타일 우클릭. 고른 것 밖을 우클릭하면 그것 하나만 대상으로 삼는다 —
   /// 안 그러면 눈에 안 보이는 선택에 대고 일이 벌어진다.
@@ -452,20 +433,14 @@ export default function App() {
             />
           )}
 
-          {/* 크게 보기 — 기본은 콘텐츠 영역만 덮는다 */}
-          {ui.viewerAt !== null && ui.viewerAt < ids.length && (
-            <Viewer
-              ids={ids}
-              index={ui.viewerAt}
-              onIndex={openViewer}
-              onClose={() => ui.set({ viewerAt: null, viewerFull: false })}
-              onMark={markOne}
-              fullScreen={ui.viewerFull}
-              onToggleFullScreen={() => ui.set({ viewerFull: !ui.viewerFull })}
-              kindOf={kindOf}
-              onRename={renameFile}
-            />
-          )}
+          {/* 크게 보기 — 기본은 콘텐츠 영역만 덮는다. 뷰어 상태는 ViewerHost 만 구독한다 */}
+          <ViewerHost
+            ids={ids}
+            onNearEnd={loadMore}
+            onMark={markOne}
+            kindOf={kindOf}
+            onRename={renameFile}
+          />
         </div>
       </div>
 

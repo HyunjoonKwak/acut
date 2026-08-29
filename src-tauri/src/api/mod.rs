@@ -1193,6 +1193,23 @@ pub async fn heartbeat(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// 화면 쪽 오류를 파일에 남긴다 — 릴리스 앱은 웹뷰 콘솔을 볼 수 없어서, 그리다
+/// 죽은 이유를 이 파일로만 알 수 있다. `~/Library/Logs/com.acut.media/webview.log`
+#[tauri::command]
+pub async fn frontend_log(app: AppHandle, level: String, msg: String) -> Result<(), String> {
+    use std::io::Write;
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("webview.log"))
+        .map_err(|e| e.to_string())?;
+    let msg: String = msg.chars().take(8_000).collect();
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    writeln!(f, "{stamp} [{level}] {msg}").map_err(|e| e.to_string())
+}
+
 /// 첫 그리드가 그려진 순간 화면이 부른다 — 시작 시간을 재서 설정에 남긴다.
 /// 성능 목표 «앱 시작 1초»를 눈대중이 아니라 숫자로 본다.
 #[tauri::command]

@@ -141,6 +141,13 @@ export function useGridLayout(
     overscan: 4,
   });
 
+  // 줄 높이의 입력이 바뀌면 가상 스크롤의 높이 캐시를 비운다. tanstack은
+  // estimateSize가 바뀌어도 앞서 계산한 자리를 그대로 쓴다 — 실측: 양쪽 맞춤에서
+  // 썸네일 크기를 바꾸면 옛 높이로 자리를 잡아 사진이 겹쳐 보였다.
+  useEffect(() => {
+    virt.measure();
+  }, [virt, justified, rowH]);
+
   // 끝에 가까워지면 다음 쪽
   const items = virt.getVirtualItems();
   const lastIndex = items[items.length - 1]?.index ?? -1;

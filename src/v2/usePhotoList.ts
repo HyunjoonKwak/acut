@@ -32,7 +32,14 @@ export function usePhotoList(
   /// rows[0]이 전체에서 몇 번째인가. 스크롤바 손잡이 위치의 기준이다.
   const [baseIndex, setBaseIndex] = useState(0);
 
-  const inflight = useRef(false);
+  /// 지금 도는 요청의 표. 0이면 없다. 끝난 요청은 자기 표일 때만 자리를 비운다 —
+  /// 뒤에 시작한 요청의 자리를 앞 요청이 비우면 두 개가 같이 돈다.
+  const inflight = useRef(0);
+  const seq = useRef(0);
+  /// 조건 세대. 첫 쪽을 새로 읽을 때마다 오른다. 낡은 세대의 응답은 버린다 —
+  /// 실측: 앞 폴더를 읽는 중에 다른 폴더를 누르면 새 폴더 요청이 «도는 중»이라
+  /// 건너뛰어지고, 앞 폴더의 응답이 새 폴더 제목 아래 그려졌다.
+  const gen = useRef(0);
   const pending = useRef<number | null>(null);
   const drain = useRef<() => void>(() => {});
   // 콜백은 ref로 본다 — 의존성에 넣으면 부르는 쪽이 바뀔 때마다 목록을 다시 읽는다
@@ -41,15 +48,21 @@ export function usePhotoList(
     cb.current = opts;
   });
 
-  /// 어떤 경로로 끝나든 여기서만 잠금을 푼다. 안 그러면 밀린 요청이 사라진다.
-  const release = useCallback(() => {
-    inflight.current = false;
-    drain.current();
+  /// 요청 하나의 자리를 잡는다. 돌려준 함수로만 그 자리를 비운다.
+  const take = useCallback(() => {
+    const token = ++seq.current;
+    inflight.current = token;
+    return () => {
+      if (inflight.current !== token) return;
+      inflight.current = 0;
+      drain.current();
+    };
   }, []);
 
   const loadFirst = useCallback(async () => {
-    if (inflight.current) return;
-    inflight.current = true;
+    // 도는 요청이 있어도 기다리지 않는다 — 조건이 바뀌었으니 그 응답은 버릴 것이다
+    const g = ++gen.current;
+    const free = take();
     setLoading(true);
     try {
       const p = await invoke<Page>("files_page", {
@@ -58,19 +71,21 @@ export function usePhotoList(
         limit: PAGE,
         group,
       });
+      if (g !== gen.current) return;
       setRows(p.rows);
       setCursor(p.next);
       setDone(!p.next);
       setBaseIndex(0);
     } finally {
-      setLoading(false);
-      release();
+      if (g === gen.current) setLoading(false);
+      free();
     }
-  }, [filter, group, release]);
+  }, [filter, group, take]);
 
   const loadMore = useCallback(async () => {
     if (inflight.current || done || !cursor) return;
-    inflight.current = true;
+    const g = gen.current;
+    const free = take();
     try {
       const p = await invoke<Page>("files_page", {
         filter,
@@ -78,20 +93,22 @@ export function usePhotoList(
         limit: PAGE,
         group,
       });
+      if (g !== gen.current) return;
       setRows((prev) => [...prev, ...p.rows]);
       setCursor(p.next);
       setDone(!p.next);
     } finally {
-      release();
+      free();
     }
-  }, [filter, group, cursor, done, release]);
+  }, [filter, group, cursor, done, take]);
 
   /// 스크롤바가 준 전역 순번으로 목록을 다시 읽는다.
   const seekTo = useCallback(
     async (index: number) => {
       pending.current = index;
-      if (inflight.current) return; // 도는 쪽이 끝나면서 release()로 이어받는다
-      inflight.current = true;
+      if (inflight.current) return; // 도는 쪽이 끝나면서 drain으로 이어받는다
+      const g = gen.current;
+      const free = take();
       try {
         while (pending.current !== null) {
           const want = pending.current;
@@ -100,11 +117,13 @@ export function usePhotoList(
             filter,
             index: want,
           });
+          if (g !== gen.current) return;
           const p = await invoke<Page>("files_page", {
             filter,
             cursor: c,
             limit: PAGE,
           });
+          if (g !== gen.current) return;
           setRows(p.rows);
           setCursor(p.next);
           setDone(!p.next);
@@ -112,10 +131,10 @@ export function usePhotoList(
           cb.current.onSeek?.();
         }
       } finally {
-        inflight.current = false;
+        free();
       }
     },
-    [filter],
+    [filter, take],
   );
 
   useEffect(() => {

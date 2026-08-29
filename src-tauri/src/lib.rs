@@ -152,6 +152,7 @@ pub fn run() {
             api::folder_offload,
             api::startup_report,
             api::heartbeat,
+            api::frontend_log,
             api::video_dates_refresh,
             api::nas::nas_config,
             api::nas::nas_config_set,

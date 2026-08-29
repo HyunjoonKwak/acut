@@ -58,8 +58,13 @@ describe("상태바 오른쪽", () => {
     expect(useView.getState().picks.no_thumb).toBe(false);
   });
 
-  it("휴지통을 보고 있으면 되돌리기·비우기", () => {
+  it("휴지통을 보고 있으면 되돌리기·비우기 — 휴지통에 무언가 있을 때만", () => {
     useView.setState({ viewTrash: true });
+    useData.setState({ trash: { files: 0, bytes: 0 } });
+    const { unmount } = render(<StatusActions {...noop} />);
+    expect(screen.queryByRole("button", { name: "전부 되돌리기" })).not.toBeInTheDocument();
+    unmount();
+    useData.setState({ trash: { files: 4, bytes: 10 } });
     render(<StatusActions {...noop} />);
     expect(
       screen.getByRole("button", { name: "전부 되돌리기" }),
@@ -91,7 +96,8 @@ describe("상태바 오른쪽", () => {
       ],
     });
     render(<StatusActions {...noop} />);
-    const b = screen.getByTitle("되돌리기: 휴지통");
+    // 단추 이름이 «무엇을 몇 장» 물리는지 말한다 — 물린 것(1번)이 아니라 아직 안 물린 것(2번)
+    const b = screen.getByRole("button", { name: /되돌리기: 휴지통 \(1장\)/ });
     await userEvent.click(b);
     expect(noop.undoLast).toHaveBeenCalled();
   });

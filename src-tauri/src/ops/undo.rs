@@ -91,13 +91,49 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
     if kind == "trash" {
         let ids: Vec<i64> = db.read(|c| {
             let mut st = c.prepare(
-                "SELECT file_id FROM journal WHERE batch_id = ?1 AND ok = 1 AND file_id IS NOT NULL",
+                "SELECT j.file_id FROM journal j JOIN files f ON f.id = j.file_id
+                 WHERE j.batch_id = ?1 AND j.ok = 1 AND f.trashed_at IS NOT NULL",
             )?;
             let it = st.query_map([batch_id], |r| r.get(0))?;
             it.collect::<rusqlite::Result<Vec<_>>>()
         })?;
+        // 휴지통 화면에서 이미 되돌렸으면 할 일이 없다 — 배치를 닫고 그렇게 말한다.
+        // (열어 두면 «되돌리기» 단추가 눌러도 아무 일 없이 남는다 — 실측 2026-08-30)
+        if ids.is_empty() {
+            mark_undone(db, batch_id)?;
+            return Ok(Outcome {
+                batch_id,
+                first_error: Some("이미 휴지통에서 되돌린 사진입니다".into()),
+                ..Default::default()
+            });
+        }
         let out = crate::ops::trash::restore(db, &ids)?;
-        if out.moved > 0 || ids.is_empty() {
+        if out.moved > 0 {
+            mark_undone(db, batch_id)?;
+        }
+        return Ok(Outcome { batch_id, ..out });
+    }
+
+    // 휴지통에서 되돌린 것을 물린다 = 다시 휴지통으로. 그새 다른 길로 휴지통에 갔으면 할 일이 없다
+    if kind == "restore" {
+        let ids: Vec<i64> = db.read(|c| {
+            let mut st = c.prepare(
+                "SELECT j.file_id FROM journal j JOIN files f ON f.id = j.file_id
+                 WHERE j.batch_id = ?1 AND j.ok = 1 AND f.trashed_at IS NULL",
+            )?;
+            let it = st.query_map([batch_id], |r| r.get(0))?;
+            it.collect::<rusqlite::Result<Vec<_>>>()
+        })?;
+        if ids.is_empty() {
+            mark_undone(db, batch_id)?;
+            return Ok(Outcome {
+                batch_id,
+                first_error: Some("이미 휴지통에 있는 사진입니다".into()),
+                ..Default::default()
+            });
+        }
+        let out = crate::ops::trash::to_trash(db, &ids, "되돌리기 취소 — 다시 휴지통으로")?;
+        if out.moved > 0 {
             mark_undone(db, batch_id)?;
         }
         return Ok(Outcome { batch_id, ..out });
@@ -334,6 +370,47 @@ mod tests {
         } else {
             assert!(undone.is_some());
         }
+    }
+
+    #[test]
+    fn undoing_a_trash_batch_after_the_trash_view_restored_it_just_closes_it() {
+        let (dir, db, _lib, ids) = setup();
+        let t = trash::to_trash(&db, &ids[..1], "휴지통으로").unwrap();
+        trash::restore(&db, &ids[..1]).unwrap(); // 휴지통 화면에서 되돌렸다
+        let u = undo(&db, t.batch_id).unwrap();
+        assert_eq!((u.moved, u.failed), (0, 0));
+        assert!(u.first_error.as_deref().unwrap_or("").contains("이미"));
+        let undone: Option<i64> = db
+            .read(|c| c.query_row("SELECT undone_at FROM batches WHERE id=?1", [t.batch_id], |r| r.get(0)))
+            .unwrap();
+        assert!(undone.is_some(), "할 일이 없는 배치는 닫힌다 — 단추가 영영 남지 않게");
+        assert!(dir.path().join("작업대/a.jpg").is_file(), "사진은 제자리");
+    }
+
+    #[test]
+    fn undoing_a_restore_puts_the_photo_back_into_the_trash() {
+        let (dir, db, _lib, ids) = setup();
+        trash::to_trash(&db, &ids[..1], "휴지통으로").unwrap();
+        let r = trash::restore(&db, &ids[..1]).unwrap();
+        assert!(dir.path().join("작업대/a.jpg").is_file());
+        let u = undo(&db, r.batch_id).unwrap();
+        assert_eq!((u.moved, u.failed), (1, 0), "{u:?}");
+        assert!(!dir.path().join("작업대/a.jpg").exists(), "다시 휴지통으로");
+        let trashed: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE trashed_at IS NOT NULL", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(trashed, 1);
+    }
+
+    #[test]
+    fn empty_operations_do_not_leave_batches_behind() {
+        let (_d, db, _lib, ids) = setup();
+        let before: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0))).unwrap();
+        let r = trash::restore(&db, &ids).unwrap(); // 휴지통이 비었다
+        assert_eq!(r.moved, 0);
+        assert!(r.first_error.is_some());
+        let after: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0))).unwrap();
+        assert_eq!(before, after, "빈 배치가 생기지 않는다");
     }
 
     #[test]

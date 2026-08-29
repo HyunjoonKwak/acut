@@ -28,6 +28,7 @@ export default function StatusActions({
 }) {
   const busy = useData((s) => s.busy);
   const toClean = useData((s) => s.toClean);
+  const trash = useData((s) => s.trash);
   const batches = useData((s) => s.batches);
   const stats = useData((s) => s.stats);
   const nasNew = useData((s) => s.nasNew);
@@ -53,7 +54,7 @@ export default function StatusActions({
           </button>
         </>
       )}
-      {!hasJob && viewTrash && (
+      {!hasJob && viewTrash && (trash?.files ?? 0) > 0 && (
         <>
           <button
             onClick={restoreAll}
@@ -97,10 +98,10 @@ export default function StatusActions({
       {undoable && (
         <button
           onClick={undoLast}
-          title={`되돌리기: ${undoable.label ?? ""}`}
+          title={`가장 최근 작업을 물립니다: ${undoable.label ?? ""} · ${undoable.item_count.toLocaleString()}장`}
           className="hover:text-fg"
         >
-          ↩ 되돌리기 <Kbd>⌘Z</Kbd>
+          ↩ 되돌리기: {undoable.label ?? "최근 작업"} ({undoable.item_count.toLocaleString()}장) <Kbd>⌘Z</Kbd>
         </button>
       )}
       {stats && stats.thumbs_pending > 0 && !hasJob && (

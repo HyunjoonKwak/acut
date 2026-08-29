@@ -45,6 +45,8 @@ export function useOps(cb: {
           );
         else if (r.moved > 0)
           toast(`${r.moved.toLocaleString()}장 처리했습니다`);
+        // 할 일이 없었던 것도 말한다 — 조용히 끝나면 «안 되는 것 같아»가 된다
+        else toast(r.first_error ?? "처리할 것이 없습니다");
         await after();
         useData.getState().refreshTrash(usePrefs.getState().libId);
       } catch (e) {
@@ -123,6 +125,12 @@ export function useOps(cb: {
       setBusy(
         r.failed > 0 ? `${r.failed}장 실패 — ${r.first_error ?? ""}` : "",
       );
+      if (r.failed === 0)
+        toast(
+          r.moved > 0
+            ? `«${last.label ?? "최근 작업"}» 되돌렸습니다 — ${r.moved.toLocaleString()}장`
+            : (r.first_error ?? "되돌릴 것이 없습니다"),
+        );
       await after();
     } catch (e) {
       setBusy(String(e));

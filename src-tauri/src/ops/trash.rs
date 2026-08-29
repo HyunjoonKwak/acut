@@ -226,6 +226,10 @@ pub fn copy_mtime(from: &Path, to: &Path) {
 /// 제외로 판정한 것들을 휴지통으로 옮긴다.
 pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
     let items = load(db, ids, false)?;
+    if items.is_empty() {
+        // 빈 배치를 남기지 않는다 — 되돌리기 목록에 «0장»이 쌓이고 사용자는 «안 된다»고 읽는다
+        return Ok(Outcome { first_error: Some("휴지통으로 옮길 사진이 없습니다".into()), ..Default::default() });
+    }
     let batch_id = super::open_batch(db, "trash", label)?;
     let mut out = Outcome { batch_id, ..Default::default() };
     // 라이브러리·마운트는 한 번만 — 파일마다 찾으면 5천 장에 수천만 행 스캔·수만 syscall (리뷰 H16)
@@ -351,6 +355,9 @@ pub fn prune_empty_dirs(dir: &Path, stop: &Path) -> usize {
 /// 휴지통에서 제자리로 되돌린다. 평점·판정은 그대로 살아 있다.
 pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
     let items = load(db, ids, true)?;
+    if items.is_empty() {
+        return Ok(Outcome { first_error: Some("휴지통에 되돌릴 사진이 없습니다".into()), ..Default::default() });
+    }
     let batch_id = super::open_batch(db, "restore", "휴지통에서 되돌리기")?;
     let mut out = Outcome { batch_id, ..Default::default() };
 
@@ -362,8 +369,10 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
     let (libs, mounts) = lookups(db, &items)?;
 
     for it in &items {
-        let (Some(lib_dir), Some(mount), Some(tp)) = (
-            libs.get(&it.library_id).and_then(|l| l.dir.clone()),
+        let lib = libs.get(&it.library_id);
+        let (Some(lib_dir), Some(lib_rel), Some(mount), Some(tp)) = (
+            lib.and_then(|l| l.dir.clone()),
+            lib.map(|l| l.rel_path.clone()),
             mounts.get(&it.volume_uuid).cloned().flatten(),
             paths.get(&it.id),
         ) else {
@@ -376,6 +385,13 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
         let dest = free_path(mount.join(&it.vol_rel));
         match move_with_sidecars(&src, &dest) {
             Ok(()) => {
+                // 저널 — ⌘Z 로 «되돌리기»를 물릴 수 있게(다시 휴지통으로). 경로는 볼륨 기준
+                let from_vol_rel = crate::media::cache::rel_path(&lib_rel, tp);
+                let to_vol_rel = dest
+                    .strip_prefix(&mount)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| it.vol_rel.clone());
+                super::record(db, batch_id, "restore", it.id, &it.volume_uuid, &from_vol_rel, Some(&to_vol_rel), Ok(()))?;
                 // 그새 같은 이름이 생겨 «IMG_1 (2).jpg»로 돌아왔을 수 있다 — 행도 그 이름으로.
                 // 안 맞추면 다음 치우기·이름 바꾸기가 다른 사진에 걸린다 (리뷰 C5)
                 let new_name = dest
@@ -409,6 +425,9 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
 /// 확인한다. 심볼릭 링크나 `..`으로 밖을 가리키면 건너뛴다.
 pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
     let items = load(db, ids, true)?;
+    if items.is_empty() {
+        return Ok(Outcome { first_error: Some("휴지통이 비어 있습니다".into()), ..Default::default() });
+    }
     let batch_id = super::open_batch(db, "delete", "휴지통 비우기")?;
     let mut out = Outcome { batch_id, ..Default::default() };
 

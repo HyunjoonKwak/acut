@@ -154,7 +154,13 @@ pub fn scan_folder(
             };
             // 영상의 taken_at_source도 0(exif)으로 남는다. 파일 안에 박힌
             // 메타데이터라는 뜻이라 의미가 같다 — 출처가 EXIF가 아니라 컨테이너일 뿐.
-            let (ts, src) = taken_at::resolve(m.taken_at, &f.name, f.mtime, f.birthtime, now);
+            let (ts, src) = if kinds::classify(&f.name) == Some(Kind::Video) {
+                // 영상은 단서 중 가장 이른 것 — 컨테이너 시각은 재인코딩 날로 바뀌기 일쑤다
+                let folder = f.rel_dir.rsplit('/').next().unwrap_or("");
+                taken_at::resolve_video(m.taken_at, &f.name, folder, f.mtime, f.birthtime, now)
+            } else {
+                taken_at::resolve(m.taken_at, &f.name, f.mtime, f.birthtime, now)
+            };
 
             // 스캔 쪽도 시간 기준으로. 500장마다면 숫자가 껑충 뛴다.
             let due = {

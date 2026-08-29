@@ -1248,17 +1248,21 @@ pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<()
             let rel = rel.trim_start_matches('/').to_string();
             let path = mount.join(&rel);
             let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
-            // 파일 안 → 파일명 → 파일 시각(더 이른 쪽) — Spotlight는 다시 믿지 않는다
-            let (t, src) = match crate::media::mp4date::creation_time(&path) {
-                Some(t) => (t, 0),
-                None => {
-                    let md = std::fs::metadata(&path).ok();
-                    let unix = |t: Option<std::time::SystemTime>| t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
-                    let now = chrono::Utc::now().timestamp();
-                    let (t, s) = crate::media::taken_at::resolve(None, &name, md.as_ref().and_then(|m| unix(m.modified().ok())), md.as_ref().and_then(|m| unix(m.created().ok())), now);
-                    (t, s as i32)
-                }
-            };
+            // 단서(컨테이너·파일명·폴더명·파일 시각) 가운데 가장 이른 그럴듯한 것
+            let embedded = crate::media::mp4date::creation_time(&path);
+            let md = std::fs::metadata(&path).ok();
+            let unix = |t: Option<std::time::SystemTime>| t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
+            let now = chrono::Utc::now().timestamp();
+            let folder = rel.trim_end_matches(&name).trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
+            let (t, s) = crate::media::taken_at::resolve_video(
+                embedded,
+                &name,
+                &folder,
+                md.as_ref().and_then(|m| unix(m.modified().ok())),
+                md.as_ref().and_then(|m| unix(m.created().ok())),
+                now,
+            );
+            let src = s as i32;
             if t != taken_at {
                 let _ = db.write(|c| {
                     c.execute("UPDATE files SET taken_at = ?2, taken_at_source = ?3 WHERE id = ?1", rusqlite::params![id, t, src])

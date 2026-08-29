@@ -44,6 +44,36 @@ pub fn is_plausible(ts: i64, now: i64) -> bool {
     ts >= PLAUSIBLE_FROM && ts <= now + 86_400
 }
 
+/// 영상의 촬영일 — 단서 가운데 **가장 이른 그럴듯한 것**.
+///
+/// 영상은 EXIF가 없고, 컨테이너의 시각은 다시 인코딩·내보내기한 날로 바뀌기
+/// 일쑤다(실측: 2017년 영상의 mvhd가 2026-07-01, 구글포토 내보내기는 파일명에
+/// 2021이 있는데 컨테이너·파일 시각은 2026-08-26). 복사·변환은 시각을 뒤로만
+/// 미루므로 가장 이른 값이 진짜에 가장 가깝다. 폴더 이름(«2017-11-12 반도4차…»)도 단서다.
+pub fn resolve_video(
+    embedded: Option<i64>,
+    file_name: &str,
+    folder_name: &str,
+    mtime: Option<i64>,
+    birthtime: Option<i64>,
+    now: i64,
+) -> (i64, Source) {
+    let mut best: Option<(i64, Source)> = None;
+    let mut offer = |t: Option<i64>, src: Source| {
+        if let Some(t) = t.filter(|&t| is_plausible(t, now)) {
+            if best.is_none_or(|(b, _)| t < b) {
+                best = Some((t, src));
+            }
+        }
+    };
+    offer(embedded, Source::Exif);
+    offer(from_filename(file_name), Source::Filename);
+    offer(from_filename(folder_name), Source::Filename);
+    offer(mtime, Source::FileTime);
+    offer(birthtime, Source::FileTime);
+    best.unwrap_or((now, Source::Unknown))
+}
+
 /// 촬영일을 정한다. 항상 값을 돌려준다 (`taken_at`은 NOT NULL).
 pub fn resolve(
     exif: Option<i64>,
@@ -140,12 +170,18 @@ fn parse_digits(d: &[u8]) -> Option<i64> {
         }
         return None;
     }
-    // 12자리 — 분까지 (`2022_05_14 19_17 (1).mp4`, 실측 46개)
+    // 12자리 — 두 가지 꼴이 있다. 분까지(`2022_05_14 19_17`) 또는 두 자리 연도에
+    // 초까지(`AH001_am_sm_210609_155304` = 2021-06-09 15:53:04, 갤럭시 편집본).
     if d.len() == 12 {
         let (y, mo, da) = (num(&d[0..4]), num(&d[4..6]), num(&d[6..8]));
         let (h, mi) = (num(&d[8..10]), num(&d[10..12]));
-        if valid_date(y, mo, da) && h < 24 && mi < 60 {
+        if valid_date(y, mo, da) && y <= 2100 && h < 24 && mi < 60 {
             return Some(civil_to_unix(y, mo, da, h, mi, 0));
+        }
+        let (y2, mo2, da2) = (2000 + num(&d[0..2]), num(&d[2..4]), num(&d[4..6]));
+        let (h2, mi2, s2) = (num(&d[6..8]), num(&d[8..10]), num(&d[10..12]));
+        if valid_date(y2, mo2, da2) && h2 < 24 && mi2 < 60 && s2 < 60 {
+            return Some(civil_to_unix(y2, mo2, da2, h2, mi2, s2));
         }
         return None;
     }
@@ -275,6 +311,27 @@ mod tests {
         let exif = t(2018, 7, 25, 14, 31, 0);
         let (ts, src) = resolve(Some(exif), "20260101_123456.jpg", Some(NOW), Some(NOW), NOW);
         assert_eq!((ts, src), (exif, Source::Exif));
+    }
+
+    #[test]
+    fn two_digit_year_with_seconds() {
+        assert_eq!(from_filename("AH001_am_sm_210609_155304.mp4"), Some(civil_to_unix(2021, 6, 9, 15, 53, 4)));
+    }
+
+    #[test]
+    fn video_takes_the_earliest_plausible_clue() {
+        let now = civil_to_unix(2026, 8, 29, 0, 0, 0);
+        let re_encoded = civil_to_unix(2026, 7, 1, 0, 0, 0);
+        let copied = civil_to_unix(2017, 11, 17, 14, 8, 32);
+        // 컨테이너는 재인코딩 날, 파일 시각은 복사한 날, 폴더 이름이 행사 날
+        let (t, s) = resolve_video(Some(re_encoded), "2동 옥상뷰(1).mp4", "2017-11-12 반도4차 현장 방문", Some(copied), Some(copied), now);
+        assert_eq!((t, s), (civil_to_unix(2017, 11, 12, 0, 0, 0), Source::Filename));
+        // 파일명에 두 자리 연도 — 컨테이너·파일 시각이 다 늦어도 파일명이 이긴다
+        let late = civil_to_unix(2026, 8, 26, 13, 26, 7);
+        let (t, s) = resolve_video(Some(late), "AH001_am_sm_210609_155304.mp4", "2021년의 사진", Some(late), Some(late), now);
+        assert_eq!((t, s), (civil_to_unix(2021, 6, 9, 15, 53, 4), Source::Filename));
+        // 단서가 없으면 지금
+        assert_eq!(resolve_video(None, "a.mp4", "b", None, None, now).1, Source::Unknown);
     }
 
     #[test]

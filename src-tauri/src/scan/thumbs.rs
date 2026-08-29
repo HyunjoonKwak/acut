@@ -261,6 +261,10 @@ mod tests {
                 let Ok(rd) = std::fs::read_dir(&d) else { continue };
                 for e in rd.flatten() {
                     let p = e.path();
+                    // exFAT의 ._ 사이드카는 사진이 아니다
+                    if p.file_name().map(|n| n.to_string_lossy().starts_with("._")).unwrap_or(false) {
+                        continue;
+                    }
                     if p.is_dir() {
                         stack.push(p);
                     } else if p

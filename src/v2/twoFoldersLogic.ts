@@ -41,8 +41,8 @@ export function verdict(r: PairRow): { kind: "same" | "b_in_a" | "a_in_b" | "par
   if (!r.a) return { kind: "b_only", text: "B에만 있음" };
   if (!r.b) return { kind: "a_only", text: "A에만 있음" };
   if (r.same) return { kind: "same", text: "✓ 똑같음" };
-  if (r.b_in_a) return { kind: "b_in_a", text: "B쪽이 A에 다 있음 — B 지워도 됨" };
-  if (r.a_in_b) return { kind: "a_in_b", text: "A쪽이 B에 다 있음 — A 지워도 됨" };
+  if (r.b_in_a) return { kind: "b_in_a", text: "B쪽 사진이 A쪽에 다 있음" };
+  if (r.a_in_b) return { kind: "a_in_b", text: "A쪽 사진이 B쪽에 다 있음" };
   return { kind: "partial", text: `${r.common.toLocaleString()}장 똑같음` };
 }
 

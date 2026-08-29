@@ -186,7 +186,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
   if (sets === null)
     return (
       <div className="h-full flex items-center justify-center gap-2 text-fg-mute">
-        <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 폴더를 견주는 중…
+        <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 폴더를 비교하는 중…
       </div>
     );
   const pending = sets.filter((s) => s.pending);

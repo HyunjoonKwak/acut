@@ -62,7 +62,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       // 처리된 짝은 뺀다 — B쪽을 지운 줄에서 A쪽을 또 누르면 방금 남긴 B가 뒤집힌다
       const pairs = targets.filter((r) => droppable(r, side) && doneSide(r) === null);
       if (pairs.length === 0) {
-        toast(`${side === "a" ? "A" : "B"}쪽을 지워도 되는 짝이 없습니다`);
+        toast(`${side === "a" ? "A쪽 사진이 B쪽에" : "B쪽 사진이 A쪽에"} 다 있는 폴더가 없습니다`);
         return;
       }
       const drop = (r: PairRow) => (side === "a" ? r.a! : r.b!);
@@ -126,7 +126,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   /// 지워도 되는 짝 — B 쪽 / A 쪽
   const todoB = useMemo(() => (rows ?? []).filter((r) => droppable(r, "b") && doneSide(r) === null), [rows]);
   const todoA = useMemo(() => (rows ?? []).filter((r) => droppable(r, "a") && doneSide(r) === null), [rows]);
-  const sameBytes = todoB.reduce((s, r) => s + r.bytes, 0);
+  /// 이미 제외 표시가 다 붙은 폴더 수 — 쪽별
+  const doneB = useMemo(() => (rows ?? []).filter((r) => doneSide(r) === "b").length, [rows]);
+  const doneA = useMemo(() => (rows ?? []).filter((r) => doneSide(r) === "a").length, [rows]);
   /// 폴더 비교로 붙인 표시(남김·제외)를 되돌린다 — 휴지통에 가기 전이면 언제든
   const unmark = useCallback(
     async (targets: PairRow[]) => {
@@ -198,73 +200,98 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         <Picker label="B" value={b} onPick={pickSide("b")} startAt={a?.abs ?? null} disabled={locked} />
         {busy && (
           <span className="flex items-center gap-2 text-keep">
-            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 견주는 중…
+            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 비교하는 중…
           </span>
         )}
-        {marking && (
-          <span className="flex items-center gap-2 text-keep tabular-nums">
-            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> {marking.total.toLocaleString()}쌍에 표시 중…
-          </span>
-        )}
-        {sweeping && (
-          <span className="flex items-center gap-2 text-keep">
-            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 휴지통으로 옮기는 중…
-          </span>
-        )}
-        {rows && !marking && (
+        {rows && !busy && (
           <span className="text-fg-dim tabular-nums">
-            B쪽을 지워도 되는 짝 <b className="text-fg">{todoB.length.toLocaleString()}</b>
-            {same.length > 0 && <> (그중 똑같음 {same.length.toLocaleString()})</>}
-            {todoA.length > 0 && <> · A쪽을 지워도 되는 짝 {todoA.length.toLocaleString()}</>}
-            {todoB.length > 0 && (
-              <>
-                {" "}· B쪽을 지우면 <b className="text-keep">{fmtBytes(sameBytes)}</b> 빔
-              </>
+            폴더 {rows.length.toLocaleString()}개 비교함 — 똑같음 <b className="text-fg">{same.length.toLocaleString()}</b>
+            {" "}· B쪽 사진이 A쪽에 다 있음 <b className="text-fg">{rows.filter((r) => r.b_in_a && !r.same).length.toLocaleString()}</b>
+            {rows.some((r) => r.a_in_b && !r.same) && (
+              <> · A쪽 사진이 B쪽에 다 있음 {rows.filter((r) => r.a_in_b && !r.same).length.toLocaleString()}</>
             )}
           </span>
         )}
-        <div className="flex-1" />
-        {flagged > 0 && (
-          <>
-            <button
-              onClick={() => unmark(rows ?? [])}
-              disabled={locked}
-              title="이 비교에서 붙인 남김·제외 표시를 전부 미판정으로 되돌립니다 — 파일은 그대로"
-              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
-            >
-              표시 취소
-            </button>
-            <button
-              onClick={sweep}
-              disabled={locked}
-              title="이 비교에 나온 폴더 안에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다"
-              className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
-            >
-              제외한 {flagged.toLocaleString()}장 휴지통으로
-            </button>
-          </>
-        )}
-        {todoB.length > 0 && (
-          <button
-            onClick={() => mark(todoB, "b")}
-            disabled={locked}
-            title="B쪽 사진이 전부 A쪽에 있는 짝 — B쪽(하위 폴더 포함)에 제외 표시"
-            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
-          >
-            B쪽 전부 제외 표시 ({todoB.length.toLocaleString()}짝)
-          </button>
-        )}
-        {todoA.length > 0 && (
-          <button
-            onClick={() => mark(todoA, "a")}
-            disabled={locked}
-            title="A쪽 사진이 전부 B쪽에 있는 짝 — A쪽(하위 폴더 포함)에 제외 표시"
-            className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
-          >
-            A쪽 전부 ({todoA.length.toLocaleString()}짝)
-          </button>
-        )}
       </div>
+
+      {/* 다음에 할 일 — 세 단계를 순서대로. 지금 어디까지 왔는지가 문장에 보인다 */}
+      {rows && (
+        <div className="shrink-0 flex items-center gap-x-4 gap-y-1 px-4 py-1.5 border-b border-line bg-raised/40 text-[12.5px] flex-wrap">
+          <span className="text-fg-mute">① 비교 끝</span>
+          <span className="text-fg-faint">→</span>
+          <span className="flex items-center gap-2">
+            <span className={todoB.length + todoA.length > 0 ? "text-fg" : "text-fg-mute"}>② 제외 표시</span>
+            {marking ? (
+              <span className="flex items-center gap-2 text-keep tabular-nums">
+                <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 폴더 {marking.total.toLocaleString()}개에 표시 중…
+              </span>
+            ) : (
+              <>
+                {todoB.length > 0 && (
+                  <button
+                    onClick={() => mark(todoB, "b")}
+                    disabled={locked}
+                    title="B쪽 사진이 전부 A쪽에 있는 폴더 — B쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다. 파일은 아직 그대로"
+                    className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
+                  >
+                    B쪽 폴더 {todoB.length.toLocaleString()}개 제외 표시
+                  </button>
+                )}
+                {todoA.length > 0 && (
+                  <button
+                    onClick={() => mark(todoA, "a")}
+                    disabled={locked}
+                    title="A쪽 사진이 전부 B쪽에 있는 폴더 — A쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다"
+                    className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+                  >
+                    A쪽 폴더 {todoA.length.toLocaleString()}개 제외 표시
+                  </button>
+                )}
+                {flagged > 0 && (
+                  <span className="text-fg-dim tabular-nums">
+                    제외 표시된 사진 <b className="text-fg">{flagged.toLocaleString()}</b>장
+                    {doneB > 0 && <> (B쪽 폴더 {doneB.toLocaleString()}개)</>}
+                    {doneA > 0 && <> (A쪽 폴더 {doneA.toLocaleString()}개)</>}
+                  </span>
+                )}
+                {flagged > 0 && (
+                  <button
+                    onClick={() => unmark(rows)}
+                    disabled={locked}
+                    title="이 비교에서 붙인 남김·제외 표시를 전부 미판정으로 되돌립니다 — 파일은 그대로"
+                    className="h-7 px-2.5 rounded-md text-fg-dim ring-1 ring-line-strong text-[12px] disabled:opacity-40"
+                  >
+                    표시 취소
+                  </button>
+                )}
+                {todoB.length + todoA.length === 0 && flagged === 0 && (
+                  <span className="text-fg-mute">제외할 폴더가 없습니다</span>
+                )}
+              </>
+            )}
+          </span>
+          <span className="text-fg-faint">→</span>
+          <span className="flex items-center gap-2">
+            <span className={flagged > 0 ? "text-fg" : "text-fg-mute"}>③ 휴지통으로</span>
+            {sweeping ? (
+              <span className="flex items-center gap-2 text-keep">
+                <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 옮기는 중…
+              </span>
+            ) : flagged > 0 ? (
+              <button
+                onClick={sweep}
+                disabled={locked}
+                title="②에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다. 파일이 실제로 움직이지만 휴지통에서 되돌릴 수 있습니다. 영구 삭제는 휴지통 화면의 «영구히 비우기»"
+                className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
+              >
+                제외 표시된 {flagged.toLocaleString()}장 휴지통으로 보내기
+              </button>
+            ) : (
+              <span className="text-fg-mute">②를 먼저</span>
+            )}
+          </span>
+        </div>
+      )}
 
       {missing > 0 && (
         <div className="shrink-0 px-4 py-1.5 text-[12px] text-drop bg-drop/10 border-b border-line">
@@ -274,7 +301,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       <div className="flex-1 min-h-0 overflow-y-auto scroll-thin">
         {rows === null ? (
           <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute text-[13px]">
-            <div>«폴더 고르기…»로 견줄 두 폴더를 Finder 에서 고르세요 — 등록한 라이브러리 안의 폴더면 됩니다.</div>
+            <div>«폴더 고르기…»로 비교할 두 폴더를 Finder 에서 고르세요 — 등록한 라이브러리 안의 폴더면 됩니다.</div>
             <div className="text-fg-faint text-[12px]">예: A = T7 › 통합전후보 › 후보1번 › 연도별, B = T7 › 통합전후보 › 후보2번</div>
           </div>
         ) : rows.length === 0 ? (
@@ -337,7 +364,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                           onClick={() => unmark([r])}
                           disabled={locked}
                           className="ml-2 h-6 px-2 rounded text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
-                          title="이 짝의 표시를 되돌립니다"
+                          title="이 폴더의 표시를 되돌립니다"
                         >
                           취소
                         </button>

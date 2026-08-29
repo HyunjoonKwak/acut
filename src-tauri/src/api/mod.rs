@@ -364,11 +364,18 @@ pub async fn files_summary(state: State<'_, AppState>, filter: Filter) -> Result
 /// 스캐너는 파일이 든 폴더만 기록하므로 중간 마디는 [`tree::build`]가 만든다.
 #[derive(Debug, Serialize)]
 pub struct FolderHit {
-    pub id: i64,
+    /// `folders` 행 — 사진이 바로 아래 없는 중간 폴더는 행이 없어 None
+    pub id: Option<i64>,
     pub library_id: i64,
     pub library: String,
     /// 라이브러리 기준 경로
     pub path: String,
+    pub volume_uuid: String,
+    /// 볼륨 기준 경로 — 견주기·질의의 열쇠
+    pub vol_rel: String,
+    /// Finder 가 준 절대경로 — 다음 고르기 창의 시작 자리
+    pub abs: String,
+    /// 이 폴더와 그 아래의 사진 수
     pub file_count: i64,
 }
 
@@ -398,20 +405,38 @@ pub async fn folder_by_path(state: State<'_, AppState>, path: String) -> Result<
     }
     let Some((lib, sub)) = best else { return Ok(None) };
     let vol_rel = crate::media::cache::rel_path(&lib.rel_path, &sub);
-    let hit = state
+    let esc = crate::db::query::escape_like(&vol_rel);
+    let (id, n): (Option<i64>, i64) = state
         .db
         .read(|c| {
             use rusqlite::OptionalExtension;
-            c.query_row(
-                "SELECT id, (SELECT COUNT(*) FROM files WHERE folder_id = folders.id AND trashed_at IS NULL)
-                 FROM folders WHERE volume_uuid = ?1 AND rel_path = ?2",
-                rusqlite::params![lib.volume_uuid, vol_rel],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
-            )
-            .optional()
+            let id = c
+                .query_row(
+                    "SELECT id FROM folders WHERE volume_uuid = ?1 AND rel_path = ?2",
+                    rusqlite::params![lib.volume_uuid, vol_rel],
+                    |r| r.get::<_, i64>(0),
+                )
+                .optional()?;
+            let n = c.query_row(
+                "SELECT COUNT(*) FROM files f JOIN folders fo ON fo.id = f.folder_id
+                  WHERE fo.volume_uuid = ?1 AND (fo.rel_path = ?2 OR fo.rel_path LIKE ?3 || '/%' ESCAPE '\\')
+                    AND f.trashed_at IS NULL",
+                rusqlite::params![lib.volume_uuid, vol_rel, esc],
+                |r| r.get::<_, i64>(0),
+            )?;
+            Ok((id, n))
         })
         .map_err(err)?;
-    Ok(hit.map(|(id, n)| FolderHit { id, library_id: lib.id, library: lib.name.clone(), path: sub, file_count: n }))
+    Ok(Some(FolderHit {
+        id,
+        library_id: lib.id,
+        library: lib.name.clone(),
+        path: sub,
+        volume_uuid: lib.volume_uuid.clone(),
+        vol_rel,
+        abs: path,
+        file_count: n,
+    }))
 }
 
 #[tauri::command]

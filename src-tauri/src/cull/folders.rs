@@ -175,13 +175,10 @@ struct Agg {
     has_children: bool,
 }
 
-fn folders_under(c: &Connection, root_id: i64) -> rusqlite::Result<Vec<Agg>> {
-    let (vol, rel): (String, String) = c.query_row(
-        "SELECT volume_uuid, rel_path FROM folders WHERE id = ?1",
-        [root_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    let esc = crate::db::query::escape_like(&rel);
+/// 뿌리는 (볼륨, 볼륨 기준 경로)다 — «연도별»처럼 사진이 바로 아래 없는 폴더는 `folders`
+/// 행이 없어서 id 로는 가리킬 수 없다 (실측: 후보1번/연도별을 골랐는데 «없는 폴더»).
+fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<Vec<Agg>> {
+    let esc = crate::db::query::escape_like(rel);
     let mut st = c.prepare(
         "SELECT fo.id, fo.rel_path, fo.area, l.id, l.name, l.rel_path, f.full_hash, f.size,
                 EXISTS (SELECT 1 FROM folders k WHERE k.parent_id = fo.id)
@@ -209,7 +206,7 @@ fn folders_under(c: &Connection, root_id: i64) -> rusqlite::Result<Vec<Agg>> {
         let (id, fo_rel, area, lib_id, lib_name, lib_rel, hash, size, kids) = row?;
         if out.last().map(|a| a.info.folder_id) != Some(id) {
             let sub = fo_rel
-                .strip_prefix(&rel)
+                .strip_prefix(rel)
                 .map(|s| s.trim_start_matches('/').to_string())
                 .unwrap_or_else(|| fo_rel.clone());
             out.push(Agg {
@@ -245,9 +242,13 @@ fn folders_under(c: &Connection, root_id: i64) -> rusqlite::Result<Vec<Agg>> {
 ///
 /// 내용이 완전히 같은 폴더끼리 짝(same), 이름이 같은데 내용이 다른 폴더끼리는 공통
 /// 파일 수와 함께 짝(partial), 한쪽에만 있는 폴더는 홀로. 같은 쪽 큰 것부터.
-pub fn compare_two(c: &Connection, a_root: i64, b_root: i64) -> rusqlite::Result<Vec<PairRow>> {
-    let a = folders_under(c, a_root)?;
-    let b = folders_under(c, b_root)?;
+pub fn compare_two(
+    c: &Connection,
+    (a_vol, a_rel): (&str, &str),
+    (b_vol, b_rel): (&str, &str),
+) -> rusqlite::Result<Vec<PairRow>> {
+    let a = folders_under(c, a_vol, a_rel)?;
+    let b = folders_under(c, b_vol, b_rel)?;
     // B 쪽 서명·이름 색인
     let sig = |g: &Agg| -> Option<String> {
         (g.files > 0 && g.all_hashed && !g.has_children).then(|| g.hashes.join(","))
@@ -420,17 +421,23 @@ mod tests {
     #[test]
     fn two_roots_pair_identical_and_partial_folders() {
         let (_d, db) = setup();
-        let id_of = |name: &str| -> i64 {
-            db.read(|c| c.query_row("SELECT id FROM folders WHERE rel_path LIKE ?1", [format!("%{name}")], |r| r.get(0)))
-                .unwrap()
+        let root_of = |name: &str| -> (String, String) {
+            db.read(|c| {
+                c.query_row(
+                    "SELECT volume_uuid, rel_path FROM folders WHERE rel_path LIKE ?1",
+                    [format!("%{name}")],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap()
         };
-        let (a, b, d) = (id_of("a"), id_of("b"), id_of("d"));
+        let (a, b, d) = (root_of("a"), root_of("b"), root_of("d"));
         // a 와 b 는 내용이 같다 — 뿌리끼리도 짝이 된다
-        let rows = db.read(|c| compare_two(c, a, b)).unwrap();
+        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&b.0, &b.1))).unwrap();
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert!(rows[0].same && rows[0].common == 2);
         // a 와 d 는 한 장만 겹친다 — 뿌리 이름은 다르지만 뿌리끼리는 sub 가 같다("")
-        let rows = db.read(|c| compare_two(c, a, d)).unwrap();
+        let rows = db.read(|c| compare_two(c, (&a.0, &a.1), (&d.0, &d.1))).unwrap();
         assert_eq!(rows.len(), 1, "{rows:?}");
         assert!(!rows[0].same);
         assert_eq!((rows[0].common, rows[0].files_a, rows[0].files_b), (1, 2, 2));

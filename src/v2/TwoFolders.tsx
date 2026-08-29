@@ -30,7 +30,16 @@ type PairRow = {
 };
 type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
 /** Finder 로 고른 폴더가 라이브러리 안의 어느 폴더인가 */
-type FolderHit = { id: number; library_id: number; library: string; path: string; file_count: number };
+type FolderHit = {
+  id: number | null;
+  library_id: number;
+  library: string;
+  path: string;
+  volume_uuid: string;
+  vol_rel: string;
+  abs: string;
+  file_count: number;
+};
 
 const settled = (f: FolderIn) => f.area === 1 || f.area === 2;
 
@@ -47,7 +56,12 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     let live = true;
     setBusy(true);
     setRows(null);
-    invoke<PairRow[]>("cull_compare_folders", { aFolderId: a.id, bFolderId: b.id })
+    invoke<PairRow[]>("cull_compare_folders", {
+      aVolume: a.volume_uuid,
+      aRel: a.vol_rel,
+      bVolume: b.volume_uuid,
+      bRel: b.vol_rel,
+    })
       .then((r) => live && setRows(r))
       .catch((e) => live && toast(String(e), "drop"))
       .finally(() => live && setBusy(false));
@@ -57,11 +71,16 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   }, [a, b]);
 
   const compare = useCallback(async () => {
-    if (!a?.id || !b?.id) return;
+    if (!a || !b) return;
     setBusy(true);
     try {
       setRows(
-        await invoke<PairRow[]>("cull_compare_folders", { aFolderId: a.id, bFolderId: b.id }),
+        await invoke<PairRow[]>("cull_compare_folders", {
+          aVolume: a.volume_uuid,
+          aRel: a.vol_rel,
+          bVolume: b.volume_uuid,
+          bRel: b.vol_rel,
+        }),
       );
     } catch (e) {
       toast(String(e), "drop");
@@ -125,9 +144,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="h-full flex flex-col">
       <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line text-[12.5px] flex-wrap">
-        <Picker label="A" value={a} onPick={setA} />
+        <Picker label="A" value={a} onPick={setA} startAt={b?.abs ?? null} />
         <span className="text-fg-mute">⇔</span>
-        <Picker label="B" value={b} onPick={setB} />
+        <Picker label="B" value={b} onPick={setB} startAt={a?.abs ?? null} />
         {busy && (
           <span className="flex items-center gap-2 text-keep">
             <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 견주는 중…
@@ -265,13 +284,23 @@ function Picker({
   label,
   value,
   onPick,
+  startAt,
 }: {
   label: string;
   value: FolderHit | null;
   onPick: (f: FolderHit) => void;
+  /** 창이 열릴 자리 — 다른 쪽에서 고른 폴더의 위 폴더. 없으면 /Volumes */
+  startAt: string | null;
 }) {
   const pick = async () => {
-    const picked = await openDialog({ directory: true, multiple: false, title: `${label} 폴더 고르기` });
+    const from = value?.abs ?? startAt;
+    const defaultPath = from ? from.replace(/\/[^/]+$/, "") || "/Volumes" : "/Volumes";
+    const picked = await openDialog({
+      directory: true,
+      multiple: false,
+      title: `${label} 폴더 고르기 — 등록한 라이브러리 안의 폴더`,
+      defaultPath,
+    });
     if (typeof picked !== "string") return;
     try {
       const hit = await invoke<FolderHit | null>("folder_by_path", { path: picked });

@@ -373,10 +373,15 @@ pub async fn cull_folder_sets(state: State<'_, AppState>) -> Result<Vec<folders:
 #[tauri::command]
 pub async fn cull_compare_folders(
     state: State<'_, AppState>,
-    a_folder_id: i64,
-    b_folder_id: i64,
+    a_volume: String,
+    a_rel: String,
+    b_volume: String,
+    b_rel: String,
 ) -> Result<Vec<folders::PairRow>, String> {
-    state.db.read(|c| folders::compare_two(c, a_folder_id, b_folder_id)).map_err(err)
+    state
+        .db
+        .read(|c| folders::compare_two(c, (&a_volume, &a_rel), (&b_volume, &b_rel)))
+        .map_err(err)
 }
 
 /// 폴더 묶음 하나 — keep 을 남기고 drops 에 지우기 표시.

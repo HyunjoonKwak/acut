@@ -197,7 +197,11 @@ pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result
 
 /// 폴더 «나무» 둘 — 남길 쪽 폴더들(`keep`)과 제외할 쪽 폴더들(`drop`). 두 폴더 비교가 하위
 /// 폴더까지 통째로 짝지을 때 쓴다. 제외는 **남길 쪽 나무 어딘가에 같은 내용이 지금 있는**
-/// 파일에만 붙는다 — 남길 쪽에 없는 사진이 지워지는 일은 없다 (리뷰 C12)
+/// 파일에만 붙는다 — 남길 쪽에 없는 사진이 지워지는 일은 없다 (리뷰 C12).
+///
+/// 제외할 쪽에 이미 «남김»(1)이 붙어 있어도 내린다: 그 남김은 대개 앞선 짝에서 이 폴더가
+/// 남는 쪽이었을 때 자동으로 붙은 것이고, 사용자가 목록을 보고 «이쪽을 제외»라고 확정한
+/// 자리다. 안 내리면 그 폴더가 «아직 안 한 것»으로 영영 되돌아온다 (실측 2026-08-30, 2개 폴더)
 pub fn apply_trees(tx: &Transaction, keep: &[i64], drop: &[i64]) -> rusqlite::Result<ApplyAll> {
     if keep.is_empty() || drop.is_empty() || keep.iter().any(|k| drop.contains(k)) {
         return Err(rusqlite::Error::InvalidQuery);
@@ -211,7 +215,7 @@ pub fn apply_trees(tx: &Transaction, keep: &[i64], drop: &[i64]) -> rusqlite::Re
     let rejected = tx.execute(
         &format!(
             "UPDATE files SET culling_flag = 2
-             WHERE folder_id IN ({drop_list}) AND trashed_at IS NULL AND culling_flag <> 1
+             WHERE folder_id IN ({drop_list}) AND trashed_at IS NULL AND culling_flag <> 2
                AND full_hash IS NOT NULL
                AND full_hash IN (SELECT k.full_hash FROM files k
                                  WHERE k.folder_id IN ({keep_list}) AND k.trashed_at IS NULL AND k.full_hash IS NOT NULL)"
@@ -913,6 +917,32 @@ mod tests {
         assert_eq!(db.transaction(|tx| unapply_folders(tx, &[])).unwrap(), (0, 0));
     }
 
+    /// 앞선 짝에서 자동으로 붙은 «남김»은 사용자가 그 폴더를 제외하기로 하면 내려간다
+    #[test]
+    fn a_tree_drop_overrides_an_earlier_automatic_keep() {
+        let (_d, db) = setup();
+        let sets = db.read(|c| identical_sets(c, 100)).unwrap();
+        let s = &sets[0];
+        let (c_id, a_id, b_id) = (s.folders[0].folder_id, s.folders[1].folder_id, s.folders[2].folder_id);
+        // 1) a 를 남기고 b 를 제외 → a 의 두 장에 «남김»
+        db.transaction(|tx| apply_trees(tx, &[a_id], &[b_id])).unwrap();
+        let kept: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE folder_id = ?1 AND culling_flag = 1", [a_id], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(kept, 2);
+        // 2) 생각이 바뀌어 c 를 남기고 a 를 제외 — a 의 «남김»이 «제외»로 내려가야 한다
+        let r = db.transaction(|tx| apply_trees(tx, &[c_id], &[a_id])).unwrap();
+        assert_eq!(r.rejected, 2, "{r:?}");
+        let flags: Vec<i64> = db
+            .read(|c| {
+                let mut st = c.prepare("SELECT culling_flag FROM files WHERE folder_id = ?1 ORDER BY name")?;
+                let it = st.query_map([a_id], |r| r.get(0))?;
+                it.collect()
+            })
+            .unwrap();
+        assert_eq!(flags, vec![2, 2]);
+    }
+
     #[test]
     fn pairs_apply_counts_failures_without_aborting_the_batch() {
         let (_d, db) = setup();
@@ -1008,6 +1038,20 @@ mod tests {
         // B 쪽을 지워도 되는데 아직 표시가 안 된 짝 — 왜 표시가 안 붙나
         let pending: Vec<&PairRow> = r.rows.iter().filter(|x| x.b_in_a && x.b.is_some() && x.flagged_b < x.files_b).collect();
         eprintln!("pending b_in_a {}", pending.len());
+        let pend_a: Vec<&PairRow> = r.rows.iter().filter(|x| x.a_in_b && x.a.is_some() && x.flagged_a < x.files_a).collect();
+        eprintln!("pending a_in_b {}", pend_a.len());
+        for x in pend_a.iter().take(8) {
+            let ids = x.a_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+            let flags: String = c
+                .prepare(&format!("SELECT culling_flag, COUNT(*) FROM files WHERE folder_id IN ({ids}) AND trashed_at IS NULL GROUP BY culling_flag"))
+                .unwrap()
+                .query_map([], |r| Ok(format!("{}×{}", r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+                .unwrap()
+                .map(|v| v.unwrap())
+                .collect::<Vec<_>>()
+                .join(" ");
+            eprintln!("  A {} | files a/b {}/{} flagged_a {} | A 판정: {flags}", x.a.as_ref().unwrap().folder, x.files_a, x.files_b, x.flagged_a);
+        }
         for x in pending.iter().take(5) {
             eprintln!(
                 "  {} | files a/b {}/{} flagged {}/{} a_ids {} b_ids {} same {}",

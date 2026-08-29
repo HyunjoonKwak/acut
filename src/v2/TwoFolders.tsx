@@ -118,6 +118,30 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const same = useMemo(() => rows?.filter((r) => r.same) ?? [], [rows]);
   const todo = useMemo(() => same.filter((r) => doneSide(r) === null), [same]);
   const sameBytes = todo.reduce((s, r) => s + r.bytes, 0);
+  /// 폴더 비교로 붙인 표시(남김·제외)를 되돌린다 — 휴지통에 가기 전이면 언제든
+  const unmark = useCallback(
+    async (targets: PairRow[]) => {
+      const ids = [...new Set(targets.flatMap((r) => [r.a?.folder_id, r.b?.folder_id]).filter((x): x is number => x != null))];
+      const n = targets.reduce((s, r) => s + r.flagged_a + r.flagged_b, 0);
+      if (ids.length === 0 || n === 0) return;
+      const ok = await ask({
+        title: `제외 표시 ${n.toLocaleString()}장을 되돌립니다`,
+        lines: ["이 폴더들의 남김·제외 표시를 미판정으로 돌리고, 닫았던 무리는 개별 비교에 다시 나옵니다", "파일은 그대로입니다"],
+        confirmLabel: "표시 취소",
+      });
+      if (!ok) return;
+      try {
+        const [files] = await invoke<[number, number]>("cull_folder_set_unapply", { folderIds: ids });
+        toast(`${files.toLocaleString()}장의 표시를 되돌렸습니다`, "ok");
+      } catch (e) {
+        toast(String(e), "drop");
+      }
+      onChanged();
+      setTick((t) => t + 1);
+    },
+    [ask, onChanged],
+  );
+
   /// 이 비교에 나온 폴더들 안에서 제외 표시된 장수 — 표시했으면 여기서 바로 치운다
   const flagged = useMemo(() => (rows ?? []).reduce((s, r) => s + r.flagged_a + r.flagged_b, 0), [rows]);
   const [sweeping, setSweeping] = useState(false);
@@ -193,14 +217,24 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         )}
         <div className="flex-1" />
         {flagged > 0 && (
-          <button
-            onClick={sweep}
-            disabled={locked}
-            title="이 비교에 나온 폴더 안에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다"
-            className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
-          >
-            제외한 {flagged.toLocaleString()}장 휴지통으로
-          </button>
+          <>
+            <button
+              onClick={() => unmark(rows ?? [])}
+              disabled={locked}
+              title="이 비교에서 붙인 남김·제외 표시를 전부 미판정으로 되돌립니다 — 파일은 그대로"
+              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+            >
+              표시 취소
+            </button>
+            <button
+              onClick={sweep}
+              disabled={locked}
+              title="이 비교에 나온 폴더 안에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다"
+              className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
+            >
+              제외한 {flagged.toLocaleString()}장 휴지통으로
+            </button>
+          </>
         )}
         {todo.length > 0 && (
           <>
@@ -280,7 +314,17 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                   </td>
                   <td className="py-1.5 pr-4 text-right whitespace-nowrap">
                     {done ? (
-                      <span className="text-ok text-[11.5px]">처리됨 — {done === "a" ? "A" : "B"}쪽 제외</span>
+                      <span className="text-[11.5px]">
+                        <span className="text-ok">처리됨 — {done === "a" ? "A" : "B"}쪽 제외</span>
+                        <button
+                          onClick={() => unmark([r])}
+                          disabled={locked}
+                          className="ml-2 h-6 px-2 rounded text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
+                          title="이 짝의 표시를 되돌립니다"
+                        >
+                          취소
+                        </button>
+                      </span>
                     ) : (
                       r.same && (
                         <>

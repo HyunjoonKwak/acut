@@ -273,6 +273,32 @@ pub fn apply_pair(tx: &Transaction, keep: i64, drop: i64, dry_run: bool) -> rusq
     Ok(ApplyAll { groups, kept, rejected, skipped: 0 })
 }
 
+/// 폴더 비교로 붙인 표시를 되돌린다 — 이 폴더들 안의 «남김/제외»를 미판정으로, 닫았던 완전 중복
+/// 무리는 다시 연다. 휴지통에 이미 간 것은 여기서 안 다룬다(휴지통 화면의 되돌리기).
+/// (표시를 되돌린 장수, 다시 연 무리 수)
+pub fn unapply_folders(tx: &Transaction, folder_ids: &[i64]) -> rusqlite::Result<(usize, usize)> {
+    if folder_ids.is_empty() {
+        return Ok((0, 0));
+    }
+    let list = folder_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    let files = tx.execute(
+        &format!(
+            "UPDATE files SET culling_flag = 0
+             WHERE folder_id IN ({list}) AND trashed_at IS NULL AND culling_flag IN (1, 2)"
+        ),
+        [],
+    )?;
+    let groups = tx.execute(
+        &format!(
+            "UPDATE groups SET state = 0 WHERE kind = 0 AND state = 1
+               AND id IN (SELECT m.group_id FROM group_members m JOIN files f ON f.id = m.file_id
+                          WHERE f.folder_id IN ({list}))"
+        ),
+        [],
+    )?;
+    Ok((files, groups))
+}
+
 /// 두 폴더 비교의 «전부» — 짝마다 `apply_set`. 한 트랜잭션이라 화면이 짝마다 명령을 보내며
 /// 잠금 없이 두 루프가 얽히던 길이 없다. 못 한 짝은 세어 알린다
 #[derive(Debug, Clone, Default, Serialize)]
@@ -752,6 +778,30 @@ mod tests {
             .unwrap();
         assert_eq!(flag, 2, "b 의 것이 제외 표시");
         assert!(db.transaction(|tx| apply_pair(tx, fb, fb, false)).is_err(), "같은 폴더끼리는 거절");
+    }
+
+    #[test]
+    fn unapply_clears_marks_and_reopens_groups() {
+        let (_d, db) = setup();
+        let sets = db.read(|c| identical_sets(c, 100)).unwrap();
+        let s = &sets[0];
+        let keep = s.folders[0].folder_id;
+        let drops: Vec<i64> = s.folders[1..].iter().map(|f| f.folder_id).collect();
+        db.transaction(|tx| apply_set(tx, keep, &drops)).unwrap();
+        let marked: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE culling_flag <> 0", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(marked, 6);
+        let all: Vec<i64> = std::iter::once(keep).chain(drops.iter().copied()).collect();
+        let (files, groups) = db.transaction(|tx| unapply_folders(tx, &all)).unwrap();
+        assert_eq!((files, groups), (6, 1), "여섯 장 미판정으로, 닫았던 무리 하나 다시 연다");
+        let marked: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE culling_flag <> 0", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(marked, 0);
+        let again = db.read(|c| identical_sets(c, 100)).unwrap();
+        assert!(again[0].pending, "묶음이 다시 미결이 된다");
+        assert_eq!(db.transaction(|tx| unapply_folders(tx, &[])).unwrap(), (0, 0));
     }
 
     #[test]

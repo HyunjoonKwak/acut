@@ -103,6 +103,9 @@ export default function SelectMenu({
                 <MenuItem hint="F" onClick={run(() => markPicked({ favorite: true }))}>
                   고른 것 즐겨찾기
                 </MenuItem>
+                <MenuItem onClick={run(() => markPicked({ cullingFlag: 0 }))}>
+                  남김·제외 표시 취소
+                </MenuItem>
                 <MenuItem
                   onClick={run(() =>
                     markPicked({ cullingFlag: 0, favorite: false, rating: 0 }),

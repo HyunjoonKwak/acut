@@ -36,6 +36,30 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
   const [tick, setTick] = useState(0);
   const [sweeping, setSweeping] = useState(false);
 
+  /// 폴더 비교로 붙인 표시를 되돌린다 — 휴지통에 가기 전이면 언제든
+  const unmark = useCallback(
+    async (targets: FolderSet[]) => {
+      const ids = [...new Set(targets.flatMap((s) => s.folders.map((f) => f.folder_id)))];
+      const n = targets.reduce((a, s) => a + s.flagged, 0);
+      if (ids.length === 0 || n === 0) return;
+      const ok = await ask({
+        title: `제외 표시 ${n.toLocaleString()}장을 되돌립니다`,
+        lines: ["이 묶음 폴더들의 남김·제외 표시를 미판정으로 돌리고, 닫았던 무리는 개별 비교에 다시 나옵니다", "파일은 그대로입니다"],
+        confirmLabel: "표시 취소",
+      });
+      if (!ok) return;
+      try {
+        const [files] = await invoke<[number, number]>("cull_folder_set_unapply", { folderIds: ids });
+        toast(`${files.toLocaleString()}장의 표시를 되돌렸습니다`, "ok");
+      } catch (e) {
+        toast(String(e), "drop");
+      }
+      setTick((t) => t + 1);
+      onChanged();
+    },
+    [ask, onChanged],
+  );
+
   /// 표시한 것을 휴지통으로 — 이 화면의 묶음 폴더들 안에서만
   const sweep = useCallback(async () => {
     if (!sets) return;
@@ -197,14 +221,24 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
           </span>
         )}
         {flagged > 0 && (
-          <button
-            onClick={sweep}
-            disabled={sweeping}
-            title="여기 나온 폴더 안에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다"
-            className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
-          >
-            제외한 {flagged.toLocaleString()}장 휴지통으로
-          </button>
+          <>
+            <button
+              onClick={() => unmark(sets)}
+              disabled={sweeping}
+              title="여기서 붙인 남김·제외 표시를 전부 미판정으로 되돌립니다 — 파일은 그대로"
+              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+            >
+              표시 취소
+            </button>
+            <button
+              onClick={sweep}
+              disabled={sweeping}
+              title="여기 나온 폴더 안에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다"
+              className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
+            >
+              제외한 {flagged.toLocaleString()}장 휴지통으로
+            </button>
+          </>
         )}
         {pending.length > 0 && (
           <button
@@ -230,7 +264,19 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                 <span>
                   {s.folders.length}곳에 같은 폴더 · {s.files.toLocaleString()}장 · 폴더당 {fmtBytes(s.bytes)}
                 </span>
-                {!s.pending && <span className="text-ok">처리됨</span>}
+                {!s.pending && (
+                  <span className="text-ok">
+                    처리됨
+                    <button
+                      onClick={() => unmark([s])}
+                      disabled={sweeping}
+                      className="ml-2 h-6 px-2 rounded text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
+                      title="이 묶음의 표시를 되돌립니다"
+                    >
+                      취소
+                    </button>
+                  </span>
+                )}
                 <div className="flex-1" />
                 {s.pending && (
                   <button

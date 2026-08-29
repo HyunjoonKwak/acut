@@ -351,6 +351,15 @@ pub async fn cull_apply_pair(
         .map_err(err)
 }
 
+/// 폴더 비교로 붙인 표시를 되돌린다 — (표시를 되돌린 장수, 다시 연 무리 수).
+#[tauri::command]
+pub async fn cull_folder_set_unapply(
+    state: State<'_, AppState>,
+    folder_ids: Vec<i64>,
+) -> Result<(usize, usize), String> {
+    state.db.transaction(|tx| folders::unapply_folders(tx, &folder_ids)).map_err(err)
+}
+
 /// 두 폴더 비교의 «전부» — (남길 폴더, 지울 폴더) 짝 목록을 한 트랜잭션에.
 #[tauri::command]
 pub async fn cull_folder_pairs_apply(

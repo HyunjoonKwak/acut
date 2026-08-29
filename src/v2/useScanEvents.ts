@@ -177,7 +177,8 @@ export function useScanEvents(cb: {
       "nas-pull-progress",
       (p) =>
         job().progress({
-          label: "NAS 내려받는 중",
+          // 큰 영상 하나를 받는 동안엔 장수가 안 움직인다 — 용량 %가 살아 있음을 보인다
+          label: `NAS 내려받는 중 ${p.percent}%`,
           done: p.total > 0 ? p.done : p.percent,
           total: p.total > 0 ? p.total : 0,
         }),

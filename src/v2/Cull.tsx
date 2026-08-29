@@ -446,24 +446,35 @@ export default function Cull({ onClose }: { onClose: () => void }) {
 
       {/* 진행 */}
       <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[12.5px]">
-        <span className="tabular-nums text-fg-dim">
-          {groups.length === 0 ? "0 / 0" : `${idx + 1} / ${groups.length}`}
-        </span>
-        <div className="w-56 h-1.5 rounded bg-raised overflow-hidden">
-          <i
-            className="block h-full bg-accent"
-            style={{
-              width: groups.length
-                ? `${((idx + 1) / groups.length) * 100}%`
-                : "0%",
-            }}
-          />
-        </div>
-        {cur && (
-          <span className="text-fg-mute">
-            {cur.reason} · {cur.member_count}장 · 확보{" "}
-            {fmtBytes(cur.size_bytes)}
+        {byFolder ? (
+          // 폴더별 보기에는 «지금 무리»가 없다 — 표를 읽는 법을 적는다
+          <span className="text-fg-dim truncate">
+            줄마다 «왼쪽 폴더의 사진들은 오른쪽 폴더에 똑같은 파일이 있다»는 뜻입니다.
+            버튼을 누르면 왼쪽 폴더의 사본에 제외 표시를 하고 오른쪽 것을 남깁니다 —
+            파일은 아직 옮기지 않습니다.
           </span>
+        ) : (
+          <>
+            <span className="tabular-nums text-fg-dim">
+              {groups.length === 0 ? "0 / 0" : `${idx + 1} / ${groups.length}`}
+            </span>
+            <div className="w-56 h-1.5 rounded bg-raised overflow-hidden">
+              <i
+                className="block h-full bg-accent"
+                style={{
+                  width: groups.length
+                    ? `${((idx + 1) / groups.length) * 100}%`
+                    : "0%",
+                }}
+              />
+            </div>
+            {cur && (
+              <span className="text-fg-mute">
+                {cur.reason} · {cur.member_count}장 · 확보{" "}
+                {fmtBytes(cur.size_bytes)}
+              </span>
+            )}
+          </>
         )}
       </div>
 
@@ -653,10 +664,10 @@ function FolderTable({
     <table className="w-full text-[12px] tabular-nums">
       <thead className="text-[10.5px] text-fg-mute uppercase tracking-wider">
         <tr className="text-left">
-          <th className="py-1.5 pr-3 font-medium">사본이 있는 폴더</th>
-          <th className="py-1.5 pr-3 font-medium text-right">사본 / 전체</th>
-          <th className="py-1.5 pr-3 font-medium text-right">용량</th>
-          <th className="py-1.5 pr-3 font-medium">대표가 있는 폴더</th>
+          <th className="py-1.5 pr-3 font-medium">제외될 쪽 — 사본이 있는 폴더</th>
+          <th className="py-1.5 pr-3 font-medium text-right">사본 / 폴더 전체</th>
+          <th className="py-1.5 pr-3 font-medium text-right">비는 용량</th>
+          <th className="py-1.5 pr-3 font-medium">남는 쪽 — 똑같은 파일이 있는 폴더</th>
           <th className="py-1.5 font-medium"></th>
         </tr>
       </thead>
@@ -704,10 +715,10 @@ function FolderTable({
                 <button
                   onClick={() => onApply(f)}
                   disabled={settled}
-                  title={settled ? "공용·내사진 안의 사본은 하나씩 봅니다" : "이 폴더의 사본을 전부 제외로 표시"}
+                  title={settled ? "공용·내사진 안의 사본은 하나씩 봅니다" : "왼쪽 폴더의 사본에 제외 표시 — 오른쪽 폴더 것을 남깁니다"}
                   className="h-7 px-2.5 rounded-md text-[12px] bg-keep text-keep-fg font-semibold disabled:opacity-40"
                 >
-                  이 폴더 사본 확정
+                  이 폴더 사본 제외 표시
                 </button>
               </td>
             </tr>

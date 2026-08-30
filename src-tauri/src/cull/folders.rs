@@ -133,7 +133,7 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
          JOIN tot t ON t.folder_id = fo.id
          LEFT JOIN sig ON sig.folder_id = fo.id",
     )?;
-    let rows: Vec<Row> = st
+    let mut rows: Vec<Row> = st
         .query_map([], |r| {
             let lib_rel: String = r.get(3)?;
             let rel: String = r.get(4)?;
@@ -158,7 +158,43 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    // 나무 합치기 — 폴더마다 (해시 → 장수) 다중집합을 위 폴더들에 더한다. 중간 폴더 행이 없으면 건너뛴다
+    // 사진이 바로 아래 없는 중간 폴더(«2004/주원이사진»)는 행이 없다 — 가상 마디로 세운다. 안 그러면
+    // 그 아래 날짜 폴더가 하나씩 따로 나온다 (사용자 지적 2026-08-30). 라이브러리 뿌리 안쪽만
+    let lib_roots: HashMap<i64, String> = {
+        let mut st = c.prepare("SELECT id, rel_path FROM libraries")?;
+        let v: Vec<(i64, String)> = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        v.into_iter().collect()
+    };
+    {
+        let existing: HashSet<(String, String)> = rows.iter().map(|r| (r.vol.clone(), r.rel.clone())).collect();
+        let mut virt: HashMap<(String, String), FolderIn> = HashMap::new();
+        for r in &rows {
+            let Some(lib_rel) = lib_roots.get(&r.info.library_id) else { continue };
+            for anc in ancestors(&r.rel) {
+                if anc.len() <= lib_rel.len() || !(lib_rel.is_empty() || anc.starts_with(&format!("{lib_rel}/"))) {
+                    continue;
+                }
+                if existing.contains(&(r.vol.clone(), anc.clone())) {
+                    continue;
+                }
+                virt.entry((r.vol.clone(), anc.clone())).or_insert_with(|| FolderIn {
+                    // 행이 없으니 id 는 첫 후손의 것을 빌린다(화면 열쇠용) — 실제 표시는 ids 목록에 건다
+                    folder_id: r.info.folder_id,
+                    library_id: r.info.library_id,
+                    library: r.info.library.clone(),
+                    folder: in_lib(lib_rel, &anc),
+                    area: r.info.area,
+                });
+            }
+        }
+        for ((vol, rel), info) in virt {
+            rows.push(Row { info, vol, rel, n: 0, bytes: 0, pend: 0, flagged: 0, nohash: 0, hashes: Vec::new() });
+        }
+    }
+
+    // 나무 합치기 — 폴더마다 (해시 → 장수) 다중집합을 위 폴더들에 더한다
     let index: HashMap<(String, String), usize> =
         rows.iter().enumerate().map(|(i, r)| ((r.vol.clone(), r.rel.clone()), i)).collect();
     struct Tree {
@@ -177,10 +213,14 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
             for h in &r.hashes {
                 *counts.entry(h.clone()).or_default() += 1;
             }
-            Tree { counts, files: r.n, bytes: r.bytes, pend: r.pend, flagged: r.flagged, nohash: r.nohash, ids: vec![r.info.folder_id] }
+            // 가상 마디(n == 0, 해시 없음)는 제 id 를 넣지 않는다 — 후손들이 채운다
+            Tree { counts, files: r.n, bytes: r.bytes, pend: r.pend, flagged: r.flagged, nohash: r.nohash, ids: if r.n > 0 { vec![r.info.folder_id] } else { Vec::new() } }
         })
         .collect();
     for i in 0..rows.len() {
+        if rows[i].n == 0 {
+            continue; // 가상 마디는 더할 것이 없다
+        }
         for anc in ancestors(&rows[i].rel) {
             if let Some(&j) = index.get(&(rows[i].vol.clone(), anc)) {
                 let (own_counts, own) = (rows[i].hashes.clone(), (rows[i].n, rows[i].bytes, rows[i].pend, rows[i].flagged, rows[i].nohash, rows[i].info.folder_id));
@@ -213,7 +253,25 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
         by_sig.entry(parts.join(",")).or_default().push(i);
     }
     // 위 폴더끼리 같은 묶음이 있으면 그 아래는 안 낸다 — 얕은 것부터 보며 덮인 자리를 적는다
-    let mut sets: Vec<Vec<usize>> = by_sig.into_values().filter(|v| v.len() >= 2).collect();
+    // 한 묶음 안에서 제 후손은 뺀다 — 하위 폴더 하나뿐인 폴더는 그 하위 폴더와 서명이 같아 같이 묶인다
+    let mut sets: Vec<Vec<usize>> = by_sig
+        .into_values()
+        .map(|v| {
+            let mut v = v;
+            v.sort_by_key(|&i| rows[i].rel.len());
+            let mut kept: Vec<usize> = Vec::new();
+            for i in v {
+                let is_desc = kept.iter().any(|&k| {
+                    rows[k].vol == rows[i].vol && rows[i].rel.starts_with(&format!("{}/", rows[k].rel))
+                });
+                if !is_desc {
+                    kept.push(i);
+                }
+            }
+            kept
+        })
+        .filter(|v| v.len() >= 2)
+        .collect();
     sets.sort_by_key(|v| v.iter().map(|&i| rows[i].rel.matches('/').count()).min().unwrap_or(0));
     let mut covered: Vec<(String, String)> = Vec::new(); // (vol, rel) — 이 아래는 덮였다
     let is_covered = |vol: &str, rel: &str, covered: &[(String, String)]| {
@@ -924,12 +982,12 @@ mod tests {
         assert!(!roots_overlap(("v1", "a"), ("v2", "a")), "다른 볼륨");
     }
 
-    /// 하위 폴더까지 똑같은 두 나무는 위 폴더 한 줄로만 나온다
+    /// 하위 폴더까지 똑같은 두 나무는 위 폴더 한 줄로만 나온다 — 위 폴더에 사진이 바로 없어도(가상 마디)
     #[test]
     fn identical_trees_are_reported_once_at_the_top() {
         let dir = tempfile::tempdir().unwrap();
         for root in ["P", "Q"] {
-            for (sub, body) in [("2016", "AAAA"), ("2016/x", "BBBB"), ("2016/y", "CCCC")] {
+            for (sub, body) in [("2016/x", "BBBB"), ("2016/y", "CCCC"), ("2016/z/deep", "DDDD")] {
                 let p = dir.path().join(root).join(sub);
                 std::fs::create_dir_all(&p).unwrap();
                 std::fs::write(p.join("a.jpg"), body.as_bytes().repeat(200)).unwrap();
@@ -939,9 +997,11 @@ mod tests {
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         let sets = db.read(|c| identical_sets(c, 100)).unwrap();
-        assert_eq!(sets.len(), 1, "P/2016 ≡ Q/2016 한 줄뿐 — x·y 는 따로 안 나온다: {sets:?}");
+        assert_eq!(sets.len(), 1, "P ≡ Q 한 줄뿐 — 2016·x·y·z/deep 은 따로 안 나온다: {sets:?}");
         assert_eq!(sets[0].files, 3, "나무째 3장");
-        assert_eq!(sets[0].ids[0].len(), 3, "폴더 행 셋(2016, x, y)");
+        assert_eq!(sets[0].ids[0].len(), 3, "폴더 행 셋(x, y, z/deep) — P·2016·z 는 가상 마디");
+        let names: Vec<&str> = sets[0].folders.iter().map(|f| f.folder.as_str()).collect();
+        assert_eq!(names, ["P", "Q"], "가장 위에서 한 번만, 제 후손은 같이 안 묶인다");
     }
 
     #[test]

@@ -208,6 +208,98 @@ fn ensure_folder(db: &Db, volume_uuid: &str, library_id: i64, vol_rel_dir: &str,
     })
 }
 
+/// 합치고 남은 것 — 사진이 아닌 파일(Lightroom 미리보기·txt·Thumbs.db…)은 앱이 모르니 옮기지 않는다.
+/// 그래서 Finder 엔 폴더 구조가 남는다 (실측 2026-08-30: 5,928개 3.7GB). 무엇이 남았는지 세어 보여 준다
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct Leftovers {
+    pub files: usize,
+    pub bytes: u64,
+    /// 확장자별 개수, 많은 것부터
+    pub kinds: Vec<(String, usize)>,
+}
+
+fn is_junk_file(name: &str) -> bool {
+    name == ".DS_Store" || name.starts_with("._") || name == "Thumbs.db" || name == "desktop.ini"
+}
+
+pub fn leftovers(db: &Db, library_id: i64, rel: &str) -> Result<Leftovers> {
+    let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let mount = crate::db::volumes::find_mount(&lib.volume_uuid).ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let root = mount.join(rel);
+    let mut out = Leftovers::default();
+    if !root.is_dir() {
+        return Ok(out);
+    }
+    let mut kinds: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for e in walkdir::WalkDir::new(&root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+        if !e.file_type().is_file() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        if is_junk_file(&name) {
+            continue;
+        }
+        out.files += 1;
+        out.bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+        let ext = name.rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase()).unwrap_or_else(|| "(없음)".into());
+        *kinds.entry(ext).or_default() += 1;
+    }
+    let mut v: Vec<(String, usize)> = kinds.into_iter().collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    v.truncate(8);
+    out.kinds = v;
+    Ok(out)
+}
+
+/// 남은 파일도 같은 자리로 — 사진이 아니라 DB 에는 안 적는다. 같은 이름은 (2). 찌꺼기(.DS_Store 등)는 지우고
+/// 비는 폴더는 지운다. (옮긴 수, 실패 수, 지운 폴더 수)
+pub fn merge_rest(db: &Db, library_id: i64, src_rel: &str, dst_rel: &str) -> Result<Outcome> {
+    let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let lib_dir = lib.dir.clone().ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let mount = crate::db::volumes::find_mount(&lib.volume_uuid).ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    if src_rel == dst_rel || under(src_rel, dst_rel) || under(dst_rel, src_rel) || src_rel == lib.rel_path {
+        return Err(bad("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더여야 합니다"));
+    }
+    let src = mount.join(src_rel);
+    let dst = mount.join(dst_rel);
+    if !src.is_dir() {
+        return Ok(Outcome { first_error: Some("남은 폴더가 없습니다".into()), ..Default::default() });
+    }
+    let mut out = Outcome::default();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for e in walkdir::WalkDir::new(&src).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+        if e.file_type().is_dir() {
+            dirs.push(e.path().to_path_buf());
+            continue;
+        }
+        if !e.file_type().is_file() {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().into_owned();
+        if is_junk_file(&name) {
+            let _ = std::fs::remove_file(e.path());
+            continue;
+        }
+        let Ok(rel) = e.path().strip_prefix(&src) else { continue };
+        let dest = free_path(dst.join(rel));
+        match crate::ops::trash::move_file(e.path(), &dest) {
+            Ok(()) => {
+                out.moved += 1;
+                out.bytes += e.metadata().map(|m| m.len() as i64).unwrap_or(0);
+            }
+            Err(err) => {
+                out.failed += 1;
+                out.first_error.get_or_insert(format!("{}: {err}", e.path().display()));
+            }
+        }
+    }
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
+    for d in dirs {
+        out.folders_removed += prune_empty_dirs(&d, &lib_dir);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +375,24 @@ mod tests {
         let out = merge_tree(&db, lib, &b, &a, &AtomicBool::new(false), |_| {}).unwrap();
         assert_eq!((out.moved, out.failed), (3, 0), "{out:?}");
         assert!(dir.path().join("A/2016/only-b (2).jpg").is_file(), "DB 에서도 빈 이름으로: {:?}", std::fs::read_dir(dir.path().join("A/2016")).unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>());
+    }
+
+    /// 사진이 아닌 파일이 남아 폴더가 남았을 때 — «남은 파일도 옮기기»가 마저 치운다
+    #[test]
+    fn leftovers_are_counted_and_merge_rest_moves_them_too() {
+        let (dir, db, lib, b, a, _) = setup();
+        std::fs::write(dir.path().join("B/2016/노트.txt"), b"memo").unwrap();
+        std::fs::write(dir.path().join("B/2016/x/Thumbs.db"), b"junk").unwrap();
+        merge_tree(&db, lib, &b, &a, &AtomicBool::new(false), |_| {}).unwrap();
+        assert!(dir.path().join("B/2016/노트.txt").is_file(), "사진이 아닌 것은 안 옮겨져 폴더가 남는다");
+        let l = leftovers(&db, lib, &b).unwrap();
+        assert_eq!(l.files, 1, "{l:?}");
+        assert_eq!(l.kinds[0].0, "txt");
+        let r = merge_rest(&db, lib, &b, &a).unwrap();
+        assert_eq!((r.moved, r.failed), (1, 0), "{r:?}");
+        assert!(dir.path().join("A/2016/노트.txt").is_file());
+        assert!(!dir.path().join("B").exists(), "찌꺼기(Thumbs.db)는 지우고 빈 폴더도 지운다");
+        assert_eq!(leftovers(&db, lib, &b).unwrap().files, 0);
     }
 
     #[test]

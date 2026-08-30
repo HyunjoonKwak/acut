@@ -157,6 +157,48 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     () => reviewRows.filter((r) => !review?.unchecked.has(rowKey(r))),
     [reviewRows, review],
   );
+  /// 합치고 남은 것(사진 아닌 파일) — Finder 엔 폴더가 남는 이유. 세어 보여 주고 «같이 옮기기»
+  type Leftovers = { files: number; bytes: number; kinds: [string, number][] };
+  const [left, setLeft] = useState<Leftovers | null>(null);
+  const checkLeft = useCallback(async () => {
+    if (!b) return;
+    try {
+      const l = await invoke<Leftovers>("folder_leftovers", { libraryId: b.library_id, rel: b.vol_rel });
+      setLeft(l.files > 0 ? l : null);
+    } catch {
+      setLeft(null);
+    }
+  }, [b]);
+  const moveRest = useCallback(async () => {
+    if (!a || !b || !left) return;
+    const ok = await ask({
+      title: `남은 파일 ${left.files.toLocaleString()}개(${fmtBytes(left.bytes)})를 «${a.path || "/"}» 의 같은 자리로 옮깁니다`,
+      lines: [
+        `· ${left.kinds.map(([k, n]) => `${k} ${n.toLocaleString()}`).join(" · ")}`,
+        "· 사진이 아니라 앱 목록엔 안 보입니다. 같은 이름은 «이름 (2)». 찌꺼기(.DS_Store·Thumbs.db)는 지웁니다",
+        "· 그러고 비는 B 폴더는 디스크에서 지웁니다. 이 옮기기는 ⌘Z 대상이 아닙니다",
+      ],
+      confirmLabel: "같이 옮기기",
+    });
+    if (!ok) return;
+    try {
+      const r = await invoke<{ moved: number; failed: number; first_error: string | null; folders_removed: number }>("folder_merge_rest", {
+        libraryId: a.library_id,
+        srcRel: b.vol_rel,
+        dstRel: a.vol_rel,
+      });
+      toast(
+        r.failed
+          ? `${r.moved.toLocaleString()}개 옮김 · ${r.failed}개 실패 — ${r.first_error ?? ""}`
+          : `${r.moved.toLocaleString()}개를 옮기고 빈 폴더 ${r.folders_removed.toLocaleString()}개를 지웠습니다`,
+        r.failed ? "drop" : "ok",
+      );
+    } catch (e) {
+      toast(String(e), "drop");
+    }
+    void checkLeft();
+  }, [a, b, left, ask, checkLeft]);
+
   /// 폴더 합치기 — 사본을 다 뺀 뒤 B 나무를 A 안으로. 끝나면 목록을 새로 읽는다
   const [merging, setMerging] = useState(false);
   useEffect(() => {
@@ -167,6 +209,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         setMerging(false);
         onChanged();
         setTick((t) => t + 1);
+        void checkLeft();
       }),
       listen("merge-error", () => alive && setMerging(false)),
     ];
@@ -174,7 +217,11 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       alive = false;
       subs.forEach((p) => p.then((f) => f()));
     };
-  }, [onChanged]);
+  }, [onChanged, checkLeft]);
+  // B 를 고르면 남은 것이 있는지도 본다 — 합친 뒤 다시 열었을 때
+  useEffect(() => {
+    void checkLeft();
+  }, [checkLeft, tick]);
   const merge = useCallback(async () => {
     if (!a || !b || !rows) return;
     if (a.library_id !== b.library_id) {
@@ -467,6 +514,22 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         </div>
       )}
 
+      {left && rows && rows.every((r) => !r.b) && (
+        <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 text-[12px] bg-keep/10 border-b border-line flex-wrap">
+          <span className="text-fg">
+            B 폴더에 <b>사진이 아닌 파일 {left.files.toLocaleString()}개</b>({fmtBytes(left.bytes)})가 남아 있어 Finder 엔 폴더가 남습니다
+            <span className="text-fg-dim"> — {left.kinds.map(([k, n]) => `${k} ${n.toLocaleString()}`).join(" · ")}</span>
+          </span>
+          <div className="flex-1" />
+          <button
+            onClick={moveRest}
+            disabled={locked}
+            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12px] disabled:opacity-40"
+          >
+            남은 파일도 A 로 옮기고 폴더 지우기
+          </button>
+        </div>
+      )}
       {missing > 0 && (
         <div className="shrink-0 px-4 py-1.5 text-[12px] text-drop bg-drop/10 border-b border-line">
           디스크에 없는 폴더 {missing.toLocaleString()}개는 뺐습니다 — Finder 에서 지운 폴더의 기록이 남은 것입니다. 왼쪽 앨범에서 라이브러리의 ⟳(다시 스캔)을 누르면 정리됩니다.

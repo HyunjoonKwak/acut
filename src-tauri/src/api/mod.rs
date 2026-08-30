@@ -1212,6 +1212,35 @@ pub async fn folder_merge(app: AppHandle, library_id: i64, src_rel: String, dst_
     Ok(())
 }
 
+/// 합치고 남은 것(사진 아닌 파일) 세기
+#[tauri::command]
+pub async fn folder_leftovers(state: State<'_, AppState>, library_id: i64, rel: String) -> Result<crate::ops::merge::Leftovers, String> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || crate::ops::merge::leftovers(&db, library_id, &rel))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(err)
+}
+
+/// 남은 파일도 같은 자리로 옮기고 빈 폴더를 지운다
+#[tauri::command]
+pub async fn folder_merge_rest(app: AppHandle, library_id: i64, src_rel: String, dst_rel: String) -> Result<crate::ops::trash::Outcome, String> {
+    let state = app.state::<AppState>();
+    let Some(guard) = job::try_start(&state.running, "에이컷 폴더 합치기") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
+    let db = Arc::clone(&state.db);
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        crate::ops::merge::merge_rest(&db, library_id, &src_rel, &dst_rel)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(err)?;
+    app.state::<AppState>().forget_dirs();
+    Ok(r)
+}
+
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct StartupInfo {
     /// 프로세스 시작 → DB 준비

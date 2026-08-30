@@ -25,6 +25,7 @@ import StatusBar from "./StatusBar";
 import Toasts from "./Toasts";
 import Toolbar from "./Toolbar";
 import ViewerHost from "./ViewerHost";
+import BlockingJob from "./BlockingJob";
 import { contextItems } from "./contextItems";
 import { useData } from "./dataStore";
 import { usePref } from "./prefs";
@@ -450,6 +451,7 @@ export default function App() {
         onClose={() => ui.set({ ctxAt: null })}
       />
       <Toasts />
+      <BlockingJob />
       {ui.helping && <Shortcuts onClose={() => ui.set({ helping: false })} />}
       {ui.textSearch !== null && ui.similarFor === null && (
         <Similar

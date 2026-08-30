@@ -179,17 +179,21 @@ impl Watchers {
                 if due.is_empty() {
                     continue;
                 }
-                // 사용자 스캔이 도는 중 — 되돌려 놓고 다음 틱에.
                 // 스위치는 JobGuard 로 잡는다 — 직접 켜고 끄면 스캔 중 패닉 한 번에 꺼지지
-                // 않아 모든 작업이 «다른 일이 도는 중»으로 영영 막힌다 (리뷰 H12)
-                let Some(_guard) = crate::api::job::try_start_with(&running, "에이컷 폴더 감시", true) else {
-                    let mut p = pending.lock().unwrap_or_else(|e| e.into_inner());
-                    for k in due {
-                        p.entry(k).or_insert_with(Instant::now);
-                    }
-                    continue;
-                };
-                for (library_id, dir) in due {
+                // 않아 모든 작업이 «다른 일이 도는 중»으로 영영 막힌다 (리뷰 H12).
+                // **폴더 하나마다** 잡았다 놓는다 — 3만 장을 옮긴 뒤 수천 폴더를 훑는 동안 통째로
+                // 쥐고 있으면 그동안 휴지통으로·정리 같은 사용자 명령이 전부 튕긴다 (실측 2026-08-30)
+                let mut rest = due.into_iter();
+                while let Some((library_id, dir)) = rest.next() {
+                    let Some(_guard) = crate::api::job::try_start_with(&running, "에이컷 폴더 감시", true) else {
+                        // 사용자 일이 도는 중 — 이것과 나머지를 되돌려 놓고 다음 틱에
+                        let mut p = pending.lock().unwrap_or_else(|e| e.into_inner());
+                        p.entry((library_id, dir)).or_insert_with(Instant::now);
+                        for k in rest {
+                            p.entry(k).or_insert_with(Instant::now);
+                        }
+                        break;
+                    };
                     if let Some(c) = rescan_dir(&db, &cache_base, library_id, &dir, &cancel) {
                         on_changed(c);
                     }

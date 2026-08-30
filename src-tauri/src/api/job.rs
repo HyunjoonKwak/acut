@@ -29,6 +29,21 @@ pub fn try_start(running: &Arc<AtomicBool>, reason: &str) -> Option<JobGuard> {
     try_start_with(running, reason, false)
 }
 
+/// 사용자 명령용 — 스위치가 잠깐 잡혀 있으면(폴더 감시가 폴더 하나 훑는 중) 조금 기다렸다가 잡는다.
+/// 바로 «다른 작업이 도는 중»으로 튕기면 큰 이동 뒤 감시가 훑는 몇 분 동안 아무것도 못 한다 (실측 2026-08-30)
+pub fn try_start_wait(running: &Arc<AtomicBool>, reason: &str, wait: std::time::Duration) -> Option<JobGuard> {
+    let until = std::time::Instant::now() + wait;
+    loop {
+        if let Some(g) = try_start(running, reason) {
+            return Some(g);
+        }
+        if std::time::Instant::now() >= until {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 /// 뒤에서 도는 일(폴더 감시)용 — 잠자기를 막지 않는다. 사용자가 시킨 일은 `UserInitiated`
 /// 로 시스템 잠자기를 미루지만, 감시가 그걸 쓰면 맥이 밤새 못 잔다 (리뷰 H15)
 pub fn try_start_with(running: &Arc<AtomicBool>, reason: &str, background: bool) -> Option<JobGuard> {

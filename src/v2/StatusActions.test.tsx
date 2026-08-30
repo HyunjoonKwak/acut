@@ -80,6 +80,14 @@ describe("상태바 오른쪽", () => {
     useData.setState({
       batches: [
         {
+          id: 5,
+          kind: "move",
+          label: "정리 → 2024/여행",
+          item_count: 7,
+          created_at: 0,
+          undone_at: null,
+        },
+        {
           id: 3,
           kind: "delete",
           label: "휴지통 비우기",
@@ -87,38 +95,22 @@ describe("상태바 오른쪽", () => {
           created_at: 0,
           undone_at: null,
         },
-        {
-          id: 1,
-          kind: "move",
-          label: "정리",
-          item_count: 3,
-          created_at: 0,
-          undone_at: 99,
-        },
-        {
-          id: 2,
-          kind: "trash",
-          label: "휴지통",
-          item_count: 1,
-          created_at: 0,
-          undone_at: null,
-        },
-        {
-          id: 0,
-          kind: "move",
-          label: "정리 → 2024/여행",
-          item_count: 7,
-          created_at: 0,
-          undone_at: null,
-        },
       ],
     });
-    render(<StatusActions {...noop} />);
-    // 단추 이름이 «무엇을 몇 장» 물리는지 말한다 — 물린 것(1번)·영구히 비운 것(3번)·휴지통 오간 것(2번)은
-    // 건너뛰고, 정리(0번)를 가리킨다. 휴지통 오간 것은 휴지통 화면이 맡는다
-    expect(screen.queryByRole("button", { name: /되살리기/ })).not.toBeInTheDocument();
+    const { unmount } = render(<StatusActions {...noop} />);
+    // 가장 최근 작업(정리)만 — 단추 이름이 «무엇을 몇 장» 물리는지 말한다
     const b = screen.getByRole("button", { name: /정리 되돌리기 \(7장\)/ });
     await userEvent.click(b);
     expect(noop.undoLast).toHaveBeenCalled();
+    unmount();
+    // 가장 최근 작업이 휴지통 비우기면 그 전의 정리를 되돌리라고 권하지 않는다
+    useData.setState({
+      batches: [
+        { id: 6, kind: "delete", label: "휴지통 비우기", item_count: 9, created_at: 0, undone_at: null },
+        { id: 5, kind: "move", label: "정리 → 2024/여행", item_count: 7, created_at: 0, undone_at: null },
+      ],
+    });
+    render(<StatusActions {...noop} />);
+    expect(screen.queryByRole("button", { name: /되돌리기/ })).not.toBeInTheDocument();
   });
 });

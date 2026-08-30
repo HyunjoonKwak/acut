@@ -166,7 +166,12 @@ export function useOps(cb: {
   /// 가장 최근의 아직 안 물린 작업을 되돌린다 (⌘Z).
   const undoLast = useCallback(async () => {
     const { batches, setBusy } = useData.getState();
-    const last = batches.find((b) => b.undone_at === null && b.kind !== "delete");
+    // 상태바와 같은 규칙 — 가장 최근 작업이 정리·이름 바꾸기·가져오기일 때만
+    const latest = batches[0];
+    const last =
+      latest && latest.undone_at === null && (latest.kind === "move" || latest.kind === "rename" || latest.kind === "import")
+        ? latest
+        : undefined;
     if (!last) return;
     setBusy("되돌리는 중…");
     try {

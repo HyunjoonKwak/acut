@@ -771,6 +771,8 @@ function Nas() {
     try {
       const r = await invoke<NasStatus>("nas_check");
       setSt(r);
+      // 툴바의 NAS 불도 같이 — 여기서 «연결됨»인데 불이 빨간 채로 남지 않게
+      useData.getState().setNasStatus({ online: r.online, hostname: r.hostname, error: r.error ?? null, at: Math.floor(Date.now() / 1000) });
       toast(
         r.online
           ? `NAS 연결됨 — ${r.hostname}${r.rsync_ok ? "" : " · rsync는 못 씀"}`

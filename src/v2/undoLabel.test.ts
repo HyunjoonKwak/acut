@@ -9,4 +9,5 @@ test("되돌리기 단추는 작업 종류별로 «무엇이 어떻게 되는지
   assert.equal(undoLabel("rename", 1), "이름 바꾸기 되돌리기");
   assert.equal(undoLabel("import", 40), "가져온 40장 되돌리기");
   assert.equal(undoLabel("whatever", 2), "되돌리기 (2장)");
+  assert.equal(undoLabel("move", 28383, "폴더 합치기 «후보2번» → «연도별»"), "폴더 합치기 되돌리기 (28,383장)");
 });

@@ -19,6 +19,43 @@ const FIRST_MS = 5_000;
 /** 켜 둔 동안 이 간격으로 다시 — 폰은 하루 종일 올린다 */
 const EVERY_MS = 30 * 60_000;
 
+/** 지금 한 번 살핀다 — 툴바의 NAS 불을 누르거나 설정에서 «연결 확인»을 했을 때도 이걸 쓴다.
+ *  결과는 같은 저장소(nasStatus·nasNew)에 쓰여 불이 곧바로 바뀐다 */
+export async function probeNas(mode: "off" | "notify" | "pull"): Promise<Probe | null> {
+  if (mode === "off") {
+    useData.getState().setNasStatus(null);
+    return null;
+  }
+  try {
+    const p = await invoke<Probe>("nas_probe");
+    useData.getState().setNasStatus({
+      online: p.online,
+      hostname: p.hostname,
+      error: p.error,
+      at: Math.floor(Date.now() / 1000),
+    });
+    if (!p.online || p.library_id === null) return p;
+    if (p.new_files === 0) {
+      useData.getState().setNasNew(null);
+      return p;
+    }
+    useData.getState().setNasNew({ libraryId: p.library_id, files: p.new_files, bytes: p.new_bytes });
+    if (mode === "pull" && useJob.getState().job === null) {
+      await invoke("nas_pull_start", { libraryId: p.library_id });
+      toast(`NAS 1차에 새 사진 ${p.new_files.toLocaleString()}장 — 내려받습니다`, "ok");
+    }
+    return p;
+  } catch (e) {
+    useData.getState().setNasStatus({
+      online: false,
+      hostname: "",
+      error: String(e),
+      at: Math.floor(Date.now() / 1000),
+    });
+    return null;
+  }
+}
+
 /**
  * NAS 1차 구역 살피기 — 앱을 열 때와 30분마다.
  *
@@ -39,41 +76,8 @@ export function useNasAuto() {
     }
     let live = true;
     const probe = async () => {
-      try {
-        const p = await invoke<Probe>("nas_probe");
-        if (!live) return;
-        useData.getState().setNasStatus({
-          online: p.online,
-          hostname: p.hostname,
-          error: p.error,
-          at: Math.floor(Date.now() / 1000),
-        });
-        if (!p.online || p.library_id === null) return;
-        if (p.new_files === 0) {
-          useData.getState().setNasNew(null);
-          return;
-        }
-        useData.getState().setNasNew({
-          libraryId: p.library_id,
-          files: p.new_files,
-          bytes: p.new_bytes,
-        });
-        if (mode === "pull" && useJob.getState().job === null) {
-          await invoke("nas_pull_start", { libraryId: p.library_id });
-          toast(
-            `NAS 1차에 새 사진 ${p.new_files.toLocaleString()}장 — 내려받습니다`,
-            "ok",
-          );
-        }
-      } catch (e) {
-        if (live)
-          useData.getState().setNasStatus({
-            online: false,
-            hostname: "",
-            error: String(e),
-            at: Math.floor(Date.now() / 1000),
-          });
-      }
+      if (!live) return;
+      await probeNas(mode);
     };
     const t0 = window.setTimeout(probe, deskId === null ? FIRST_MS : 1_000);
     const t = window.setInterval(probe, EVERY_MS);

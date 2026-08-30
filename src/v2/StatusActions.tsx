@@ -41,11 +41,14 @@ export default function StatusActions({
   const hasJob = useJob((s) => s.job !== null);
   const libId = usePrefs((s) => s.libId);
   const libName = useData((s) => s.libs.find((l) => l.id === libId)?.name ?? null);
-  // 영구히 비운 것(delete)은 되돌릴 수 없고, 휴지통 오간 것(trash·restore)은 휴지통 화면이 맡는다 —
-  // 상태바의 되돌리기는 정리·이름 바꾸기·가져오기 같은 «다른 곳으로 간 것»만 (사용자 지적 2026-08-30)
-  const undoable = batches.find(
-    (b) => b.undone_at === null && b.kind !== "delete" && b.kind !== "trash" && b.kind !== "restore",
-  );
+  // 되돌리기는 **가장 최근 작업**만 — 그 뒤에 휴지통을 비우는 등 다른 일을 했으면 옛 정리를 되돌리라고
+  // 권하지 않는다(«휴지통은 비었는데 되돌리기 28,383장이 살아 있다» 지적 2026-08-30).
+  // 영구히 비운 것(delete)은 되돌릴 수 없고, 휴지통 오간 것(trash·restore)은 휴지통 화면이 맡는다
+  const latest = batches[0];
+  const undoable =
+    latest && latest.undone_at === null && (latest.kind === "move" || latest.kind === "rename" || latest.kind === "import")
+      ? latest
+      : undefined;
 
   return (
     <>
@@ -121,7 +124,7 @@ export default function StatusActions({
           title={`가장 최근 작업을 물립니다 (${undoable.label ?? ""} · ${undoable.item_count.toLocaleString()}장). 파일이 원래 자리로 돌아갑니다`}
           className="hover:text-fg"
         >
-          ↩ {undoLabel(undoable.kind, undoable.item_count)} <Kbd>⌘Z</Kbd>
+          ↩ {undoLabel(undoable.kind, undoable.item_count, undoable.label)} <Kbd>⌘Z</Kbd>
         </button>
       )}
       {stats && stats.thumbs_pending > 0 && !hasJob && (

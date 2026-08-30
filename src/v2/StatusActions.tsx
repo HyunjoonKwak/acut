@@ -83,7 +83,7 @@ export default function StatusActions({
       )}
       {/* 제외 표시의 짝 — «확정»은 휴지통으로, «취소»는 표시만 지움. 양옆 경계선으로 사진 정보·다른 단추와 가른다 */}
       {!hasJob && !viewTrash && (toClean?.files ?? 0) > 0 && (
-        <span className="flex items-center gap-1.5 pl-3 pr-3 border-l border-r border-line-strong">
+        <span className="shrink-0 flex items-center gap-1.5 pl-3 pr-3 border-l border-r border-line-strong">
           <button
             onClick={cleanExcluded}
             title={`확정 = ${libName ?? "모든 라이브러리"}에서 제외 표시한 ${toClean?.files.toLocaleString()}장(${fmtBytes(toClean?.bytes ?? 0)})을 라이브러리 안 휴지통으로 옮깁니다 — 휴지통에서 되돌릴 수 있습니다`}

@@ -767,7 +767,7 @@ export default function Cull({
       </div>
 
       {/* 액션 */}
-      <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line">
+      <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line bar-fixed">
         <button
           onClick={apply}
           disabled={!cur}

@@ -46,7 +46,7 @@ export default function SelectionPanel({
   // 휴지통에서는 «되돌릴지 / 영구히 지울지»만 — 남김·제외 판정은 여기서 할 일이 아니다 (사용자 지적 2026-08-30)
   if (viewTrash) {
     return (
-      <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line">
+      <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line bar-fixed">
         <div className="w-[176px] shrink-0 flex items-baseline gap-2 tabular-nums overflow-hidden">
           <span className="text-accent font-semibold text-[13px] whitespace-nowrap">
             {picked.size.toLocaleString()}장 선택
@@ -81,7 +81,7 @@ export default function SelectionPanel({
   }
 
   return (
-    <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line">
+    <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line bar-fixed">
       {/* 장수·용량은 폭을 못박는다 — 사진마다 글자 길이가 달라 뒤의 버튼들이
           흔들리면 키보드로 빠르게 넘길 때 어지럽다 */}
       <div className="w-[176px] shrink-0 flex items-baseline gap-2 tabular-nums overflow-hidden">

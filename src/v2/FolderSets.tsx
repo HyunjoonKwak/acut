@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fmtBytes } from "./format";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
+import PairView from "./PairView";
 
 /**
  * 폴더 비교 — 내용이 완전히 같은 폴더들을 묶어 나열한다.
@@ -19,7 +20,8 @@ type FolderIn = {
   folder: string;
   area: number;
 };
-type FolderSet = { folders: FolderIn[]; files: number; bytes: number; pending: boolean; flagged: number };
+/** `ids` 는 folders 와 같은 순서 — 각 폴더 나무의 폴더 행 id(하위 포함) */
+type FolderSet = { folders: FolderIn[]; ids: number[][]; files: number; bytes: number; pending: boolean; flagged: number };
 type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
 type Outcome = { moved: number; failed: number; first_error: string | null; bytes: number; folders_removed?: number };
 
@@ -35,11 +37,13 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
   const [keep, setKeep] = useState<Record<string, number>>({});
   const [tick, setTick] = useState(0);
   const [sweeping, setSweeping] = useState(false);
+  /// «보기» — 남길 폴더(●)와 다른 폴더 하나를 나란히
+  const [viewing, setViewing] = useState<{ a: FolderIn; b: FolderIn; aIds: number[]; bIds: number[] } | null>(null);
 
   /// 폴더 비교로 붙인 표시를 되돌린다 — 휴지통에 가기 전이면 언제든
   const unmark = useCallback(
     async (targets: FolderSet[]) => {
-      const ids = [...new Set(targets.flatMap((s) => s.folders.map((f) => f.folder_id)))];
+      const ids = [...new Set(targets.flatMap((s) => s.ids.flat()))];
       const n = targets.reduce((a, s) => a + s.flagged, 0);
       if (ids.length === 0 || n === 0) return;
       const ok = await ask({
@@ -65,7 +69,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
     if (!sets) return;
     const flagged = sets.reduce((a, s) => a + s.flagged, 0);
     if (flagged === 0) return;
-    const folderIds = [...new Set(sets.flatMap((s) => s.folders.map((f) => f.folder_id)))];
+    const folderIds = [...new Set(sets.flatMap((s) => s.ids.flat()))];
     const ok = await ask({
       title: `제외한 ${flagged.toLocaleString()}장을 휴지통으로 옮깁니다`,
       lines: [
@@ -125,8 +129,8 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
         if (!ok) return false;
       }
       await invoke<ApplyAll>("cull_folder_set_apply", {
-        keepFolderId: keepF.folder_id,
-        dropFolderIds: drops.map((d) => d.folder_id),
+        keepIds: s.ids[k],
+        dropIds: s.ids.flatMap((ids, j) => (j === k ? [] : ids)),
       });
       return true;
     },
@@ -165,8 +169,8 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
       const k = keepAt(s);
       try {
         await invoke<ApplyAll>("cull_folder_set_apply", {
-          keepFolderId: s.folders[k].folder_id,
-          dropFolderIds: s.folders.filter((_, j) => j !== k).map((d) => d.folder_id),
+          keepIds: s.ids[k],
+          dropIds: s.ids.flatMap((ids, j) => (j === k ? [] : ids)),
         });
       } catch (e) {
         failed += 1;
@@ -200,10 +204,23 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
     );
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
+      {viewing && (
+        <PairView
+          a={viewing.a}
+          b={viewing.b}
+          aIds={viewing.aIds}
+          bIds={viewing.bIds}
+          onClose={() => {
+            setViewing(null);
+            setTick((t) => t + 1);
+            onChanged();
+          }}
+        />
+      )}
       <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[12.5px]">
         <span className="text-fg-dim tabular-nums">
-          완전히 같은 폴더 <b className="text-fg">{sets.length.toLocaleString()}묶음</b>
+          완전히 같은 폴더(하위 포함) <b className="text-fg">{sets.length.toLocaleString()}묶음</b>
           {pending.length > 0 && (
             <>
               {" "}· 아직 안 한 것 {pending.length.toLocaleString()}묶음 · 하나만 남기면{" "}
@@ -316,8 +333,21 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                       <span className="text-fg-mute"> · </span>
                       <span className="text-fg">{f.folder || "/"}</span>
                     </span>
-                    <span className="text-[11px] text-fg-mute pl-3">
+                    <span className="text-[11px] text-fg-mute pl-3 flex items-center gap-2">
                       {settled(f) ? "NAS 동기화 폴더" : ""}
+                      {j !== k && s.ids[j].length > 1 && <span className="text-fg-faint">/…</span>}
+                      {j !== k && (
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setViewing({ a: s.folders[k], b: f, aIds: s.ids[k], bIds: s.ids[j] });
+                          }}
+                          className="h-5 px-1.5 rounded text-[11px] text-fg-dim ring-1 ring-line-strong pointer-events-auto"
+                          title="남길 폴더(●)와 이 폴더의 사진을 나란히 놓고 직접 봅니다"
+                        >
+                          보기
+                        </button>
+                      )}
                     </span>
                   </label>
                 ))}

@@ -418,12 +418,12 @@ pub async fn cull_compare_folders(
 #[tauri::command]
 pub async fn cull_folder_set_apply(
     state: State<'_, AppState>,
-    keep_folder_id: i64,
-    drop_folder_ids: Vec<i64>,
+    keep_ids: Vec<i64>,
+    drop_ids: Vec<i64>,
 ) -> Result<apply::ApplyAll, String> {
     state
         .db
-        .transaction(|tx| folders::apply_set(tx, keep_folder_id, &drop_folder_ids))
+        .transaction(|tx| folders::apply_trees(tx, &keep_ids, &drop_ids))
         .map_err(err)
 }
 

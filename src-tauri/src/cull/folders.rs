@@ -28,6 +28,8 @@ pub struct FolderIn {
 pub struct FolderSet {
     /// 같은 내용의 폴더들 — 정착 구역이 앞에
     pub folders: Vec<FolderIn>,
+    /// `folders` 와 같은 순서 — 각 폴더 나무의 폴더 행 id 들(하위 포함). 표시·휴지통으로가 이 목록에 건다
+    pub ids: Vec<Vec<i64>>,
     pub files: i64,
     /// 폴더 하나의 용량 — 하나만 남기면 (n-1)배가 빈다
     pub bytes: i64,
@@ -96,9 +98,23 @@ impl Disk {
     }
 }
 
-/// 내용이 완전히 같은 폴더 묶음들 — 비는 용량 큰 순.
+/// 내용이 완전히 같은 폴더 묶음들 — **나무째** 본다(하위 폴더까지 합친 내용). 위 폴더끼리 같으면
+/// 아래 폴더는 따로 안 나온다. 경로 순.
+///
+/// 실측(2026-08-30): 바로 아래 파일만 보던 때는 하위 폴더가 있는 폴더를 통째로 뺐고, 그래서
+/// 껍질 벗기듯 여러 번 돌아야 했다 — 두 폴더 비교와 같은 나무 판정으로 맞춘다
 pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<FolderSet>> {
-    // 파일이 전부 해시된 폴더만 서명을 만든다. group_concat 의 순서는 안쪽 ORDER BY 를 따른다.
+    struct Row {
+        info: FolderIn,
+        vol: String,
+        rel: String,
+        n: i64,
+        bytes: i64,
+        pend: i64,
+        flagged: i64,
+        nohash: i64,
+        hashes: Vec<String>,
+    }
     let mut st = c.prepare(
         "WITH tot AS (
            SELECT folder_id, COUNT(*) n, SUM(full_hash IS NULL) nohash, SUM(size) bytes,
@@ -111,74 +127,121 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
                  ORDER BY folder_id, full_hash)
            GROUP BY folder_id)
          SELECT fo.id, fo.library_id, l.name, l.rel_path, fo.rel_path, fo.area,
-                t.n, t.bytes, t.pend, sig.s, fo.volume_uuid, t.flagged
-         FROM sig
-         JOIN tot t ON t.folder_id = sig.folder_id
-         JOIN folders fo ON fo.id = sig.folder_id
+                t.n, t.bytes, t.pend, t.flagged, t.nohash, sig.s, fo.volume_uuid
+         FROM folders fo
          JOIN libraries l ON l.id = fo.library_id
-         WHERE t.nohash = 0 AND t.n >= 1",
+         JOIN tot t ON t.folder_id = fo.id
+         LEFT JOIN sig ON sig.folder_id = fo.id",
     )?;
-    let rows = st.query_map([], |r| {
-        let lib_rel: String = r.get(3)?;
-        let rel: String = r.get(4)?;
-        Ok((
-            FolderIn {
-                folder_id: r.get(0)?,
-                library_id: r.get(1)?,
-                library: r.get(2)?,
-                folder: in_lib(&lib_rel, &rel),
-                area: r.get(5)?,
-            },
-            r.get::<_, i64>(6)?,
-            r.get::<_, i64>(7)?,
-            r.get::<_, i64>(8)?,
-            r.get::<_, String>(9)?,
-            r.get::<_, String>(10)?,
-            rel,
-            r.get::<_, i64>(11)?,
-        ))
-    })?;
-    // 하위 폴더가 있으면 «바로 아래 파일만 같다»일 뿐이다 — 사용자는 폴더째 같다고 읽고
-    // Finder 에서 지운다. 하위는 저마다 따로 견준다. 빠진 디스크의 폴더는 지금 확인할 수
-    // 없으니 견주지 않는다
-    let kids = parents_with_children(c)?;
-    let mut disk = Disk::new();
-    let mut missing = 0usize;
-    let mut by_sig: HashMap<String, (Vec<FolderIn>, i64, i64, bool, i64)> = HashMap::new();
-    for row in rows {
-        let (f, n, bytes, pend, s, vol, rel, flagged) = row?;
-        if kids.contains(&(vol.clone(), rel.clone())) || !disk.online(&vol) {
-            continue;
-        }
-        if !disk.dir_exists(&vol, &rel) {
-            missing += 1;
-            continue;
-        }
-        let e = by_sig.entry(s).or_insert((Vec::new(), n, bytes, false, 0));
-        e.0.push(f);
-        e.3 |= pend > 0;
-        e.4 += flagged;
+    let rows: Vec<Row> = st
+        .query_map([], |r| {
+            let lib_rel: String = r.get(3)?;
+            let rel: String = r.get(4)?;
+            let s: Option<String> = r.get(11)?;
+            Ok(Row {
+                info: FolderIn {
+                    folder_id: r.get(0)?,
+                    library_id: r.get(1)?,
+                    library: r.get(2)?,
+                    folder: in_lib(&lib_rel, &rel),
+                    area: r.get(5)?,
+                },
+                vol: r.get(12)?,
+                rel,
+                n: r.get(6)?,
+                bytes: r.get(7)?,
+                pend: r.get(8)?,
+                flagged: r.get(9)?,
+                nohash: r.get(10)?,
+                hashes: s.map(|s| s.split(',').map(str::to_string).collect()).unwrap_or_default(),
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    // 나무 합치기 — 폴더마다 (해시 → 장수) 다중집합을 위 폴더들에 더한다. 중간 폴더 행이 없으면 건너뛴다
+    let index: HashMap<(String, String), usize> =
+        rows.iter().enumerate().map(|(i, r)| ((r.vol.clone(), r.rel.clone()), i)).collect();
+    struct Tree {
+        counts: HashMap<String, i64>,
+        files: i64,
+        bytes: i64,
+        pend: i64,
+        flagged: i64,
+        nohash: i64,
+        ids: Vec<i64>,
     }
-    let mut out: Vec<FolderSet> = by_sig
-        .into_values()
-        .filter(|(fs, _, _, _, _)| fs.len() >= 2)
-        .map(|(mut fs, files, bytes, pending, flagged)| {
-            // 정착 구역이 앞에, 그다음은 라이브러리·경로 순 — 남길 것이 맨 앞
-            fs.sort_by(|a, b| {
-                let sa = !(a.area == 1 || a.area == 2);
-                let sb = !(b.area == 1 || b.area == 2);
-                sa.cmp(&sb)
-                    .then(a.library_id.cmp(&b.library_id))
-                    .then(a.folder.cmp(&b.folder))
-            });
-            FolderSet { folders: fs, files, bytes, pending, flagged }
+    let mut trees: Vec<Tree> = rows
+        .iter()
+        .map(|r| {
+            let mut counts: HashMap<String, i64> = HashMap::new();
+            for h in &r.hashes {
+                *counts.entry(h.clone()).or_default() += 1;
+            }
+            Tree { counts, files: r.n, bytes: r.bytes, pend: r.pend, flagged: r.flagged, nohash: r.nohash, ids: vec![r.info.folder_id] }
         })
         .collect();
-    if missing > 0 {
-        log::warn!("폴더 비교: 디스크에 없는 폴더 {missing}개는 뺐습니다 — 라이브러리를 다시 스캔하세요");
+    for i in 0..rows.len() {
+        for anc in ancestors(&rows[i].rel) {
+            if let Some(&j) = index.get(&(rows[i].vol.clone(), anc)) {
+                let (own_counts, own) = (rows[i].hashes.clone(), (rows[i].n, rows[i].bytes, rows[i].pend, rows[i].flagged, rows[i].nohash, rows[i].info.folder_id));
+                let t = &mut trees[j];
+                for h in own_counts {
+                    *t.counts.entry(h).or_default() += 1;
+                }
+                t.files += own.0;
+                t.bytes += own.1;
+                t.pend += own.2;
+                t.flagged += own.3;
+                t.nohash += own.4;
+                t.ids.push(own.5);
+            }
+        }
     }
-    // 경로 순 — 용량 순으로 두면 «2016, 2023, 2019…» 뒤죽박죽으로 보인다 (사용자 지적).
-    // 묶음의 이름은 정착 구역 폴더(맨 앞)의 경로
+
+    // 서명 = 정렬한 (해시:장수). 해시 없는 파일이 하나라도 있으면 어디와도 같을 수 없다
+    let mut disk = Disk::new();
+    let mut by_sig: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, t) in trees.iter().enumerate() {
+        if t.files == 0 || t.nohash > 0 {
+            continue;
+        }
+        if !disk.online(&rows[i].vol) || !disk.dir_exists(&rows[i].vol, &rows[i].rel) {
+            continue;
+        }
+        let mut parts: Vec<String> = t.counts.iter().map(|(h, n)| format!("{h}:{n}")).collect();
+        parts.sort();
+        by_sig.entry(parts.join(",")).or_default().push(i);
+    }
+    // 위 폴더끼리 같은 묶음이 있으면 그 아래는 안 낸다 — 얕은 것부터 보며 덮인 자리를 적는다
+    let mut sets: Vec<Vec<usize>> = by_sig.into_values().filter(|v| v.len() >= 2).collect();
+    sets.sort_by_key(|v| v.iter().map(|&i| rows[i].rel.matches('/').count()).min().unwrap_or(0));
+    let mut covered: Vec<(String, String)> = Vec::new(); // (vol, rel) — 이 아래는 덮였다
+    let is_covered = |vol: &str, rel: &str, covered: &[(String, String)]| {
+        covered.iter().any(|(v, r)| v == vol && (rel == r || rel.starts_with(&format!("{r}/"))))
+    };
+    let mut out: Vec<FolderSet> = Vec::new();
+    for members in sets {
+        if members.iter().all(|&i| is_covered(&rows[i].vol, &rows[i].rel, &covered)) {
+            continue;
+        }
+        for &i in &members {
+            covered.push((rows[i].vol.clone(), rows[i].rel.clone()));
+        }
+        let mut fs: Vec<(FolderIn, Vec<i64>)> =
+            members.iter().map(|&i| (rows[i].info.clone(), trees[i].ids.clone())).collect();
+        // 정착 구역이 앞에, 그다음은 라이브러리·경로 순 — 남길 것이 맨 앞
+        fs.sort_by(|(a, _), (b, _)| {
+            let sa = !(a.area == 1 || a.area == 2);
+            let sb = !(b.area == 1 || b.area == 2);
+            sa.cmp(&sb).then(a.library_id.cmp(&b.library_id)).then(a.folder.cmp(&b.folder))
+        });
+        let first = members[0];
+        let pending = members.iter().any(|&i| trees[i].pend > 0);
+        let flagged = members.iter().map(|&i| trees[i].flagged).sum();
+        let (folders, ids): (Vec<FolderIn>, Vec<Vec<i64>>) = fs.into_iter().unzip();
+        out.push(FolderSet { folders, ids, files: trees[first].files, bytes: trees[first].bytes, pending, flagged });
+    }
+    // 경로 순 — 묶음의 이름은 정착 구역 폴더(맨 앞)의 경로
     out.sort_by(|a, b| {
         a.folders[0]
             .folder
@@ -859,6 +922,26 @@ mod tests {
         assert!(roots_overlap(("v", ""), ("v", "x")), "볼륨 뿌리는 전부를 품는다");
         assert!(!roots_overlap(("v", "후보1"), ("v", "후보10")), "이름 앞만 같은 것");
         assert!(!roots_overlap(("v1", "a"), ("v2", "a")), "다른 볼륨");
+    }
+
+    /// 하위 폴더까지 똑같은 두 나무는 위 폴더 한 줄로만 나온다
+    #[test]
+    fn identical_trees_are_reported_once_at_the_top() {
+        let dir = tempfile::tempdir().unwrap();
+        for root in ["P", "Q"] {
+            for (sub, body) in [("2016", "AAAA"), ("2016/x", "BBBB"), ("2016/y", "CCCC")] {
+                let p = dir.path().join(root).join(sub);
+                std::fs::create_dir_all(&p).unwrap();
+                std::fs::write(p.join("a.jpg"), body.as_bytes().repeat(200)).unwrap();
+            }
+        }
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let sets = db.read(|c| identical_sets(c, 100)).unwrap();
+        assert_eq!(sets.len(), 1, "P/2016 ≡ Q/2016 한 줄뿐 — x·y 는 따로 안 나온다: {sets:?}");
+        assert_eq!(sets[0].files, 3, "나무째 3장");
+        assert_eq!(sets[0].ids[0].len(), 3, "폴더 행 셋(2016, x, y)");
     }
 
     #[test]

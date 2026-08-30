@@ -137,6 +137,66 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
     [keep, ask],
   );
 
+  /// 여러 묶음을 골라 한 번에 — 묶음마다 체크, 위에서 «전체». 고른 묶음은 저마다의 ●(남길 폴더)로 처리
+  const [pickedSets, setPickedSets] = useState<Set<string>>(new Set());
+  const togglePicked = useCallback((key: string) => {
+    setPickedSets((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const applyPicked = useCallback(async () => {
+    if (!sets) return;
+    const todo = sets.filter((s) => s.pending && pickedSets.has(setKey(s)));
+    if (todo.length === 0) {
+      toast("고른 묶음이 없습니다 — 줄 앞의 상자에 체크하세요");
+      return;
+    }
+    const keepAt = (s: FolderSet) => Math.min(keep[setKey(s)] ?? 0, s.folders.length - 1);
+    // 지워질 쪽에 NAS 폴더가 있는 묶음 — 사람이 봐야 한다
+    const risky = todo.filter((s) => s.folders.some((f, j) => j !== keepAt(s) && settled(f)));
+    const bytes = todo.reduce((a, s) => a + s.bytes * (s.folders.length - 1), 0);
+    const files = todo.reduce((a, s) => a + s.files * (s.folders.length - 1), 0);
+    const ok = await ask({
+      title: `고른 ${todo.length.toLocaleString()}묶음 — ● 남기고 나머지 ${files.toLocaleString()}장에 제외 표시`,
+      lines: [
+        `${fmtBytes(bytes)} 빔`,
+        ...(risky.length > 0
+          ? [`주의: ${risky.length.toLocaleString()}묶음은 지워질 쪽에 NAS 동기화 폴더(내사진·공용)가 있습니다 — 휴지통으로 옮기면 NAS에서도 지워집니다`]
+          : []),
+        "파일은 아직 옮기지 않습니다 — 표시한 뒤 위의 «제외한 N장 휴지통으로»를 누르면 옮깁니다",
+      ],
+      confirmLabel: "제외 표시",
+      danger: risky.length > 0,
+    });
+    if (!ok) return;
+    let failed = 0;
+    let firstErr = "";
+    for (const s of todo) {
+      const k = keepAt(s);
+      try {
+        await invoke<ApplyAll>("cull_folder_set_apply", {
+          keepIds: s.ids[k],
+          dropIds: s.ids.flatMap((ids, j) => (j === k ? [] : ids)),
+        });
+      } catch (e) {
+        failed += 1;
+        firstErr ||= String(e);
+      }
+    }
+    toast(
+      failed
+        ? `${(todo.length - failed).toLocaleString()}묶음 처리 · ${failed}묶음 실패 (${firstErr})`
+        : `${todo.length.toLocaleString()}묶음 처리했습니다 — 위의 «휴지통으로»로 옮깁니다`,
+      failed ? "drop" : "ok",
+    );
+    setPickedSets(new Set());
+    setTick((t) => t + 1);
+    onChanged();
+  }, [sets, pickedSets, keep, ask, onChanged]);
+
   const applyAllNas = useCallback(async () => {
     if (!sets) return;
     // 남길 것은 사용자가 ●로 고른 폴더(기본은 맨 앞). 그것이 NAS 폴더이고 나머지가 전부
@@ -258,13 +318,34 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
           </>
         )}
         {pending.length > 0 && (
-          <button
-            onClick={applyAllNas}
-            disabled={sweeping}
-            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
-          >
-            NAS 것 남기고 전부 처리
-          </button>
+          <>
+            <label className="flex items-center gap-1.5 text-[12px] cursor-pointer" title="아직 안 한 묶음 전부 고르기/풀기">
+              <input
+                type="checkbox"
+                className="accent-accent w-3.5 h-3.5"
+                checked={pending.every((s) => pickedSets.has(setKey(s)))}
+                onChange={(e) => setPickedSets(e.target.checked ? new Set(pending.map(setKey)) : new Set())}
+              />
+              전체
+            </label>
+            {pickedSets.size > 0 && (
+              <button
+                onClick={applyPicked}
+                disabled={sweeping}
+                title="고른 묶음마다 ● 폴더를 남기고 나머지에 제외 표시"
+                className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
+              >
+                고른 {pickedSets.size.toLocaleString()}묶음 처리
+              </button>
+            )}
+            <button
+              onClick={applyAllNas}
+              disabled={sweeping}
+              className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
+            >
+              NAS 것 남기고 전부 처리
+            </button>
+          </>
         )}
       </div>
 
@@ -278,6 +359,15 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
               className={`px-4 py-3 border-b border-line ${s.pending ? "" : "opacity-45"}`}
             >
               <div className="flex items-center gap-3 mb-1.5 text-[12px] text-fg-mute tabular-nums">
+                {s.pending && (
+                  <input
+                    type="checkbox"
+                    className="accent-accent w-3.5 h-3.5"
+                    checked={pickedSets.has(key)}
+                    onChange={() => togglePicked(key)}
+                    title="이 묶음을 골라 위의 «고른 N묶음 처리»로 한 번에"
+                  />
+                )}
                 <span>
                   {s.folders.length}곳에 같은 폴더 · {s.files.toLocaleString()}장 · 폴더당 {fmtBytes(s.bytes)}
                 </span>

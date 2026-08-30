@@ -218,11 +218,16 @@ export default function Sidebar({
           {source === "settings" && <SettingsNav />}
           {source === "trash" && (
             <div className="px-3 py-2 text-[12px] text-fg-dim">
+              {/* 휴지통은 라이브러리마다 하나(같은 디스크 안 .acut/휴지통) — 어느 것을 보는지 적는다 */}
+              <div className="text-fg font-semibold mb-0.5">
+                {libId === null ? "모든 라이브러리의 휴지통" : `«${libs.find((l) => l.id === libId)?.name ?? ""}» 휴지통`}
+              </div>
               버린 사진 {(trash?.files ?? 0).toLocaleString()}장
               <br />
-              <span className="text-fg-mute">
-                {fmtBytes(trash?.bytes ?? 0)}
-              </span>
+              <span className="text-fg-mute">{fmtBytes(trash?.bytes ?? 0)}</span>
+              <div className="mt-2 text-[11px] text-fg-mute leading-snug">
+                휴지통은 라이브러리마다 따로 있습니다(같은 디스크 안 <code>.acut/휴지통</code>). 전부 보려면 앨범 맨 위 «전체»를 고르세요.
+              </div>
             </div>
           )}
         </aside>

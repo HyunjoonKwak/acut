@@ -11,6 +11,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     backfill_libraries(c)?;
     add_trash_columns(c)?;
     add_faces_at(c)?;
+    add_image_hash(c)?;
     add_nas_pulls(c)?;
     rename_old_labels(c)?;
     Ok(())
@@ -47,6 +48,17 @@ fn add_trash_columns(c: &Connection) -> rusqlite::Result<()> {
 }
 
 /// 얼굴을 찾아 본 시각 — 얼굴이 없어도 남아 다음에 다시 보지 않는다 (4단계)
+/// 메타데이터만 다른 사본을 찾는 «그림 해시»(2026-08-30) — 촬영일시 EXIF 를 나중에 써 넣은
+/// 사본은 바이트가 달라 완전 중복에서 빠졌다 (실측: 하와이 1,081장)
+fn add_image_hash(c: &Connection) -> rusqlite::Result<()> {
+    if !has_column(c, "files", "image_hash")? {
+        c.execute_batch("ALTER TABLE files ADD COLUMN image_hash TEXT")?;
+    }
+    c.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_files_image_hash ON files(image_hash) WHERE image_hash IS NOT NULL;",
+    )
+}
+
 fn add_faces_at(c: &Connection) -> rusqlite::Result<()> {
     if !has_column(c, "files", "faces_at")? {
         c.execute_batch("ALTER TABLE files ADD COLUMN faces_at INTEGER")?;
@@ -251,6 +263,29 @@ mod tests {
             })
             .unwrap();
         assert_eq!(attached, 3, "폴더가 전부 붙어야 한다");
+    }
+
+    #[test]
+    fn image_hash_column_is_added_to_an_old_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(include_str!("schema.sql")).unwrap();
+            c.execute_batch(
+                "DROP INDEX IF EXISTS idx_files_image_hash;
+                 ALTER TABLE files DROP COLUMN image_hash;",
+            )
+            .unwrap();
+            assert!(!has_column(&c, "files", "image_hash").unwrap());
+        }
+        let db = Db::open(&path).expect("그림 해시 전 DB도 열려야 한다");
+        db.read(|c| {
+            assert!(has_column(c, "files", "image_hash")?);
+            Ok(())
+        })
+        .unwrap();
+        db.write(|c| c.execute("UPDATE files SET image_hash='abc'", [])).unwrap();
     }
 
     #[test]

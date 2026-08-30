@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS files (
     -- 동일성 ------------------------------------------------------------
     quick_hash  TEXT,                          -- xxHash64, 앞뒤 일부
     full_hash   TEXT,                          -- SHA-256, 전체
+    image_hash  TEXT,                          -- SHA-256, JPEG 그림 데이터만(EXIF·XMP 등 머리 제외)
 
     -- 이미지 속성 -------------------------------------------------------
     width       INTEGER,
@@ -147,6 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_files_taken     ON files(taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_files_folder    ON files(folder_id, taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_files_full_hash ON files(full_hash) WHERE full_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_quick     ON files(size, quick_hash);
+-- idx_files_image_hash 도 db/upgrade.rs 가 만든다 (같은 이유 — 구버전 DB 엔 컬럼이 아직 없다)
 CREATE INDEX IF NOT EXISTS idx_files_culling   ON files(culling_flag) WHERE culling_flag <> 0;
 CREATE INDEX IF NOT EXISTS idx_files_rating    ON files(rating) WHERE rating > 0;
 CREATE INDEX IF NOT EXISTS idx_files_kind      ON files(kind, taken_at DESC);

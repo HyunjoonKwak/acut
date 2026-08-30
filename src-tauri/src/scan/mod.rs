@@ -216,6 +216,8 @@ pub fn scan_folder(
                     AND files.modified_at IS excluded.modified_at THEN files.quick_hash END,
                 full_hash=CASE WHEN files.size=excluded.size
                     AND files.modified_at IS excluded.modified_at THEN files.full_hash END,
+                image_hash=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.image_hash END,
                 size=excluded.size, taken_at=excluded.taken_at,
                 taken_at_source=excluded.taken_at_source,
                 modified_at=excluded.modified_at, width=excluded.width,

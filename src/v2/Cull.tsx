@@ -49,7 +49,7 @@ type Summary = {
 const KINDS = [
   { id: -3, label: "폴더 비교", hint: "내용이 완전히 같은 폴더들 — 하나만 남기고 나머지는 제외" },
   { id: -4, label: "두 폴더 비교", hint: "내가 고른 두 폴더 아래를 견준다 — 후보1번/연도별 ⇔ 후보2번" },
-  { id: 0, label: "개별 비교", hint: "바이트가 같은 사진 무리 — 한 장씩 보며" },
+  { id: 0, label: "개별 비교", hint: "같은 사진 무리(메타데이터만 다른 사본 포함) — 한 장씩 보며" },
   { id: 2, label: "같은 순간", hint: "연달아 찍은 것" },
   { id: 1, label: "잡동사니", hint: "스크린샷·다운로드본" },
   { id: 3, label: "비슷한 장면", hint: "AI가 본 닮은 사진 (벡터 필요)" },
@@ -315,12 +315,16 @@ export default function Cull({
       full_total: number;
       full_done: number;
       full_bytes: number;
+      image_total: number;
+      image_done: number;
     }>("cull-dedup-progress", (p) => {
       // 전체 해시는 파일을 끝까지 읽어 오래 걸린다 — 장수와 읽은 양을 같이 보인다
       setBusy(
-        p.phase === "full"
-          ? `중복 확인 — 전체 해시 ${p.full_done.toLocaleString()}/${p.full_total.toLocaleString()} · ${fmtBytes(p.full_bytes)}`
-          : `중복 확인 — 빠른 해시 ${p.hashed.toLocaleString()}/${p.candidates.toLocaleString()}`,
+        p.phase === "image"
+          ? `중복 확인 — 메타데이터만 다른 사본 ${p.image_done.toLocaleString()}/${p.image_total.toLocaleString()}`
+          : p.phase === "full"
+            ? `중복 확인 — 전체 해시 ${p.full_done.toLocaleString()}/${p.full_total.toLocaleString()} · ${fmtBytes(p.full_bytes)}`
+            : `중복 확인 — 빠른 해시 ${p.hashed.toLocaleString()}/${p.candidates.toLocaleString()}`,
       );
     });
     on("cull-dedup", () => stage("중복 완료 — 비슷한 장면 찾는 중"));

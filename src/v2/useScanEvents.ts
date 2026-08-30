@@ -78,11 +78,15 @@ export function useScanEvents(cb: {
       candidates: number;
       full_done: number;
       full_total: number;
+      image_done: number;
+      image_total: number;
     }>("cull-dedup-progress", (p) =>
       job().progress(
-        p.phase === "full"
-          ? { label: "고르기 — 전체 해시", done: p.full_done, total: p.full_total }
-          : { label: "고르기 — 빠른 해시", done: p.hashed, total: p.candidates },
+        p.phase === "image"
+          ? { label: "고르기 — 메타데이터만 다른 사본", done: p.image_done, total: p.image_total }
+          : p.phase === "full"
+            ? { label: "고르기 — 전체 해시", done: p.full_done, total: p.full_total }
+            : { label: "고르기 — 빠른 해시", done: p.hashed, total: p.candidates },
       ),
     );
     on("cull-dedup", () =>

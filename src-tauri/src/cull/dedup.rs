@@ -5,6 +5,10 @@
 //!
 //! 판정은 [`super::hash`]의 3단계를 따른다. 크기로 후보를 좁히고, 빠른 해시로
 //! 다시 좁힌 다음, 전체 해시가 같은 것만 한 그룹으로 묶는다.
+//!
+//! 4단계 «메타데이터만 다른 사본»(2026-08-30): 촬영일시 EXIF 를 나중에 써 넣은 사본은
+//! 106바이트가 늘어 1단계에서 빠진다 (실측: 하와이 1,081장 — 내사진 쪽 2026-07 에 써 넣음).
+//! 이름·픽셀 크기가 같고 파일 크기만 조금 다른 짝은 그림 데이터만 해시해 비교한다.
 
 use crate::cull::hash;
 use crate::db::conn::{Db, Result};
@@ -31,6 +35,31 @@ pub struct DedupProgress {
     pub full_bytes: i64,
     /// 디스크가 안 꽂혀 있어 뺀 후보 수
     pub offline: usize,
+    /// 4단계 그림 해시 — 대상 수, 읽은 수
+    pub image_total: usize,
+    pub image_done: usize,
+}
+
+/// 4단계 후보의 파일 크기 차 상한. 촬영일시 EXIF 는 100바이트 남짓, XMP·ICC·미리보기를
+/// 다 넣어도 수십 KB 다. 이보다 크게 다르면 다시 인코딩된 것으로 보고 재지 않는다
+pub const TWIN_SLACK: i64 = 256 * 1024;
+
+/// 그룹을 쓸 때 필요한 것 — 구성원마다 SELECT 하지 않게
+#[derive(Clone)]
+struct Info {
+    size: i64,
+    area: i32,
+    taken_at: i64,
+    full: Option<String>,
+}
+
+/// 4단계 후보 — 이름·픽셀 크기가 같은 다른 파일이 있고, 크기만 조금 다른 것
+struct Twin {
+    id: i64,
+    path: PathBuf,
+    volume_uuid: String,
+    image: Option<String>,
+    info: Info,
 }
 
 struct Cand {
@@ -123,9 +152,7 @@ pub fn scan(
         ..Default::default()
     }));
     on_progress(&progress.lock().unwrap().clone());
-    if cands.is_empty() {
-        return Ok(progress.lock().unwrap().clone());
-    }
+    // 크기가 겹치는 것이 없어도 끝내지 않는다 — 4단계(메타데이터만 다른 사본)는 따로 후보를 고른다
 
     // 2단계: 빠른 해시 (파일당 128KB만 읽는다). 지난번 것이 있으면 그대로 쓴다.
     let counter = AtomicUsize::new(0);
@@ -225,53 +252,90 @@ pub fn scan(
     for (id, h) in full_hashes {
         final_groups.entry(h).or_default().push(id);
     }
-    let dupes: Vec<Vec<i64>> = final_groups.into_values().filter(|v| v.len() > 1).collect();
-
-    let mut reclaimable = 0i64;
-    db.transaction(|tx| {
-        // 이전 결과를 지운다 — 같은 종류를 두 번 쌓지 않게
-        tx.execute("DELETE FROM groups WHERE kind = 0", [])?;
-        let mut ins_g = tx.prepare(
-            "INSERT INTO groups(kind, reason, size_bytes, state, created_at)
-             VALUES(0, '완전 중복', ?1, 0, strftime('%s','now'))",
-        )?;
-        let mut ins_m = tx.prepare(
-            "INSERT INTO group_members(group_id, file_id, is_best) VALUES(?1,?2,?3)",
-        )?;
-        for ids in &dupes {
-            let size: i64 = by_id.get(&ids[0]).map(|c| c.size).unwrap_or(0);
-            // 한 장만 남기므로 (개수-1)만큼 확보된다
-            let gain = size * (ids.len() as i64 - 1);
-            reclaimable += gain;
-            ins_g.execute([gain])?;
-            let gid = tx.last_insert_rowid();
-
-            // 가장 이른 촬영일을 기본 유지본으로 제안한다.
-            // 원본이 사본보다 먼저 찍혔을 가능성이 높다.
-            let mut best = ids[0];
-            // 정리된 자리(내사진·공용)에 있는 사본이 먼저다 — 옛 백업 디스크와
-            // 운영 디스크 사이 중복에서 «올라간 쪽을 남기고 옛것을 버린다»가 되게.
-            // 같은 자리끼리면 가장 이른 촬영일.
-            let mut best_key = (i32::MAX, i64::MAX, i64::MAX);
-            for id in ids {
-                let (area, t) = by_id.get(id).map(|c| (c.area, c.taken_at)).unwrap_or((i32::MAX, i64::MAX));
-                // 같은 자리·같은 시각이면 id 로 — 돌릴 때마다 대표가 바뀌지 않게
-                let key = (if area == 1 || area == 2 { 0 } else { 1 }, t, *id);
-                if key < best_key {
-                    best_key = key;
-                    best = *id;
-                }
-            }
-            for id in ids {
-                ins_m.execute(rusqlite::params![gid, id, (*id == best) as i32])?;
+    let mut info: HashMap<i64, Info> = cands
+        .iter()
+        .map(|c| (c.id, Info { size: c.size, area: c.area, taken_at: c.taken_at, full: c.full.clone() }))
+        .collect();
+    // 전체 해시를 방금 읽은 것은 cands.full 에 없다 — 그룹 사유 판정에 쓰이므로 채운다
+    for (h, ids) in &final_groups {
+        for id in ids {
+            if let Some(i) = info.get_mut(id) {
+                i.full = Some(h.clone());
             }
         }
-        Ok(())
-    })?;
+    }
+
+    // 4단계: 메타데이터만 다른 사본 — 그림 데이터만 해시한다
+    let mut twins = twin_candidates(db)?;
+    let twin_mounts: HashMap<String, PathBuf> = twins
+        .iter()
+        .map(|t| t.volume_uuid.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .filter_map(|u| crate::db::volumes::find_mount(&u).map(|m| (u, m)))
+        .collect();
+    twins.retain(|t| twin_mounts.contains_key(&t.volume_uuid));
+    {
+        let mut p = progress.lock().unwrap();
+        p.phase = "image";
+        p.image_total = twins.len();
+        on_progress(&p.clone());
+    }
+    let image_done = AtomicUsize::new(0);
+    let pending = Mutex::new(Vec::<(i64, String)>::new());
+    let image_total = twins.len();
+    let image_hashes: Vec<(i64, String)> = twins
+        .par_iter()
+        .filter_map(|t| {
+            if cancel.load(Ordering::Relaxed) {
+                return None;
+            }
+            let h = match &t.image {
+                Some(h) => Some(h.clone()),
+                None => {
+                    let path = twin_mounts.get(&t.volume_uuid)?.join(&t.path);
+                    let h = hash::image(path).ok()??;
+                    let mut pend = pending.lock().unwrap();
+                    pend.push((t.id, h.clone()));
+                    if pend.len() >= 200 {
+                        let batch = std::mem::take(&mut *pend);
+                        drop(pend);
+                        let _ = persist(db, "image_hash", &batch);
+                    }
+                    Some(h)
+                }
+            };
+            let n = image_done.fetch_add(1, Ordering::Relaxed) + 1;
+            if n % 25 == 0 || n == image_total {
+                let mut p = progress.lock().unwrap();
+                p.image_done = n;
+                on_progress(&p.clone());
+            }
+            h.map(|h| (t.id, h))
+        })
+        .collect();
+    persist(db, "image_hash", &pending.into_inner().unwrap())?;
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(progress.lock().unwrap().clone());
+    }
+    for t in &twins {
+        info.entry(t.id).or_insert_with(|| t.info.clone());
+    }
+    let mut twin_groups: HashMap<String, Vec<i64>> = HashMap::new();
+    for (id, h) in image_hashes {
+        twin_groups.entry(h).or_default().push(id);
+    }
+
+    // 바이트가 같은 무리와 그림이 같은 무리를 합친다 — 한 사진이 양쪽에 걸치면 한 그룹
+    let comps = merge_groups(
+        final_groups.into_values().filter(|v| v.len() > 1),
+        twin_groups.into_values().filter(|v| v.len() > 1),
+    );
+    let (groups, reclaimable) = write_groups(db, &comps, &info)?;
 
     let mut p = progress.lock().unwrap();
     p.hashed = cands.len();
-    p.groups = dupes.len();
+    p.groups = groups;
     p.reclaimable = reclaimable;
     let out = p.clone();
     drop(p);
@@ -279,10 +343,264 @@ pub fn scan(
     Ok(out)
 }
 
+/// 4단계 후보를 고른다 — 이름·픽셀 크기가 같은 JPEG 이 둘 이상이고 그중 크기가 다른 것이 있는
+/// 무리에서, 크기 차가 [`TWIN_SLACK`] 안인 짝이 있는 파일만.
+fn twin_candidates(db: &Db) -> Result<Vec<Twin>> {
+    let rows: Vec<(Twin, String, i64, i64)> = db.read(|c| {
+        let mut st = c.prepare(
+            "WITH b AS (SELECT name, width, height FROM files
+                        WHERE trashed_at IS NULL AND kind = 0 AND width IS NOT NULL
+                          AND ext IN ('jpg','jpeg')
+                        GROUP BY name, width, height HAVING COUNT(DISTINCT size) > 1)
+             SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid, fi.image_hash, fi.full_hash,
+                    fo.area, fi.taken_at, fi.width, fi.height
+             FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+             JOIN b ON b.name = fi.name AND b.width = fi.width AND b.height = fi.height
+             WHERE fi.trashed_at IS NULL AND fi.kind = 0 AND fi.ext IN ('jpg','jpeg')
+             ORDER BY fi.name, fi.width, fi.height, fi.size",
+        )?;
+        let it = st.query_map([], |r| {
+            let dir: String = r.get(1)?;
+            let name: String = r.get(2)?;
+            Ok((
+                Twin {
+                    id: r.get(0)?,
+                    path: PathBuf::from(crate::media::cache::rel_path(&dir, &name)),
+                    volume_uuid: r.get(4)?,
+                    image: r.get(5)?,
+                    info: Info { size: r.get(3)?, area: r.get(7)?, taken_at: r.get(8)?, full: r.get(6)? },
+                },
+                name,
+                r.get::<_, i64>(9)?,
+                r.get::<_, i64>(10)?,
+            ))
+        })?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })?;
+    // 같은 (이름, 가로, 세로) 무리 안에서 크기가 다르면서 가까운 짝이 있는 것만
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < rows.len() {
+        let key = |r: &(Twin, String, i64, i64)| (r.1.clone(), r.2, r.3);
+        let k = key(&rows[i]);
+        let mut j = i;
+        while j < rows.len() && key(&rows[j]) == k {
+            j += 1;
+        }
+        let bucket = &rows[i..j];
+        let sizes: Vec<i64> = bucket.iter().map(|r| r.0.info.size).collect();
+        for (n, r) in bucket.iter().enumerate() {
+            let near = sizes
+                .iter()
+                .enumerate()
+                .any(|(m, s)| m != n && *s != sizes[n] && (*s - sizes[n]).abs() <= TWIN_SLACK);
+            if near {
+                out.push(Twin {
+                    id: r.0.id,
+                    path: r.0.path.clone(),
+                    volume_uuid: r.0.volume_uuid.clone(),
+                    image: r.0.image.clone(),
+                    info: r.0.info.clone(),
+                });
+            }
+        }
+        i = j;
+    }
+    Ok(out)
+}
+
+/// 두 종류의 무리를 합친다 — 한 파일이 «바이트 같음» 무리와 «그림 같음» 무리 양쪽에 있으면
+/// 그 둘은 한 그룹이다 (union-find)
+fn merge_groups(
+    byte_groups: impl Iterator<Item = Vec<i64>>,
+    image_groups: impl Iterator<Item = Vec<i64>>,
+) -> Vec<Vec<i64>> {
+    let mut parent: HashMap<i64, i64> = HashMap::new();
+    fn find(parent: &mut HashMap<i64, i64>, x: i64) -> i64 {
+        let p = *parent.entry(x).or_insert(x);
+        if p == x {
+            return x;
+        }
+        let root = find(parent, p);
+        parent.insert(x, root);
+        root
+    }
+    for g in byte_groups.chain(image_groups) {
+        for w in g.windows(2) {
+            let (a, b) = (find(&mut parent, w[0]), find(&mut parent, w[1]));
+            if a != b {
+                parent.insert(a, b);
+            }
+        }
+    }
+    let ids: Vec<i64> = parent.keys().copied().collect();
+    let mut comps: HashMap<i64, Vec<i64>> = HashMap::new();
+    for id in ids {
+        let r = find(&mut parent, id);
+        comps.entry(r).or_default().push(id);
+    }
+    let mut out: Vec<Vec<i64>> = comps.into_values().collect();
+    for c in &mut out {
+        c.sort_unstable();
+    }
+    out.sort_unstable();
+    out
+}
+
+/// 그룹을 기록한다 — 이전 «완전 중복» 결과는 지운다. (그룹 수, 확보 가능 바이트)
+fn write_groups(db: &Db, comps: &[Vec<i64>], info: &HashMap<i64, Info>) -> Result<(usize, i64)> {
+    let mut reclaimable = 0i64;
+    db.transaction(|tx| {
+        // 이전 결과를 지운다 — 같은 종류를 두 번 쌓지 않게
+        tx.execute("DELETE FROM groups WHERE kind = 0", [])?;
+        let mut ins_g = tx.prepare(
+            "INSERT INTO groups(kind, reason, size_bytes, state, created_at)
+             VALUES(0, ?1, ?2, 0, strftime('%s','now'))",
+        )?;
+        let mut ins_m = tx.prepare(
+            "INSERT INTO group_members(group_id, file_id, is_best) VALUES(?1,?2,?3)",
+        )?;
+        for ids in comps {
+            // 가장 이른 촬영일을 기본 유지본으로 제안한다.
+            // 원본이 사본보다 먼저 찍혔을 가능성이 높다.
+            // 정리된 자리(내사진·공용)에 있는 사본이 먼저다 — 옛 백업 디스크와
+            // 운영 디스크 사이 중복에서 «올라간 쪽을 남기고 옛것을 버린다»가 되게.
+            // 같은 자리끼리면 가장 이른 촬영일.
+            let mut best = ids[0];
+            let mut best_key = (i32::MAX, i64::MAX, i64::MAX);
+            let mut total = 0i64;
+            let mut fulls: Vec<Option<&str>> = Vec::with_capacity(ids.len());
+            for id in ids {
+                let i = info.get(id);
+                let (area, t) = i.map(|c| (c.area, c.taken_at)).unwrap_or((i32::MAX, i64::MAX));
+                total += i.map(|c| c.size).unwrap_or(0);
+                fulls.push(i.and_then(|c| c.full.as_deref()));
+                // 같은 자리·같은 시각이면 id 로 — 돌릴 때마다 대표가 바뀌지 않게
+                let key = (if area == 1 || area == 2 { 0 } else { 1 }, t, *id);
+                if key < best_key {
+                    best_key = key;
+                    best = *id;
+                }
+            }
+            // 바이트까지 다 같으면 «완전 중복», 그림만 같은 것이 섞였으면 «메타데이터만 다름»
+            let all_same_bytes = fulls[0].is_some() && fulls.iter().all(|f| *f == fulls[0]);
+            let reason = if all_same_bytes { "완전 중복" } else { "메타데이터만 다름" };
+            // 한 장만 남기므로 나머지 크기만큼 확보된다
+            let gain = total - info.get(&best).map(|c| c.size).unwrap_or(0);
+            reclaimable += gain;
+            ins_g.execute(rusqlite::params![reason, gain])?;
+            let gid = tx.last_insert_rowid();
+            for id in ids {
+                ins_m.execute(rusqlite::params![gid, id, (*id == best) as i32])?;
+            }
+        }
+        Ok(())
+    })?;
+    Ok((comps.len(), reclaimable))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cull::hash::fixtures::{jpeg, seg};
     use crate::scan::scan_test;
+
+    /// 4단계 시험판 — 같은 그림에 촬영일시 EXIF 만 써 넣은 사본, 다른 그림, 너무 많이 다른 사본
+    fn twin_setup() -> (tempfile::TempDir, Db) {
+        let dir = tempfile::tempdir().unwrap();
+        for d in ["mine", "t7", "other", "fat"] {
+            std::fs::create_dir_all(dir.path().join(d)).unwrap();
+        }
+        let scan = [0x12, 0x34, 0xFF, 0x00, 0x56, 0x78];
+        // 내사진 쪽: 날짜 EXIF 가 붙어 106바이트 더 크다
+        let exif = seg(0xE1, &[b'E'; 102]);
+        std::fs::write(dir.path().join("mine/IMG_1.jpg"), jpeg(&[exif], &scan)).unwrap();
+        // T7 쪽: 머리 없는 원본
+        std::fs::write(dir.path().join("t7/IMG_1.jpg"), jpeg(&[], &scan)).unwrap();
+        // 이름·크기(픽셀)는 같지만 다른 그림
+        std::fs::write(dir.path().join("other/IMG_1.jpg"), jpeg(&[], &[0x12, 0x34, 0xFF, 0x00, 0x00])).unwrap();
+        // 같은 그림이지만 크기 차가 상한을 넘는다 — 재지 않는다
+        let fat = seg(0xFE, &vec![b'x'; TWIN_SLACK as usize + 10]);
+        std::fs::write(dir.path().join("fat/IMG_1.jpg"), jpeg(&[fat], &scan)).unwrap();
+
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 1, |_| {}).unwrap();
+        // 시험판 JPEG 은 실제 그림이 아니라 스캐너가 픽셀 크기를 못 읽는다 — 같은 크기로 채운다
+        db.write(|c| c.execute("UPDATE files SET width=16, height=16", [])).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn a_copy_that_only_differs_in_metadata_is_grouped() {
+        let (_d, db) = twin_setup();
+        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        assert_eq!(p.groups, 1);
+        let (reason, n): (String, i64) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT g.reason, COUNT(*) FROM groups g JOIN group_members m ON m.group_id=g.id GROUP BY g.id",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!(reason, "메타데이터만 다름");
+        assert_eq!(n, 2, "mine 과 t7 만 — 다른 그림·상한 밖 사본은 빠진다");
+        // 그림 해시가 남아 다음엔 다시 읽지 않는다 (상한 밖 사본은 재지 않았다)
+        let hashed: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE image_hash IS NOT NULL", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(hashed, 3);
+        // 확보 용량은 대표를 뺀 나머지 크기
+        let (gain, best_size): (i64, i64) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT g.size_bytes, f.size FROM groups g JOIN group_members m ON m.group_id=g.id
+                     JOIN files f ON f.id=m.file_id WHERE m.is_best=1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        let total: i64 = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT SUM(f.size) FROM group_members m JOIN files f ON f.id=m.file_id",
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(gain, total - best_size);
+    }
+
+    #[test]
+    fn byte_identical_and_metadata_twins_fold_into_one_group() {
+        let (d, db) = twin_setup();
+        // t7 원본과 바이트까지 같은 사본 하나 더 — 세 장이 한 그룹, 사유는 «메타데이터만 다름»
+        std::fs::create_dir_all(d.path().join("t7b")).unwrap();
+        std::fs::copy(d.path().join("t7/IMG_1.jpg"), d.path().join("t7b/IMG_1.jpg")).unwrap();
+        scan_test(&db, d.path(), 1, |_| {}).unwrap();
+        db.write(|c| c.execute("UPDATE files SET width=16, height=16", [])).unwrap();
+        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        assert_eq!(p.groups, 1);
+        let (reason, n): (String, i64) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT g.reason, COUNT(*) FROM groups g JOIN group_members m ON m.group_id=g.id GROUP BY g.id",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!((reason.as_str(), n), ("메타데이터만 다름", 3));
+    }
+
+    #[test]
+    fn merge_groups_joins_through_shared_members() {
+        let got = merge_groups(vec![vec![1, 2], vec![5, 6]].into_iter(), vec![vec![2, 3], vec![9, 10]].into_iter());
+        assert_eq!(got, vec![vec![1, 2, 3], vec![5, 6], vec![9, 10]]);
+    }
 
     /// 같은 내용의 파일을 여러 개 만들어 스캔한다.
     fn setup() -> (tempfile::TempDir, Db) {

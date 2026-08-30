@@ -373,6 +373,16 @@ pub async fn cull_folder_pairs_apply(
     state.db.transaction(|tx| folders::apply_pairs(tx, &pairs)).map_err(err)
 }
 
+/// 폴더 짝 «보기» — 두 나무의 사진을 나란히, 같은 내용끼리 이어서.
+#[tauri::command]
+pub async fn cull_folder_pair_photos(
+    state: State<'_, AppState>,
+    a_ids: Vec<i64>,
+    b_ids: Vec<i64>,
+) -> Result<folders::PairPhotos, String> {
+    state.db.read(|c| folders::pair_photos(c, &a_ids, &b_ids)).map_err(err)
+}
+
 /// 두 폴더 비교의 짝 하나 — 남길 쪽 폴더 행들과 제외할 쪽 폴더 행들(하위 폴더 포함)
 #[derive(Debug, serde::Deserialize)]
 pub struct PairIds {

@@ -5,6 +5,7 @@ import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { doneSide, droppable, overlaps, verdict, type FolderHit, type PairRow } from "./twoFoldersLogic";
+import PairView from "./PairView";
 
 /**
  * 두 폴더 비교 — «후보1번/연도별»과 «후보2번»처럼 내가 고른 두 폴더 아래를 견준다.
@@ -135,6 +136,8 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   /// 검토 단계 — «B쪽 폴더 N개 제외 표시»를 누르면 먼저 그 폴더들만 보여 주고, 여기서 확인한다.
   /// 체크를 풀면 그 폴더는 이번에 빠진다 (사용자 요청 2026-08-30)
   const [review, setReview] = useState<{ side: "a" | "b"; unchecked: Set<string> } | null>(null);
+  /// 폴더 짝 «보기» — 열려 있는 줄
+  const [viewing, setViewing] = useState<PairRow | null>(null);
   const reviewRows = useMemo(
     () => (review ? (review.side === "b" ? todoB : todoA) : []),
     [review, todoA, todoB],
@@ -208,7 +211,20 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   }, [rows, flagged, ask, onChanged]);
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
+      {viewing && viewing.a && viewing.b && (
+        <PairView
+          a={viewing.a}
+          b={viewing.b}
+          aIds={viewing.a_ids}
+          bIds={viewing.b_ids}
+          onClose={() => {
+            setViewing(null);
+            onChanged();
+            setTick((t) => t + 1);
+          }}
+        />
+      )}
       <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line text-[12.5px] flex-wrap">
         <Picker label="A" value={a} onPick={pickSide("a")} startAt={b?.abs ?? null} disabled={locked} />
         <span className="text-fg-mute">⇔</span>
@@ -427,6 +443,16 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                     })()}
                   </td>
                   <td className="py-1.5 pr-4 text-right whitespace-nowrap">
+                    {r.a && r.b && !review && (
+                      <button
+                        onClick={() => setViewing(r)}
+                        disabled={locked}
+                        className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong mr-1 disabled:opacity-40"
+                        title="두 폴더의 사진을 나란히 놓고 직접 골라 표시합니다"
+                      >
+                        보기
+                      </button>
+                    )}
                     {done ? (
                       <span className="text-[11.5px]">
                         <span className="text-ok">처리됨 — {done === "a" ? "A" : "B"}쪽 제외</span>

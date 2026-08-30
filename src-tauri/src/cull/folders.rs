@@ -496,6 +496,91 @@ pub fn roots_overlap((a_vol, a_rel): (&str, &str), (b_vol, b_rel): (&str, &str))
     under(a_rel, b_rel) || under(b_rel, a_rel)
 }
 
+/// 폴더 짝 «보기» — 두 나무의 사진을 나란히. 내용이 같은 사진은 서로 `twin` 으로 잇는다
+#[derive(Debug, Clone, Serialize)]
+pub struct PairPhoto {
+    pub file_id: i64,
+    pub name: String,
+    /// 나무 뿌리 기준 상대 폴더(하위 폴더면 그 이름) — 빈 문자열이면 바로 아래
+    pub sub: String,
+    pub size: i64,
+    pub taken_at: i64,
+    pub culling_flag: i32,
+    pub library_id: i64,
+    pub thumb: Option<String>,
+    /// 반대쪽에 있는 같은 내용의 사진 — 없으면 None
+    pub twin: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PairPhotos {
+    pub a: Vec<PairPhoto>,
+    pub b: Vec<PairPhoto>,
+}
+
+fn photos_in(c: &Connection, ids: &[i64]) -> rusqlite::Result<Vec<(PairPhoto, Option<String>, String)>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    let mut st = c.prepare(&format!(
+        "SELECT f.id, f.name, fo.rel_path, f.size, f.taken_at, f.culling_flag, fo.library_id, t.rel_path, f.full_hash
+         FROM files f JOIN folders fo ON fo.id = f.folder_id
+         LEFT JOIN thumbs t ON t.file_id = f.id AND t.state = 1
+         WHERE f.folder_id IN ({list}) AND f.trashed_at IS NULL
+         ORDER BY fo.rel_path, f.name"
+    ))?;
+    let rows = st.query_map([], |r| {
+        Ok((
+            PairPhoto {
+                file_id: r.get(0)?,
+                name: r.get(1)?,
+                sub: String::new(),
+                size: r.get(3)?,
+                taken_at: r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                culling_flag: r.get(5)?,
+                library_id: r.get(6)?,
+                thumb: r.get(7)?,
+                twin: None,
+            },
+            r.get::<_, Option<String>>(8)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
+    rows.collect()
+}
+
+/// 두 나무의 사진 — 같은 내용끼리 1:1 로 짝짓는다(장수까지). 폴더 경로는 뿌리 아래만 보인다
+pub fn pair_photos(c: &Connection, a_ids: &[i64], b_ids: &[i64]) -> rusqlite::Result<PairPhotos> {
+    let mut a = photos_in(c, a_ids)?;
+    let mut b = photos_in(c, b_ids)?;
+    let strip = |rows: &mut Vec<(PairPhoto, Option<String>, String)>| {
+        // 뿌리 = 가장 짧은 폴더 경로
+        let root = rows.iter().map(|r| r.2.clone()).min_by_key(|p| p.len()).unwrap_or_default();
+        for r in rows.iter_mut() {
+            r.0.sub = r.2.strip_prefix(&root).map(|s| s.trim_start_matches('/').to_string()).unwrap_or_default();
+        }
+    };
+    strip(&mut a);
+    strip(&mut b);
+    let mut by_hash: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, (_, h, _)) in b.iter().enumerate() {
+        if let Some(h) = h {
+            by_hash.entry(h.clone()).or_default().push(i);
+        }
+    }
+    for (pa, h, _) in a.iter_mut() {
+        let Some(h) = h else { continue };
+        if let Some(list) = by_hash.get_mut(h) {
+            if let Some(i) = list.pop() {
+                pa.twin = Some(b[i].0.file_id);
+                b[i].0.twin = Some(pa.file_id);
+            }
+        }
+    }
+    Ok(PairPhotos { a: a.into_iter().map(|r| r.0).collect(), b: b.into_iter().map(|r| r.0).collect() })
+}
+
 /// 폴더 나무 하나의 «내용» — 하위 폴더까지 합친 해시 다중집합
 struct Tree {
     /// 이 나무에 든 폴더들의 순번(`Agg` 목록 기준)
@@ -964,6 +1049,26 @@ mod tests {
         assert_eq!(rows.len(), 1);
         // 2)에서 c 가 남는 쪽이 됐으니 c 에도 «남김» — 양쪽 다 남김이면 어느 쪽도 후보가 아니다
         assert!(rows[0].same && rows[0].kept_a == 2 && rows[0].kept_b == 2, "{:?}", rows[0]);
+    }
+
+    #[test]
+    fn pair_photos_link_identical_photos_one_to_one() {
+        let (_d, db) = setup();
+        let ids = |name: &str| -> i64 {
+            db.read(|c| c.query_row("SELECT id FROM folders WHERE rel_path LIKE ?1", [format!("%{name}")], |r| r.get(0)))
+                .unwrap()
+        };
+        let (a, d) = (ids("a"), ids("d"));
+        let p = db.read(|c| pair_photos(c, &[a], &[d])).unwrap();
+        assert_eq!((p.a.len(), p.b.len()), (2, 2));
+        // a/1.jpg(x) ↔ d/1.jpg(x) 만 같다; a/2.jpg(y) 와 d/3.jpg(z) 는 짝이 없다
+        let a1 = p.a.iter().find(|x| x.name == "1.jpg").unwrap();
+        let d1 = p.b.iter().find(|x| x.name == "1.jpg").unwrap();
+        assert_eq!(a1.twin, Some(d1.file_id));
+        assert_eq!(d1.twin, Some(a1.file_id));
+        assert!(p.a.iter().find(|x| x.name == "2.jpg").unwrap().twin.is_none());
+        assert!(p.b.iter().find(|x| x.name == "3.jpg").unwrap().twin.is_none());
+        assert!(p.a.iter().all(|x| x.sub.is_empty()), "뿌리 바로 아래면 sub 는 비어 있다");
     }
 
     #[test]

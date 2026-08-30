@@ -61,9 +61,12 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
 
   /// 짝에서 한쪽에 제외 표시. side = 제외할 쪽 — 그쪽 사진이 반대쪽에 다 있는 짝만
   const mark = useCallback(
-    async (targets: PairRow[], side: "a" | "b", confirmed = false) => {
-      // 처리된 짝은 뺀다 — B쪽을 지운 줄에서 A쪽을 또 누르면 방금 남긴 B가 뒤집힌다
-      const pairs = targets.filter((r) => droppable(r, side) && doneSide(r) === null);
+    async (targets: PairRow[], side: "a" | "b", confirmed = false, mode: "drop" | "twins" = "drop") => {
+      // 처리된 짝은 뺀다 — B쪽을 지운 줄에서 A쪽을 또 누르면 방금 남긴 B가 뒤집힌다.
+      // twins 는 «부분만 겹치는» 폴더에서 반대쪽에도 있는 사진만 — 백엔드가 같은 내용만 골라 표시한다
+      const pairs = targets.filter((r) =>
+        mode === "twins" ? !!r.a && !!r.b && r.common > 0 : droppable(r, side) && doneSide(r) === null,
+      );
       if (pairs.length === 0) {
         toast(`${side === "a" ? "A쪽 사진이 B쪽에" : "B쪽 사진이 A쪽에"} 다 있는 폴더가 없습니다`);
         return;
@@ -73,7 +76,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       const keepIds = (r: PairRow) => (side === "a" ? r.b_ids : r.a_ids);
       const risky = pairs.filter((r) => settled(drop(r)));
       const bytes = pairs.reduce((s, r) => s + r.bytes, 0);
-      const files = pairs.reduce((s, r) => s + (side === "a" ? r.files_a : r.files_b), 0);
+      const files = pairs.reduce((s, r) => s + (mode === "twins" ? r.common : side === "a" ? r.files_a : r.files_b), 0);
       // 검토 목록에서 «제외 표시»를 눌러 온 것이면 확인 창을 한 번 더 띄우지 않는다
       const ok = confirmed || (await ask({
         title: `${side === "a" ? "A" : "B"}쪽 폴더 ${pairs.length.toLocaleString()}개의 사진 ${files.toLocaleString()}장에 제외 표시`,
@@ -135,12 +138,19 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const doneA = useMemo(() => (rows ?? []).filter((r) => doneSide(r) === "a").length, [rows]);
   /// 검토 단계 — «B쪽 폴더 N개 제외 표시»를 누르면 먼저 그 폴더들만 보여 주고, 여기서 확인한다.
   /// 체크를 풀면 그 폴더는 이번에 빠진다 (사용자 요청 2026-08-30)
-  const [review, setReview] = useState<{ side: "a" | "b"; unchecked: Set<string> } | null>(null);
+  const [review, setReview] = useState<{ side: "a" | "b"; mode: "drop" | "twins"; unchecked: Set<string> } | null>(null);
+  /// «부분만 겹치는» 폴더에서 B쪽 사진 중 A쪽에도 있는 것 — 폴더째는 못 지워도 그 사진들은 뺄 수 있다.
+  /// 병합 전에 이걸 빼야 같은 폴더에 사본이 «이름 (2)»로 쌓이지 않는다 (실측 2026-08-30: 5,697장)
+  const twinRows = useMemo(
+    () => (rows ?? []).filter((r) => r.a && r.b && !droppable(r, "b") && r.kept_b === 0 && r.common > 0 && r.flagged_b < r.common),
+    [rows],
+  );
+  const twinCount = useMemo(() => twinRows.reduce((s, r) => s + r.common, 0), [twinRows]);
   /// 폴더 짝 «보기» — 열려 있는 줄
   const [viewing, setViewing] = useState<PairRow | null>(null);
   const reviewRows = useMemo(
-    () => (review ? (review.side === "b" ? todoB : todoA) : []),
-    [review, todoA, todoB],
+    () => (review ? (review.mode === "twins" ? twinRows : review.side === "b" ? todoB : todoA) : []),
+    [review, todoA, todoB, twinRows],
   );
   const reviewPicked = useMemo(
     () => reviewRows.filter((r) => !review?.unchecked.has(rowKey(r))),
@@ -264,12 +274,25 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       {rows && review && (
         <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line bg-keep/10 text-[12.5px] flex-wrap">
           <span className="text-fg">
-            <b>{review.side === "a" ? "A" : "B"}쪽 제외 표시할 폴더 {reviewRows.length.toLocaleString()}개</b>
-            <span className="text-fg-dim"> — 아래 목록을 확인하세요. 체크를 풀면 그 폴더는 이번에 빠집니다.</span>
+            {review.mode === "twins" ? (
+              <>
+                <b>B쪽 폴더 {reviewRows.length.toLocaleString()}개 — A쪽에도 있는 사진만 제외 표시</b>
+                <span className="text-fg-dim"> — 폴더는 남고, A에 없는 사진도 남습니다. 체크를 풀면 그 폴더는 이번에 빠집니다.</span>
+              </>
+            ) : (
+              <>
+                <b>{review.side === "a" ? "A" : "B"}쪽 제외 표시할 폴더 {reviewRows.length.toLocaleString()}개</b>
+                <span className="text-fg-dim"> — 아래 목록을 확인하세요. 체크를 풀면 그 폴더는 이번에 빠집니다.</span>
+              </>
+            )}
           </span>
           <div className="flex-1" />
           <span className="text-fg-dim tabular-nums">
-            {reviewPicked.length.toLocaleString()}개 폴더 · {reviewPicked.reduce((s, r) => s + (review.side === "a" ? r.files_a : r.files_b), 0).toLocaleString()}장
+            {reviewPicked.length.toLocaleString()}개 폴더 ·{" "}
+            {reviewPicked
+              .reduce((s, r) => s + (review.mode === "twins" ? r.common : review.side === "a" ? r.files_a : r.files_b), 0)
+              .toLocaleString()}
+            장
           </span>
           <button
             onClick={() => setReview(null)}
@@ -280,10 +303,10 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           </button>
           <button
             onClick={async () => {
-              const side = review.side;
+              const { side, mode } = review;
               const picked = reviewPicked;
               setReview(null);
-              await mark(picked, side, true);
+              await mark(picked, side, true, mode);
             }}
             disabled={locked || reviewPicked.length === 0}
             className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
@@ -308,7 +331,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
               <>
                 {todoB.length > 0 && (
                   <button
-                    onClick={() => setReview({ side: "b", unchecked: new Set() })}
+                    onClick={() => setReview({ side: "b", mode: "drop", unchecked: new Set() })}
                     disabled={locked}
                     title="B쪽 사진이 전부 A쪽에 있는 폴더 — B쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다. 파일은 아직 그대로"
                     className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
@@ -318,12 +341,22 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                 )}
                 {todoA.length > 0 && (
                   <button
-                    onClick={() => setReview({ side: "a", unchecked: new Set() })}
+                    onClick={() => setReview({ side: "a", mode: "drop", unchecked: new Set() })}
                     disabled={locked}
                     title="A쪽 사진이 전부 B쪽에 있는 폴더 — A쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다. 반대 방향이니 A를 남기는 중이면 누르지 마세요"
                     className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
                   >
                     A쪽 폴더 {todoA.length.toLocaleString()}개 제외 표시
+                  </button>
+                )}
+                {twinRows.length > 0 && (
+                  <button
+                    onClick={() => setReview({ side: "b", mode: "twins", unchecked: new Set() })}
+                    disabled={locked}
+                    title="부분만 겹치는 폴더에서, B쪽 사진 가운데 A쪽에도 같은 내용이 있는 것만 제외 표시합니다 — 폴더는 남고 A에 없는 사진도 남습니다"
+                    className="h-7 px-3 rounded-md ring-1 ring-keep text-keep font-semibold text-[12.5px] disabled:opacity-40"
+                  >
+                    B쪽 사진 중 A쪽에도 있는 {twinCount.toLocaleString()}장 제외 표시 ({twinRows.length.toLocaleString()}개 폴더)
                   </button>
                 )}
                 {flagged > 0 && (

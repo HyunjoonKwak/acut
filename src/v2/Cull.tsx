@@ -8,6 +8,7 @@ import { fmtBytes } from "./format";
 import { useJob } from "./jobStore";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
+import { usePrefs } from "./prefs";
 import FolderSets from "./FolderSets";
 import TwoFolders from "./TwoFolders";
 
@@ -58,10 +59,13 @@ const KINDS = [
 export default function Cull({
   onClose,
   onChanged,
+  cleanExcluded,
 }: {
   onClose: () => void;
-  /** 판정 수가 바뀌었다 — 격자 쪽 «제외 N장 치우기» 수를 다시 세게 */
+  /** 판정 수가 바뀌었다 — 격자 쪽 «확정 (N)» 수를 다시 세게 */
   onChanged: () => void;
+  /** 모든 라이브러리의 제외 표시를 각 휴지통으로 — 확정한 것을 여기서 바로 정리한다 */
+  cleanExcluded: () => Promise<void>;
 }) {
   const [kind, setKind] = useState(-3); // 폴더 비교가 먼저 — 가장 크게 비운다
   const [groups, setGroups] = useState<Group[]>([]);
@@ -109,7 +113,11 @@ export default function Cull({
     } catch (e) {
       toast(String(e), "drop");
     }
+    // 확정할 때마다 «제외 표시 N장» 이 머리와 상태바에서 바로 늘어나야 한다 —
+    // 안 그러면 «확정했는데 아무 데도 안 보인다» (2026-08-30)
+    void useData.getState().refreshTrash(usePrefs.getState().libId);
   }, []);
+  const toCleanAll = useData((s) => s.toCleanAll);
 
   // 지금 탭 — 이벤트 경로에서 «어느 갈래를 새로 읽나»를 최신으로 본다
   const kindRef = useRef(kind);
@@ -355,12 +363,14 @@ export default function Cull({
   const apply = useCallback(async () => {
     const g = groups[idx];
     if (!g) return;
+    let r: ApplyAll;
     try {
-      await invoke("cull_apply", { groupIds: [g.id] });
+      r = await invoke<ApplyAll>("cull_apply", { groupIds: [g.id] });
     } catch (e) {
       toast(String(e), "drop");
       return;
     }
+    if (r.rejected === 0) toast("이 무리엔 제외할 사본이 없습니다 — 이미 휴지통에 있거나 지워진 사진뿐", "drop");
     advance();
     loadSummary();
   }, [groups, idx, advance, loadSummary]);
@@ -581,6 +591,15 @@ export default function Cull({
               모두 확정
             </button>
           </span>
+        )}
+        {!scanning && (toCleanAll?.files ?? 0) > 0 && (
+          <button
+            onClick={() => void cleanExcluded()}
+            title={`지금까지 확정해 제외 표시한 ${toCleanAll?.files.toLocaleString()}장(${fmtBytes(toCleanAll?.bytes ?? 0)}, 모든 라이브러리)을 각 라이브러리의 휴지통으로 옮깁니다 — 휴지통에서 되돌릴 수 있습니다`}
+            className="h-control px-3 rounded-md text-[12.5px] bg-keep text-keep-fg font-semibold"
+          >
+            제외 표시 {toCleanAll?.files.toLocaleString()}장 휴지통으로
+          </button>
         )}
         {scanning ? (
           // 찾는 중에는 멈출 수 있어야 한다. 해시를 읽느라 오래 걸린다.

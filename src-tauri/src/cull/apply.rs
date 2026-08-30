@@ -18,6 +18,44 @@ pub struct ApplyAll {
     pub skipped: usize,
 }
 
+/// 무리 몇 개를 **사람이 보고** 확정한다 — 대표는 남김, 나머지는 제외. (남긴 수, 제외한 수)
+///
+/// 한꺼번에 확정([`apply_all`])과 달리 정착 구역(내사진·공용)의 사본도, 이미 «남김»인
+/// 사본도 제외한다: 그 두 장을 눈으로 보고 누른 것이 결정이다. 폴더 비교가 남긴 쪽에
+/// 붙여 둔 «남김»(실측 2026-08-30: 공용 46,784장)이 개별 비교의 확정을 조용히 막아
+/// «확정했는데 아무 일도 없다»가 됐었다. 없는 무리(다시 찾기로 사라진 것)는 건너뛴다.
+pub fn apply_groups(tx: &Transaction, group_ids: &[i64]) -> rusqlite::Result<(usize, usize)> {
+    use rusqlite::OptionalExtension;
+    let mut kept = 0;
+    let mut rejected = 0;
+    for gid in group_ids {
+        let Some(kind) = tx
+            .query_row("SELECT kind FROM groups WHERE id=?1", [gid], |r| r.get::<_, i32>(0))
+            .optional()?
+        else {
+            continue;
+        };
+        // 잡동사니(kind 1)는 대표가 없어 전부 제외
+        let best = if kind == 1 { "" } else { " AND is_best = 0" };
+        rejected += tx.execute(
+            &format!(
+                "UPDATE files SET culling_flag = 2 WHERE trashed_at IS NULL AND id IN
+                 (SELECT file_id FROM group_members WHERE group_id = ?1{best})"
+            ),
+            [gid],
+        )?;
+        if kind != 1 {
+            kept += tx.execute(
+                "UPDATE files SET culling_flag = 1 WHERE id IN
+                 (SELECT file_id FROM group_members WHERE group_id = ?1 AND is_best = 1)",
+                [gid],
+            )?;
+        }
+        tx.execute("UPDATE groups SET state = 1 WHERE id = ?1", [gid])?;
+    }
+    Ok((kept, rejected))
+}
+
 /// 갈래의 미결 무리를 한꺼번에 확정한다. `folder_id`·`library_id`를 주면 거기에
 /// 제외될 사본이 있는 무리만. `dry_run`이면 세기만 하고 바꾸지 않는다.
 ///
@@ -205,6 +243,33 @@ mod tests {
         // 두 번째는 할 것이 없다
         let again = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
         assert_eq!(again.groups, 0);
+    }
+
+    /// 사람이 보고 누른 확정은 정착 구역의 사본도, 폴더 비교가 붙인 «남김»도 넘어선다
+    #[test]
+    fn explicit_apply_rejects_settled_and_kept_copies_too() {
+        let (_d, db) = setup(true);
+        // 한꺼번에는 건너뛰는 무리 — b/ 에 제외될 사본이 있다
+        let dry = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
+        assert_eq!(dry.skipped, 1);
+        // 폴더 비교가 남긴 쪽에 붙이듯 전부 «남김»으로
+        db.write(|c| c.execute("UPDATE files SET culling_flag = 1", [])).unwrap();
+        let gid: i64 = db.read(|c| c.query_row("SELECT id FROM groups", [], |r| r.get(0))).unwrap();
+        let (kept, rejected) = db.transaction(|tx| apply_groups(tx, &[gid, 9_999])).unwrap();
+        assert_eq!((kept, rejected), (1, 3), "대표 하나만 남고 셋은 제외 — 없는 무리는 건너뛴다");
+        let (b_rejected, state): (i64, i64) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT (SELECT COUNT(*) FROM files f JOIN folders fo ON fo.id = f.folder_id
+                              WHERE fo.area = 2 AND f.culling_flag = 2),
+                            (SELECT state FROM groups WHERE id = ?1)",
+                    [gid],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        assert!(b_rejected >= 1, "정착 구역 사본도 제외됐다");
+        assert_eq!(state, 1);
     }
 
     #[test]

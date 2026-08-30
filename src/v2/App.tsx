@@ -533,6 +533,7 @@ export default function App() {
             refreshMeta();
           }}
           onChanged={refreshMeta}
+          cleanExcluded={() => ops.cleanExcluded(null)}
         />
       )}
 

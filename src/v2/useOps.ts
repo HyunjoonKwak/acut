@@ -74,9 +74,11 @@ export function useOps(cb: {
 
   /// 제외로 판정한 것을 휴지통으로. 파일은 라이브러리 안 `.acut/휴지통`으로
   /// 옮겨질 뿐이라 되돌릴 수 있다.
-  const cleanExcluded = useCallback(async () => {
-    const { toClean } = useData.getState();
-    const libId = usePrefs.getState().libId;
+  /// `scope` 를 주면 그 라이브러리(null 이면 전부)의 제외 표시를 — 고르기 머리의 단추가 쓴다.
+  /// 안 주면 지금 보는 라이브러리(상태바)
+  const cleanExcluded = useCallback(async (scope?: number | null) => {
+    const libId = scope === undefined ? usePrefs.getState().libId : scope;
+    const toClean = scope === undefined ? useData.getState().toClean : useData.getState().toCleanAll;
     if (!toClean || toClean.files === 0) return;
     const libName = useData.getState().libs.find((l) => l.id === libId)?.name ?? "모든 라이브러리";
     const ok = await ask({

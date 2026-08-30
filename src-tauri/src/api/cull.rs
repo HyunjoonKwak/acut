@@ -247,7 +247,7 @@ pub async fn cull_set_best(
 pub struct ApplyResult {
     pub kept: usize,
     pub rejected: usize,
-    /// 정착 구역(내사진·공용)에 있어 제외하지 않은 사본 수 — 거기서 지우면 NAS에서도 지워진다
+    /// 한꺼번에 확정에서 정착 구역(내사진·공용)이라 건너뛴 수. 사람이 보고 누른 확정은 0
     pub skipped: usize,
 }
 
@@ -255,66 +255,17 @@ pub struct ApplyResult {
 ///
 /// **파일을 지우지는 않는다.** `culling_flag`만 바꾼다. 실제 삭제는 사용자가
 /// 따로 확인한 뒤에 한다. 잘못 눌러도 되돌릴 수 있어야 한다.
+/// 사람이 보고 누른 것이라 정착 구역·«남김» 도 넘어선다 — 규칙은 [`apply::apply_groups`].
 #[tauri::command]
 pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<ApplyResult, String> {
     if group_ids.is_empty() {
         return Ok(ApplyResult { kept: 0, rejected: 0, skipped: 0 });
     }
-    let (kept, rejected, skipped) = state
+    let (kept, rejected) = state
         .db
-        .transaction(|tx| {
-            use rusqlite::OptionalExtension;
-            let mut kept = 0;
-            let mut rejected = 0;
-            let mut skipped = 0;
-            for gid in &group_ids {
-                // 다시 찾기로 사라진 무리일 수 있다 — 조용히 건너뛴다
-                let Some(kind) = tx
-                    .query_row("SELECT kind FROM groups WHERE id=?1", [gid], |r| r.get::<_, i32>(0))
-                    .optional()?
-                else {
-                    continue;
-                };
-                // 정착 구역(내사진·공용)의 사본은 제외하지 않는다 — 치우면 Drive가 NAS에서도
-                // 지운다. 이미 «남김»인 파일도 내리지 않는다 (리뷰 C13·C11).
-                let best = if kind == 1 { "" } else { " AND m.is_best = 0" };
-                let rej = tx.execute(
-                    &format!(
-                        "UPDATE files SET culling_flag=2 WHERE culling_flag <> 1 AND id IN
-                         (SELECT m.file_id FROM group_members m
-                          JOIN files f ON f.id = m.file_id
-                          JOIN folders fo ON fo.id = f.folder_id
-                          WHERE m.group_id=?1{best} AND fo.area NOT IN (1, 2))"
-                    ),
-                    [gid],
-                )?;
-                let skp = tx.query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM group_members m
-                          JOIN files f ON f.id = m.file_id
-                          JOIN folders fo ON fo.id = f.folder_id
-                          WHERE m.group_id=?1{best} AND fo.area IN (1, 2)"
-                    ),
-                    [gid],
-                    |r| r.get::<_, i64>(0),
-                )? as usize;
-                rejected += rej;
-                skipped += skp;
-                if kind != 1 {
-                    kept += tx.execute(
-                        "UPDATE files SET culling_flag=1 WHERE id IN
-                         (SELECT file_id FROM group_members WHERE group_id=?1 AND is_best=1)",
-                        [gid],
-                    )?;
-                }
-                // 건너뛴 것뿐이면 «확정»이 아니라 «보류» — 정착 구역 사본이 조용히 잊히지 않게
-                let state_v = if rej == 0 && skp > 0 { 2 } else { 1 };
-                tx.execute("UPDATE groups SET state=?2 WHERE id=?1", rusqlite::params![gid, state_v])?;
-            }
-            Ok((kept, rejected, skipped))
-        })
+        .transaction(|tx| apply::apply_groups(tx, &group_ids))
         .map_err(err)?;
-    Ok(ApplyResult { kept, rejected, skipped })
+    Ok(ApplyResult { kept, rejected, skipped: 0 })
 }
 
 /// 갈래의 미결 무리를 한꺼번에 확정한다 (규칙은 cull::apply). `dry_run`이면 세기만.

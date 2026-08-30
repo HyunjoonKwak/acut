@@ -281,6 +281,42 @@ pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Resu
     Ok(ApplyResult { kept, rejected, skipped: 0 })
 }
 
+/// 확정을 무리 단위로 되돌린다 — «↩ 확정 취소» (규칙은 [`apply::unapply_groups`])
+#[tauri::command]
+pub async fn cull_unapply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<usize, String> {
+    state
+        .db
+        .transaction(|tx| apply::unapply_groups(tx, &group_ids))
+        .map_err(err)
+}
+
+/// 라이브러리별 미결 무리 수 — 범위 선택지에 붙여 «고르면 무엇이 달라지나»가 미리 보이게
+#[derive(Debug, Serialize)]
+pub struct ScopeCount {
+    pub library_id: i64,
+    pub groups: i64,
+}
+
+#[tauri::command]
+pub async fn cull_scope_counts(state: State<'_, AppState>, kind: i32) -> Result<Vec<ScopeCount>, String> {
+    state
+        .db
+        .read(|c| {
+            let mut st = c.prepare(
+                "SELECT fo.library_id, COUNT(DISTINCT g.id)
+                 FROM groups g JOIN group_members m ON m.group_id = g.id
+                 JOIN files fi ON fi.id = m.file_id JOIN folders fo ON fo.id = fi.folder_id
+                 WHERE g.kind = ?1 AND g.state = 0 AND (g.kind = 1 OR m.is_best = 0)
+                 GROUP BY fo.library_id",
+            )?;
+            let it = st.query_map([kind], |r| {
+                Ok(ScopeCount { library_id: r.get(0)?, groups: r.get(1)? })
+            })?;
+            it.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(err)
+}
+
 /// 갈래의 미결 무리를 한꺼번에 확정한다 (규칙은 cull::apply). `dry_run`이면 세기만.
 #[tauri::command]
 pub async fn cull_apply_all(

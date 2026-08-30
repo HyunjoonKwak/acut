@@ -56,6 +56,23 @@ pub fn apply_groups(tx: &Transaction, group_ids: &[i64]) -> rusqlite::Result<(us
     Ok((kept, rejected))
 }
 
+/// 확정을 무리 단위로 되돌린다 — 구성원 표시를 미판정으로, 무리를 미결로. (지운 표시 수)
+///
+/// «쌍 하나만 취소하고 다시 고르고 싶다»(2026-08-31)에 답한다. 휴지통에 간 사진은
+/// 건드리지 않는다 — 되돌리려면 휴지통 화면에서.
+pub fn unapply_groups(tx: &Transaction, group_ids: &[i64]) -> rusqlite::Result<usize> {
+    let mut n = 0;
+    for gid in group_ids {
+        n += tx.execute(
+            "UPDATE files SET culling_flag = 0 WHERE trashed_at IS NULL AND culling_flag <> 0
+               AND id IN (SELECT file_id FROM group_members WHERE group_id = ?1)",
+            [gid],
+        )?;
+        tx.execute("UPDATE groups SET state = 0 WHERE id = ?1", [gid])?;
+    }
+    Ok(n)
+}
+
 /// 갈래의 미결 무리를 한꺼번에 확정한다. `folder_id`·`library_id`를 주면 거기에
 /// 제외될 사본이 있는 무리만. `dry_run`이면 세기만 하고 바꾸지 않는다.
 ///
@@ -270,6 +287,27 @@ mod tests {
             .unwrap();
         assert!(b_rejected >= 1, "정착 구역 사본도 제외됐다");
         assert_eq!(state, 1);
+    }
+
+    /// 확정 하나를 되돌리면 그 무리의 표시만 지워지고 무리는 다시 미결이 된다
+    #[test]
+    fn unapply_reopens_the_group_and_clears_its_marks() {
+        let (_d, db) = setup(false);
+        let gid: i64 = db.read(|c| c.query_row("SELECT id FROM groups", [], |r| r.get(0))).unwrap();
+        db.transaction(|tx| apply_groups(tx, &[gid])).unwrap();
+        let n = db.transaction(|tx| unapply_groups(tx, &[gid])).unwrap();
+        assert_eq!(n, 3, "남김 하나 + 제외 둘");
+        let (flagged, state): (i64, i64) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT (SELECT COUNT(*) FROM files WHERE culling_flag <> 0),
+                            (SELECT state FROM groups WHERE id = ?1)",
+                    [gid],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!((flagged, state), (0, 0));
     }
 
     #[test]

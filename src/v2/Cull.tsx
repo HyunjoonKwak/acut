@@ -40,6 +40,8 @@ type ApplyAll = { groups: number; kept: number; rejected: number; skipped: numbe
 const PAGE_GROUPS = 200;
 /** 정착 구역(내사진 1 · 공용 2) — 여기서 지우면 Drive 가 NAS 에서도 지운다 */
 const settledArea = (area: number | null | undefined) => area === 1 || area === 2;
+type ScopeCount = { library_id: number; groups: number };
+
 type Summary = {
   kind: number;
   groups: number;
@@ -114,6 +116,10 @@ export default function Cull({
   useEffect(() => {
     scopeRef.current = scopeLib;
   }, [scopeLib]);
+  /// 범위 선택지 옆 숫자 — 라이브러리마다 «지워질 사본이 거기 있는» 미결 무리 수
+  const [scopeCounts, setScopeCounts] = useState<Map<number, number>>(new Map());
+  /// 방금 확정한 무리들 — «↩ 확정 취소»가 하나씩 되돌린다 (2026-08-31 «취소하고 다시 선택할 방법이 없어»)
+  const [undoStack, setUndoStack] = useState<Group[]>([]);
   const loadSummary = useCallback(async () => {
     try {
       setSummary(await invoke<Summary[]>("cull_summary", { libraryId: scopeRef.current }));
@@ -123,6 +129,12 @@ export default function Cull({
     // 확정할 때마다 «제외 표시 N장» 이 머리와 상태바에서 바로 늘어나야 한다 —
     // 안 그러면 «확정했는데 아무 데도 안 보인다» (2026-08-30)
     void useData.getState().refreshTrash(usePrefs.getState().libId);
+    const k = kindRef.current;
+    if (k === 0 || k === 1) {
+      invoke<ScopeCount[]>("cull_scope_counts", { kind: k })
+        .then((sc) => setScopeCounts(new Map(sc.map((x) => [x.library_id, x.groups]))))
+        .catch(() => {});
+    }
   }, []);
   const toCleanAll = useData((s) => s.toCleanAll);
 
@@ -264,6 +276,7 @@ export default function Cull({
   useEffect(() => {
     let live = true;
     const gen = ++groupsGen.current;
+    setUndoStack([]);
     invoke<Summary[]>("cull_summary", { libraryId: scopeLib })
       .then((s) => live && setSummary(s))
       .catch((e) => live && toast(String(e), "drop"));
@@ -361,6 +374,8 @@ export default function Cull({
     );
     on("cull-done", () => {
       setBusy("");
+      // 다시 찾기가 무리를 새로 만들면 id 가 재사용될 수 있다 — 옛 «확정 취소»는 버린다
+      setUndoStack([]);
       loadSummary();
       loadGroups(kindRef.current);
     });
@@ -387,6 +402,7 @@ export default function Cull({
       return;
     }
     if (r.rejected === 0) toast("이 무리엔 제외할 사본이 없습니다 — 이미 휴지통에 있거나 지워진 사진뿐", "drop");
+    setUndoStack((s) => [g, ...s].slice(0, 20));
     advance();
     loadSummary();
   }, [groups, idx, advance, loadSummary]);
@@ -440,6 +456,7 @@ export default function Cull({
         toast(String(e), "drop");
         return;
       }
+      setUndoStack((s) => [g, ...s].slice(0, 20));
       advance();
       loadSummary();
     },
@@ -601,7 +618,7 @@ export default function Cull({
                 <option value="">전체 라이브러리</option>
                 {libs.map((l) => (
                   <option key={l.id} value={l.id}>
-                    {l.name}의 사본만
+                    {l.name}의 사본만 ({(scopeCounts.get(l.id) ?? 0).toLocaleString()})
                   </option>
                 ))}
               </select>
@@ -809,6 +826,27 @@ export default function Cull({
           숫자키 <span className="font-mono">1–9</span> 남길 쪽 · 두 번 누르면 크게
         </span>
         <div className="flex-1" />
+        {undoStack.length > 0 && (
+          <button
+            onClick={async () => {
+              const g = undoStack[0];
+              try {
+                await invoke("cull_unapply", { groupIds: [g.id] });
+              } catch (e) {
+                toast(String(e), "drop");
+                return;
+              }
+              setUndoStack((s) => s.slice(1));
+              setGroups((prev) => [g, ...prev.filter((x) => x.id !== g.id)]);
+              setIdx(0);
+              loadSummary();
+            }}
+            title="방금 확정한 무리의 남김·제외 표시를 지우고 그 무리를 다시 보여 줍니다 — 이미 휴지통으로 옮긴 사진은 그대로"
+            className="h-control px-3.5 rounded-lg text-fg-dim text-[14px] ring-1 ring-line-strong flex items-center gap-2"
+          >
+            ↩ 확정 취소
+          </button>
+        )}
       </div>
         </>
       )}

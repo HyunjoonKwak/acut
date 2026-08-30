@@ -225,6 +225,8 @@ pub fn run() {
             api::cull::cull_members,
             api::cull::cull_set_best,
             api::cull::cull_apply,
+            api::cull::cull_unapply,
+            api::cull::cull_scope_counts,
             api::cull::cull_apply_all,
             api::cull::cull_apply_pair,
             api::cull::cull_folder_pairs_apply,

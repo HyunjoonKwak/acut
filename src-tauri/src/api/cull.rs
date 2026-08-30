@@ -191,7 +191,7 @@ pub async fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<V
                  JOIN folders fo ON fo.id = f.folder_id
                  LEFT JOIN libraries l ON l.id = fo.library_id
                  LEFT JOIN thumbs t ON t.file_id = f.id AND t.state = 1
-                 WHERE m.group_id = ?1
+                 WHERE m.group_id = ?1 AND f.trashed_at IS NULL
                  ORDER BY m.is_best DESC, m.score DESC, f.size DESC",
             )?;
             let it = st.query_map([group_id], |r| {

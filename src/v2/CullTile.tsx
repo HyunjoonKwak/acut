@@ -63,13 +63,23 @@ export default function CullTile<M extends CullMember>({
               …
             </div>
           )}
-          {m.is_best && m.culling_flag !== 2 ? (
+          {/* 채움 = 이미 붙은 표시, 테두리만 = 확정하면 붙을 표시.
+              전엔 미판정도 ✕ 채움으로 그려 «둘 다 제외»로 읽혔다 (2026-08-31 지적) */}
+          {m.culling_flag === 1 ? (
             <span className="absolute top-2 left-2 h-5 px-2 rounded bg-keep text-keep-fg text-[12px] font-bold flex items-center">
               ★ 남김
             </span>
-          ) : (
+          ) : m.culling_flag === 2 ? (
             <span className="absolute top-2 left-2 h-5 px-2 rounded bg-drop/90 text-drop-fg text-[12px] font-bold flex items-center">
               ✕ 제외
+            </span>
+          ) : m.is_best ? (
+            <span className="absolute top-2 left-2 h-5 px-2 rounded text-keep ring-1 ring-keep/70 bg-black/40 text-[12px] font-bold flex items-center">
+              ★ 남김 예정
+            </span>
+          ) : (
+            <span className="absolute top-2 left-2 h-5 px-2 rounded text-drop ring-1 ring-drop/70 bg-black/40 text-[12px] font-bold flex items-center">
+              ✕ 제외 예정
             </span>
           )}
           {i < 9 && (

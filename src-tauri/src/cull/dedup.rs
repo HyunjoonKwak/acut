@@ -51,6 +51,7 @@ struct Info {
     area: i32,
     taken_at: i64,
     full: Option<String>,
+    flag: i32,
 }
 
 /// 4단계 후보 — 이름·픽셀 크기가 같은 다른 파일이 있고, 크기만 조금 다른 것
@@ -74,6 +75,8 @@ struct Cand {
     /// 대표를 고를 때 쓴다 — 쓰기 잠금 안에서 구성원마다 SELECT 하지 않게 (리뷰 H8)
     area: i32,
     taken_at: i64,
+    /// 폴더 비교 등이 먼저 붙인 표시 — 남김(1)이면 대표로 우선한다
+    flag: i32,
 }
 
 /// 읽은 해시를 남긴다 — 다음 스캔은 이 파일들을 다시 읽지 않는다.
@@ -109,7 +112,7 @@ pub fn scan(
     let mut cands: Vec<Cand> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid, fi.quick_hash, fi.full_hash,
-                    fo.area, fi.taken_at
+                    fo.area, fi.taken_at, fi.culling_flag
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
              WHERE fi.size > 0 AND fi.trashed_at IS NULL
                AND fi.size IN (SELECT size FROM files WHERE trashed_at IS NULL GROUP BY size HAVING COUNT(*) > 1)",
@@ -126,6 +129,7 @@ pub fn scan(
                 full: r.get(6)?,
                 area: r.get(7)?,
                 taken_at: r.get(8)?,
+                flag: r.get(9)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -254,7 +258,7 @@ pub fn scan(
     }
     let mut info: HashMap<i64, Info> = cands
         .iter()
-        .map(|c| (c.id, Info { size: c.size, area: c.area, taken_at: c.taken_at, full: c.full.clone() }))
+        .map(|c| (c.id, Info { size: c.size, area: c.area, taken_at: c.taken_at, full: c.full.clone(), flag: c.flag }))
         .collect();
     // 전체 해시를 방금 읽은 것은 cands.full 에 없다 — 그룹 사유 판정에 쓰이므로 채운다
     for (h, ids) in &final_groups {
@@ -353,7 +357,7 @@ fn twin_candidates(db: &Db) -> Result<Vec<Twin>> {
                           AND ext IN ('jpg','jpeg')
                         GROUP BY name, width, height HAVING COUNT(DISTINCT size) > 1)
              SELECT fi.id, fo.rel_path, fi.name, fi.size, fo.volume_uuid, fi.image_hash, fi.full_hash,
-                    fo.area, fi.taken_at, fi.width, fi.height
+                    fo.area, fi.taken_at, fi.width, fi.height, fi.culling_flag
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
              JOIN b ON b.name = fi.name AND b.width = fi.width AND b.height = fi.height
              WHERE fi.trashed_at IS NULL AND fi.kind = 0 AND fi.ext IN ('jpg','jpeg')
@@ -368,7 +372,7 @@ fn twin_candidates(db: &Db) -> Result<Vec<Twin>> {
                     path: PathBuf::from(crate::media::cache::rel_path(&dir, &name)),
                     volume_uuid: r.get(4)?,
                     image: r.get(5)?,
-                    info: Info { size: r.get(3)?, area: r.get(7)?, taken_at: r.get(8)?, full: r.get(6)? },
+                    info: Info { size: r.get(3)?, area: r.get(7)?, taken_at: r.get(8)?, full: r.get(6)?, flag: r.get(11)? },
                 },
                 name,
                 r.get::<_, i64>(9)?,
@@ -455,7 +459,7 @@ fn write_groups(db: &Db, comps: &[Vec<i64>], info: &HashMap<i64, Info>) -> Resul
         tx.execute("DELETE FROM groups WHERE kind = 0", [])?;
         let mut ins_g = tx.prepare(
             "INSERT INTO groups(kind, reason, size_bytes, state, created_at)
-             VALUES(0, ?1, ?2, 0, strftime('%s','now'))",
+             VALUES(0, ?1, ?2, ?3, strftime('%s','now'))",
         )?;
         let mut ins_m = tx.prepare(
             "INSERT INTO group_members(group_id, file_id, is_best) VALUES(?1,?2,?3)",
@@ -467,28 +471,37 @@ fn write_groups(db: &Db, comps: &[Vec<i64>], info: &HashMap<i64, Info>) -> Resul
             // 운영 디스크 사이 중복에서 «올라간 쪽을 남기고 옛것을 버린다»가 되게.
             // 같은 자리끼리면 가장 이른 촬영일.
             let mut best = ids[0];
-            let mut best_key = (i32::MAX, i64::MAX, i64::MAX);
+            let mut best_key = (i32::MAX, i32::MAX, i64::MAX, i64::MAX);
             let mut total = 0i64;
             let mut fulls: Vec<Option<&str>> = Vec::with_capacity(ids.len());
+            let mut flags: Vec<i32> = Vec::with_capacity(ids.len());
             for id in ids {
                 let i = info.get(id);
-                let (area, t) = i.map(|c| (c.area, c.taken_at)).unwrap_or((i32::MAX, i64::MAX));
+                let (area, t, flag) = i.map(|c| (c.area, c.taken_at, c.flag)).unwrap_or((i32::MAX, i64::MAX, 0));
                 total += i.map(|c| c.size).unwrap_or(0);
                 fulls.push(i.and_then(|c| c.full.as_deref()));
+                flags.push(flag);
+                // 폴더 비교가 먼저 «남김»을 붙였으면 그쪽이 대표 — 아니면 정착 구역 → 이른 촬영일.
+                // 남김이 대표가 아니면 ★와 표시가 어긋나 보이고(실측 2,161무리), 확정이
+                // 앞선 결정을 뒤집는다 (2026-08-31 동영상 쌍 지적)
                 // 같은 자리·같은 시각이면 id 로 — 돌릴 때마다 대표가 바뀌지 않게
-                let key = (if area == 1 || area == 2 { 0 } else { 1 }, t, *id);
+                let key = (if flag == 1 { 0 } else { 1 }, if area == 1 || area == 2 { 0 } else { 1 }, t, *id);
                 if key < best_key {
                     best_key = key;
                     best = *id;
                 }
             }
+            // 앞선 표시로 이미 결정된 무리(남김 하나 + 나머지 전부 제외)는 닫아서 만든다 —
+            // «미결»로 두면 ✕ 붙은 쌍이 또 나와 «둘 다 제외인가»가 된다
+            let decided = flags.iter().all(|f| *f != 0) && flags.iter().filter(|f| **f == 1).count() == 1;
+            let state = if decided { 1 } else { 0 };
             // 바이트까지 다 같으면 «완전 중복», 그림만 같은 것이 섞였으면 «메타데이터만 다름»
             let all_same_bytes = fulls[0].is_some() && fulls.iter().all(|f| *f == fulls[0]);
             let reason = if all_same_bytes { "완전 중복" } else { "메타데이터만 다름" };
             // 한 장만 남기므로 나머지 크기만큼 확보된다
             let gain = total - info.get(&best).map(|c| c.size).unwrap_or(0);
             reclaimable += gain;
-            ins_g.execute(rusqlite::params![reason, gain])?;
+            ins_g.execute(rusqlite::params![reason, gain, state])?;
             let gid = tx.last_insert_rowid();
             for id in ids {
                 ins_m.execute(rusqlite::params![gid, id, (*id == best) as i32])?;
@@ -635,6 +648,61 @@ mod tests {
             .read(|c| c.query_row("SELECT COUNT(*) FROM group_members", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(members, 3);
+    }
+
+    /// 폴더 비교가 붙인 «남김»이 대표가 되고, 표시가 다 붙은 무리는 닫혀서 만들어진다
+    #[test]
+    fn a_kept_mark_wins_best_and_a_decided_group_is_created_closed() {
+        let (_d, db) = setup();
+        db.write(|c| {
+            c.execute(
+                "UPDATE files SET culling_flag = CASE name
+                   WHEN '20200101_120001.jpg' THEN 1
+                   WHEN '20200101_120000.jpg' THEN 2
+                   WHEN 'copy.jpg' THEN 2 ELSE 0 END",
+                [],
+            )
+        })
+        .unwrap();
+        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        assert_eq!(p.groups, 1);
+        let (state, best_name): (i64, String) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT g.state, f.name FROM groups g
+                     JOIN group_members m ON m.group_id = g.id AND m.is_best = 1
+                     JOIN files f ON f.id = m.file_id",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!(state, 1, "남김 하나 + 제외 둘 = 이미 결정 — 미결로 다시 묻지 않는다");
+        assert_eq!(best_name, "20200101_120001.jpg", "남김 표시가 대표를 이긴다");
+    }
+
+    /// 표시가 일부만 있으면 미결로 남되, 남김이 대표가 된다
+    #[test]
+    fn a_partial_mark_keeps_the_group_open_with_the_kept_one_as_best() {
+        let (_d, db) = setup();
+        db.write(|c| {
+            c.execute("UPDATE files SET culling_flag = 1 WHERE name = 'copy.jpg'", [])
+        })
+        .unwrap();
+        scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let (state, best_name): (i64, String) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT g.state, f.name FROM groups g
+                     JOIN group_members m ON m.group_id = g.id AND m.is_best = 1
+                     JOIN files f ON f.id = m.file_id",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!(state, 0);
+        assert_eq!(best_name, "copy.jpg");
     }
 
     #[test]

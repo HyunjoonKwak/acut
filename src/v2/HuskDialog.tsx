@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fmtBytes } from "./format";
 import { toast } from "./toastStore";
@@ -16,17 +16,25 @@ export default function HuskDialog({ libraryId, name, onClose }: { libraryId: nu
   const [off, setOff] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      setList(await invoke<Husk[]>("husk_list", { libraryId }));
-    } catch (e) {
-      toast(String(e), "drop");
-      setList([]);
-    }
-  }, [libraryId]);
+  /// 챙길 만한 것이 든 폴더 — 편집 파일·압축·일러스트. 기본으로 체크를 풀어 둔다
+  const keepish = (h: Husk) => h.kinds.some(([k]) => ["psd", "ai", "zip", "pct", "lrcat", "xmp"].includes(k));
   useEffect(() => {
-    void load();
-  }, [load]);
+    let live = true;
+    invoke<Husk[]>("husk_list", { libraryId })
+      .then((r) => {
+        if (!live) return;
+        setList(r);
+        setOff(new Set(r.filter(keepish).map((h) => h.rel)));
+      })
+      .catch((e) => {
+        if (!live) return;
+        toast(String(e), "drop");
+        setList([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [libraryId]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -38,12 +46,6 @@ export default function HuskDialog({ libraryId, name, onClose }: { libraryId: nu
   const picked = useMemo(() => (list ?? []).filter((h) => !off.has(h.rel)), [list, off]);
   const bytes = picked.reduce((s, h) => s + h.bytes, 0);
   const files = picked.reduce((s, h) => s + h.files, 0);
-  /// 챙길 만한 것이 든 폴더 — 편집 파일·압축·일러스트. 기본으로 체크를 풀어 둔다
-  const keepish = (h: Husk) => h.kinds.some(([k]) => ["psd", "ai", "zip", "pct", "lrcat", "xmp"].includes(k));
-  useEffect(() => {
-    if (list) setOff(new Set(list.filter(keepish).map((h) => h.rel)));
-  }, [list]);
-
   const run = async () => {
     if (picked.length === 0) return;
     setBusy(true);

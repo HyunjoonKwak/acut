@@ -135,6 +135,36 @@
   color: var(--color-fg-dim) !important;
 }
 
+/* 도구 막대 — 창이 좁아지면 단추가 찌그러져 글자가 두 줄이 된다. 줄어들지 말고 가로로
+   밀리게 한다 (2026-08-30: «영역이 줄어들면 버튼 안의 글자정렬이 다 무너져버림») */
+.bar-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.bar-scroll::-webkit-scrollbar {
+  height: 0;
+}
+.bar-scroll > * {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* 가운데 여백(flex-1)이 있는 도구 막대 — 단추는 찌그러지지 않고, 설명 글만 «…»로 줄어든다 */
+.bar-fixed > button,
+.bar-fixed > select,
+.bar-fixed > label,
+.bar-fixed > a {
+  flex: none;
+  white-space: nowrap;
+}
+.bar-fixed > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 늘 보이는 가는 스크롤바 — 긴 목록(폴더 비교·설정)에서 어디쯤인지 보이게.
    겹침 스크롤바는 손을 떼면 사라져 «스크롤할 게 있다»는 것조차 모른다. */
 .scroll-thin::-webkit-scrollbar {

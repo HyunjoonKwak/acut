@@ -104,7 +104,7 @@ export default function PairView({
 
   return (
     <div className="absolute inset-0 z-30 bg-canvas flex flex-col">
-      <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[12.5px]">
+      <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[12.5px] bar-fixed">
         <span className="text-fg font-semibold">폴더 보기</span>
         <span className="text-fg-dim">
           같은 사진에는 <span className="text-ok font-semibold">동일</span> 표시 — 클릭해서 고르고 아래에서 표시를 붙입니다
@@ -208,7 +208,7 @@ export default function PairView({
         })}
       </div>
 
-      <div className="h-12 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line text-[12.5px]">
+      <div className="h-12 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line text-[12.5px] bar-fixed">
         <span className="tabular-nums">
           <b className="text-accent">{picked.size.toLocaleString()}장</b> 선택
           <span className="text-fg-mute"> · {fmtBytes(pickedBytes)}</span>

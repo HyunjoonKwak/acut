@@ -278,7 +278,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
           }}
         />
       )}
-      <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[12.5px]">
+      <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[12.5px] bar-fixed">
         <span className="text-fg-dim tabular-nums">
           완전히 같은 폴더(하위 포함) <b className="text-fg">{sets.length.toLocaleString()}묶음</b>
           {sets.length >= 5000 && <span className="text-drop"> (5,000묶음까지만 보입니다 — 처리하면 다음 묶음이 올라옵니다)</span>}

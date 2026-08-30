@@ -559,7 +559,9 @@ export default function Cull({
     <div className="fixed inset-0 bg-canvas text-fg flex flex-col z-50">
       {/* 헤더 */}
       <div className="h-12 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line">
-        <span className="font-semibold">고르기</span>
+        <span className="font-semibold shrink-0">고르기</span>
+        {/* 좁아지면 단추가 찌그러지는 대신 이 안이 가로로 밀린다 — 오른쪽 «확보 가능·닫기»는 늘 제자리 */}
+        <div className="flex-1 min-w-0 flex items-center gap-3 bar-scroll">
         {KINDS.map((k) => {
           const s = summary.find((x) => x.kind === k.id);
           return (
@@ -591,6 +593,7 @@ export default function Cull({
               범위
               <select
                 value={scopeLib ?? ""}
+                style={{ flex: "none" }}
                 onChange={(e) => setScopeLib(e.target.value === "" ? null : Number(e.target.value))}
                 title="지워질 사본이 이 라이브러리에 있는 무리만 봅니다 — 목록·숫자·모두 확정에 모두 걸립니다"
                 className="h-control rounded-md bg-raised text-fg text-[12px] px-2 ring-2 ring-accent/70 hover:ring-accent focus:ring-accent outline-none"
@@ -655,11 +658,11 @@ export default function Cull({
             <span className="text-fg-mute">· {fmtElapsed(elapsed)}</span>
           </span>
         )}
-        <div className="flex-1" />
-        <span className="text-[12px] text-fg-mute tabular-nums">
+        </div>
+        <span className="shrink-0 whitespace-nowrap text-[12px] text-fg-mute tabular-nums">
           확보 가능 <b className="text-keep">{fmtBytes(total)}</b>
         </span>
-        <button onClick={onClose} className="text-fg-dim px-2">
+        <button onClick={onClose} className="shrink-0 whitespace-nowrap text-fg-dim px-2">
           닫기 <span className="text-[10px]">Esc</span>
         </button>
       </div>
@@ -685,7 +688,7 @@ export default function Cull({
       ) : (
         <>
       {/* 진행 */}
-      <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[12.5px]">
+      <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[12.5px] bar-scroll">
             {/* 분모는 이 갈래의 미결 무리 전체 — 목록은 200개씩 읽어 두지만 그건 화면 사정이다 */}
             <span
               className="tabular-nums text-fg-dim"

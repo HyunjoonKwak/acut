@@ -1212,6 +1212,35 @@ pub async fn folder_merge(app: AppHandle, library_id: i64, src_rel: String, dst_
     Ok(())
 }
 
+/// 사진 없는 폴더(껍데기) 목록
+#[tauri::command]
+pub async fn husk_list(state: State<'_, AppState>, library_id: i64) -> Result<Vec<crate::ops::husk::Husk>, String> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || crate::ops::husk::list(&db, library_id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(err)
+}
+
+/// 고른 껍데기 폴더들을 라이브러리 휴지통(_폴더)으로. (옮긴 수, 첫 실패)
+#[tauri::command]
+pub async fn husk_trash(app: AppHandle, library_id: i64, rels: Vec<String>) -> Result<(usize, Option<String>), String> {
+    let state = app.state::<AppState>();
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 폴더 정리", std::time::Duration::from_secs(20)) else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
+    let db = Arc::clone(&state.db);
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        crate::ops::husk::to_trash(&db, library_id, &rels)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(err)?;
+    app.state::<AppState>().forget_dirs();
+    Ok(r)
+}
+
 /// 합치고 남은 것(사진 아닌 파일) 세기
 #[tauri::command]
 pub async fn folder_leftovers(state: State<'_, AppState>, library_id: i64, rel: String) -> Result<crate::ops::merge::Leftovers, String> {

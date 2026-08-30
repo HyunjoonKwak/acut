@@ -9,6 +9,7 @@ import Filmstrip from "./Filmstrip";
 import Import from "./Import";
 import AreaPickDialog from "./AreaPickDialog";
 import OffloadDialog from "./OffloadDialog";
+import HuskDialog from "./HuskDialog";
 import Organize from "./Organize";
 import MapView from "./MapView";
 import PhotoGrid from "./PhotoGrid";
@@ -261,6 +262,7 @@ export default function App() {
     useShallow((s) => ({
       set: s.set,
       offload: s.offload,
+      husks: s.husks,
       similarFor: s.similarFor,
       renaming: s.renaming,
       areaPick: s.areaPick,
@@ -485,6 +487,9 @@ export default function App() {
           libraryId={ui.offload.libraryId}
           onClose={() => ui.set({ offload: null })}
         />
+      )}
+      {ui.husks !== null && (
+        <HuskDialog libraryId={ui.husks.libraryId} name={ui.husks.name} onClose={() => ui.set({ husks: null })} />
       )}
       {ui.areaPick !== null && (
         <AreaPickDialog

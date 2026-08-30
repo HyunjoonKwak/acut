@@ -133,12 +133,21 @@ pub async fn trash_empty(
     let Some(_guard) = super::job::try_start_wait(&state.running, "에이컷 휴지통 비우기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
-    let ids = if ids.is_empty() {
-        trashed_ids(&state, library_id)?
-    } else {
-        ids
-    };
-    trash::empty(&state.db, &ids).map_err(err)
+    let all = ids.is_empty();
+    let ids = if all { trashed_ids(&state, library_id)? } else { ids };
+    let out = trash::empty(&state.db, &ids).map_err(err)?;
+    // 휴지통을 통째로 비우면 «사진 없는 폴더 정리»가 넣어 둔 _폴더 도 같이 사라진다
+    if all {
+        for lib in crate::db::libraries::list(&state.db).map_err(err)? {
+            if library_id.is_some_and(|l| l != lib.id) {
+                continue;
+            }
+            if let Some(dir) = lib.dir {
+                let _ = std::fs::remove_dir_all(trash::trash_root(&dir).join("_폴더"));
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn trashed_ids(state: &State<'_, AppState>, library_id: Option<i64>) -> Result<Vec<i64>, String> {

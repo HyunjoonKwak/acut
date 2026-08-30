@@ -29,6 +29,8 @@ type Store = {
   folderMenu: string | null;
   /** 다른 디스크로 옮기는 중인 폴더 */
   offload: { folderId: number; name: string; libraryId: number } | null;
+  /** 사진 없는 폴더 정리 창 — 라이브러리 ⋯ 메뉴에서 */
+  husks: { libraryId: number; name: string } | null;
   /** 이름을 바꾸는 중인 사진 */
   renaming: number | null;
   /** 파인더에서 끌어다 놓은 것들 — 가져오기 상자의 시작점 */
@@ -56,6 +58,7 @@ export const useUi = create<Store>()((set) => ({
   menuFor: null,
   folderMenu: null,
   offload: null,
+  husks: null,
   renaming: null,
   dropped: [],
   dragging: false,
@@ -80,6 +83,7 @@ export const useOverlayOpen = () =>
       s.importing ||
       s.renaming !== null ||
       s.offload !== null ||
+      s.husks !== null ||
       s.areaPick !== null ||
       s.ctxAt !== null,
   );

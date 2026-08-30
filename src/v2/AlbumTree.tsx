@@ -219,6 +219,13 @@ export default function AlbumTree({
                       ))}
                       <div className="my-1 border-t border-line" />
                       <button
+                        onClick={() => setUi({ menuFor: null, husks: { libraryId: lib.id, name: lib.name } })}
+                        title="사진을 다 치운 뒤 메모·썸네일·zip 만 남은 폴더들을 찾아 휴지통으로"
+                        className="block w-full text-left px-3 py-1.5 text-[12px] text-fg-dim hover:bg-hover whitespace-nowrap"
+                      >
+                        사진 없는 폴더 정리…
+                      </button>
+                      <button
                         onClick={() => {
                           setUi({ menuFor: null });
                           dropLibrary(lib);

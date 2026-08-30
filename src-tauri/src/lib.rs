@@ -232,6 +232,8 @@ pub fn run() {
             api::cull::cull_hash_folders,
             api::folder_merge,
             api::folder_leftovers,
+            api::husk_list,
+            api::husk_trash,
             api::folder_merge_rest,
             api::trash::files_unmark_excluded,
             api::cull::cull_folder_sets,

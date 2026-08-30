@@ -7,6 +7,7 @@
 //!
 //! 저널의 경로는 **언제나 볼륨 기준**이다. 되돌릴 때 마운트만 앞에 붙이면 된다.
 
+pub mod husk;
 pub mod import;
 pub mod merge;
 pub mod naming;

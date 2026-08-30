@@ -159,7 +159,7 @@ export function Nas() {
   };
 
   const field = (k: keyof NasConfig, label: string) => (
-    <label key={k} className="flex items-center gap-2 text-[12px]">
+    <label key={k} className="flex items-center gap-2 text-[13px]">
       <span className="w-20 shrink-0 text-fg-mute">{label}</span>
       <input
         value={cfg?.[k] ?? ""}
@@ -167,7 +167,7 @@ export function Nas() {
           setCfg((c) => (c ? { ...c, [k]: e.target.value } : c));
           setDirty(true);
         }}
-        className="flex-1 min-w-0 h-7 px-2 rounded bg-canvas text-[12px] text-fg ring-1 ring-line outline-none focus:ring-accent font-mono"
+        className="flex-1 min-w-0 h-7 px-2 rounded bg-canvas text-[13px] text-fg ring-1 ring-line outline-none focus:ring-accent font-mono"
       />
     </label>
   );
@@ -189,7 +189,7 @@ export function Nas() {
         </Btn>
       </Row>
       {st && (
-        <div className="mx-4 mb-3 px-3 py-2 rounded-md bg-raised text-[12px] flex items-start gap-2">
+        <div className="mx-4 mb-3 px-3 py-2 rounded-md bg-raised text-[13px] flex items-start gap-2">
           <span
             className="mt-1.5 w-2 h-2 rounded-full shrink-0"
             style={{
@@ -222,7 +222,7 @@ export function Nas() {
         {field("photos", "개인(내사진)")}
         {field("shared", "공용")}
         {field("exclude", "제외")}
-        <label className="flex items-center gap-2 text-[12px]">
+        <label className="flex items-center gap-2 text-[13px]">
           <span className="w-20 shrink-0 text-fg-mute">rsync 포트</span>
           <input
             value={cfg?.rsync_port ?? 22}
@@ -233,7 +233,7 @@ export function Nas() {
               );
               setDirty(true);
             }}
-            className="w-20 h-7 px-2 rounded bg-canvas text-[12px] text-fg ring-1 ring-line outline-none focus:ring-accent font-mono"
+            className="w-20 h-7 px-2 rounded bg-canvas text-[13px] text-fg ring-1 ring-line outline-none focus:ring-accent font-mono"
           />
           <span className="text-fg-faint">
             DSM의 rsync용 SSH 포트 — 일반 SSH 포트와 다릅니다
@@ -263,7 +263,7 @@ export function Nas() {
             <button
               key={v}
               onClick={() => setNasAuto(v)}
-              className={`h-6 px-2 rounded text-[12px] ${
+              className={`h-6 px-2 rounded text-[13px] ${
                 nasAuto === v
                   ? "bg-accent text-accent-fg"
                   : "text-fg-dim ring-1 ring-line hover:text-white"
@@ -307,7 +307,7 @@ export function Nas() {
         return (
           <div
             key={l.id}
-            className="px-4 pb-2 flex items-center gap-3 text-[12px]"
+            className="px-4 pb-2 flex items-center gap-3 text-[13px]"
           >
             <span className="w-28 shrink-0 text-fg truncate">
               <span className="text-fg-mute mr-1">{areaLabel(l.area)}</span>

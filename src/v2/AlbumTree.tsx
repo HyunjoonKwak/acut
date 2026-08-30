@@ -57,7 +57,7 @@ export default function AlbumTree({
   return (
     <>
       {folders.length === 0 ? (
-        <div className="px-3 py-2 text-[12px] text-fg-mute leading-relaxed">
+        <div className="px-3 py-2 text-[13px] text-fg-mute leading-relaxed">
           등록된 라이브러리가 없습니다.
           <br />
           아래 「라이브러리 추가」를 누르세요.
@@ -65,7 +65,7 @@ export default function AlbumTree({
       ) : (
         groups.map((g) => (
           <div key={g.area}>
-            <div className="px-3 pt-3 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
+            <div className="px-3 pt-3 pb-1 text-[11.5px] uppercase tracking-wider text-fg-mute">
               {areaLabel(g.area)}
             </div>
             {g.rows.map((f) => {
@@ -87,7 +87,7 @@ export default function AlbumTree({
                   {/* 펼침 삼각형 — 자식이 없으면 자리만 차지한다 */}
                   <button
                     onClick={() => f.has_children && toggleOpen(f.path)}
-                    className={`w-4 shrink-0 text-[9px] ${
+                    className={`w-4 shrink-0 text-[10px] ${
                       f.has_children
                         ? "text-fg-mute hover:text-fg"
                         : "text-transparent"
@@ -128,7 +128,7 @@ export default function AlbumTree({
                     {f.name}
                   </button>
                   <span
-                    className={`text-fg-mute tabular-nums text-[11px] shrink-0 pl-1.5 ${
+                    className={`text-fg-mute tabular-nums text-[12px] shrink-0 pl-1.5 ${
                       root ? "pr-14" : ""
                     }`}
                   >
@@ -146,7 +146,7 @@ export default function AlbumTree({
                             ? "스캔이 도는 중입니다"
                             : `«${lib.name}» 다시 스캔 — 새 사진을 넣고 사라진 사진의 기록을 정리합니다`
                         }
-                        className="h-6 w-7 rounded-md flex items-center justify-center text-[15px] leading-none text-fg-mute hover:text-accent hover:bg-hover disabled:opacity-30"
+                        className="h-6 w-7 rounded-md flex items-center justify-center text-[16px] leading-none text-fg-mute hover:text-accent hover:bg-hover disabled:opacity-30"
                       >
                         ⟳
                       </button>
@@ -191,7 +191,7 @@ export default function AlbumTree({
                           })
                         }
                         disabled={busy}
-                        className="block w-full text-left px-3 py-1.5 text-[12px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
                       >
                         다른 디스크로 옮기기…
                       </button>
@@ -199,7 +199,7 @@ export default function AlbumTree({
                   )}
                   {root && lib && menuFor === lib.id && (
                     <div className="absolute right-1 top-7 z-20 bg-raised rounded-md ring-1 ring-line-strong shadow-lg py-1">
-                      <div className="px-3 pt-1 pb-0.5 text-[10px] uppercase tracking-wider text-fg-faint">
+                      <div className="px-3 pt-1 pb-0.5 text-[11px] uppercase tracking-wider text-fg-faint">
                         역할
                       </div>
                       {AREAS.map((a) => (
@@ -207,7 +207,7 @@ export default function AlbumTree({
                           key={a.v}
                           onClick={() => setArea(lib, a.v)}
                           title={a.hint}
-                          className={`block w-full text-left px-3 py-1 text-[12px] hover:bg-hover whitespace-nowrap ${
+                          className={`block w-full text-left px-3 py-1 text-[13px] hover:bg-hover whitespace-nowrap ${
                             lib.area === a.v
                               ? "text-fg font-semibold"
                               : "text-fg-dim"
@@ -221,7 +221,7 @@ export default function AlbumTree({
                       <button
                         onClick={() => setUi({ menuFor: null, husks: { libraryId: lib.id, name: lib.name } })}
                         title="사진을 다 치운 뒤 메모·썸네일·zip 만 남은 폴더들을 찾아 휴지통으로"
-                        className="block w-full text-left px-3 py-1.5 text-[12px] text-fg-dim hover:bg-hover whitespace-nowrap"
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap"
                       >
                         사진 없는 폴더 정리…
                       </button>
@@ -230,7 +230,7 @@ export default function AlbumTree({
                           setUi({ menuFor: null });
                           dropLibrary(lib);
                         }}
-                        className="block w-full text-left px-3 py-1.5 text-[12px] text-drop hover:bg-hover whitespace-nowrap"
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-drop hover:bg-hover whitespace-nowrap"
                       >
                         목록에서 빼기
                       </button>

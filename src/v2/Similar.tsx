@@ -80,7 +80,7 @@ export default function Similar({
 
   return (
     <div className="fixed inset-0 z-[60] bg-canvas flex flex-col">
-      <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[12.5px]">
+      <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[13.5px]">
         <span className="text-fg font-semibold">
           {text !== null ? "글로 찾기" : "비슷한 사진"}
         </span>
@@ -107,17 +107,17 @@ export default function Similar({
 
       <div className="flex-1 overflow-y-auto p-3">
         {err && (
-          <div className="h-full flex items-center justify-center text-fg-mute text-[13px]">
+          <div className="h-full flex items-center justify-center text-fg-mute text-[14px]">
             {err}
           </div>
         )}
         {!err && hits === null && (
-          <div className="h-full flex items-center justify-center text-fg-faint text-[13px]">
+          <div className="h-full flex items-center justify-center text-fg-faint text-[14px]">
             찾는 중…
           </div>
         )}
         {hits && hits.length === 0 && (
-          <div className="h-full flex items-center justify-center text-fg-mute text-[13px]">
+          <div className="h-full flex items-center justify-center text-fg-mute text-[14px]">
             {text !== null ? "맞는 사진이 없습니다" : "비슷한 사진이 없습니다"}
           </div>
         )}
@@ -144,13 +144,13 @@ export default function Similar({
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-fg-faint text-[10px]">
+                    <div className="w-full h-full flex items-center justify-center text-fg-faint text-[11px]">
                       …
                     </div>
                   )}
                   {/* 닮은 정도 — 코사인. 0.9 위면 거의 같은 장면 */}
                   <span
-                    className={`absolute top-1 right-1 px-1 h-4 rounded text-[9.5px] tabular-nums flex items-center ${
+                    className={`absolute top-1 right-1 px-1 h-4 rounded text-[10.5px] tabular-nums flex items-center ${
                       h.score >= 0.9
                         ? "bg-keep text-keep-fg font-semibold"
                         : "bg-black/55 text-fg"
@@ -159,7 +159,7 @@ export default function Similar({
                     {(h.score * 100).toFixed(0)}%
                   </span>
                 </div>
-                <div className="mt-1 text-[10.5px] text-fg-mute truncate">
+                <div className="mt-1 text-[11.5px] text-fg-mute truncate">
                   {h.file.name}
                 </div>
               </button>

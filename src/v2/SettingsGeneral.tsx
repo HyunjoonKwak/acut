@@ -26,7 +26,7 @@ export function General() {
         label="테마"
         hint="어두운 테마 하나입니다. 밝은 테마는 아직 없습니다."
       >
-        <span className="text-[12.5px] text-fg-mute">어두움</span>
+        <span className="text-[13.5px] text-fg-mute">어두움</span>
       </Row>
       <Row label="이름표" hint="레일·툴바 버튼에 커서를 올리면 뜨는 설명">
         <Toggle k="tooltips" />
@@ -103,7 +103,7 @@ export function Browse() {
           aria-label="썸네일 크기"
           className="w-40 accent-accent"
         />
-        <span className="w-10 text-right text-[12px] text-fg-mute tabular-nums">
+        <span className="w-10 text-right text-[13px] text-fg-mute tabular-nums">
           {thumbSize}
         </span>
       </Row>

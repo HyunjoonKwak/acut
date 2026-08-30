@@ -236,7 +236,7 @@ export default function ScrollBar({
       {/* 말풍선 */}
       {hoverY !== null && hoverBucket && (
         <div
-          className="absolute z-40 right-[62px] px-2 py-1 rounded-md bg-raised text-fg text-[11.5px] whitespace-nowrap shadow-lg pointer-events-none"
+          className="absolute z-40 right-[62px] px-2 py-1 rounded-md bg-raised text-fg text-[12.5px] whitespace-nowrap shadow-lg pointer-events-none"
           style={{ top: hoverY, transform: "translateY(-50%)" }}
         >
           {hoverBucket.year}년 {hoverBucket.month}월{" "}

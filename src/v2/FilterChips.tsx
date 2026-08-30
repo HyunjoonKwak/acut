@@ -29,7 +29,7 @@ export default function FilterChips({
           onClick={() => onChange(without(value, c.key))}
           title={`${c.label} 조건 떼기`}
           className="group flex items-center gap-1 h-control max-w-[180px] pl-2 pr-1.5
-            rounded-md bg-raised text-[11.5px] text-fg-dim hover:text-fg"
+            rounded-md bg-raised text-[12.5px] text-fg-dim hover:text-fg"
         >
           <span className="truncate">{c.label}</span>
           <span className="text-fg-faint group-hover:text-drop">✕</span>
@@ -38,7 +38,7 @@ export default function FilterChips({
       {items.length > 1 && (
         <button
           onClick={() => onChange(EMPTY)}
-          className="h-control px-2 rounded-md text-[11.5px] text-fg-mute hover:text-fg"
+          className="h-control px-2 rounded-md text-[12.5px] text-fg-mute hover:text-fg"
         >
           모두 지우기
         </button>

@@ -57,7 +57,7 @@ export default function TagPanel({
             onChange={(e) => setAdding(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && attach()}
             placeholder={`${pickedIds.length}장에 태그…`}
-            className="flex-1 min-w-0 h-control px-2 rounded-md bg-canvas text-[12px] text-fg
+            className="flex-1 min-w-0 h-control px-2 rounded-md bg-canvas text-[13px] text-fg
               placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
           />
           <Btn onClick={attach}>붙이기</Btn>
@@ -65,7 +65,7 @@ export default function TagPanel({
       )}
 
       {tags.length === 0 ? (
-        <div className="px-3 py-2 text-[12px] text-fg-mute leading-relaxed">
+        <div className="px-3 py-2 text-[13px] text-fg-mute leading-relaxed">
           아직 태그가 없습니다.
           <br />
           사진을 고른 뒤 위에 이름을 적으세요.
@@ -74,7 +74,7 @@ export default function TagPanel({
         <>
           <button
             onClick={() => onPick(null)}
-            className={`w-full text-left px-3 py-1.5 text-[12.5px] ${
+            className={`w-full text-left px-3 py-1.5 text-[13.5px] ${
               selected === null ? "bg-raised text-fg" : "text-fg-dim"
             }`}
           >
@@ -89,13 +89,13 @@ export default function TagPanel({
             >
               <button
                 onClick={() => onPick(selected === t.id ? null : t.id)}
-                className={`flex-1 min-w-0 text-left px-3 py-1 text-[12.5px] truncate ${
+                className={`flex-1 min-w-0 text-left px-3 py-1 text-[13.5px] truncate ${
                   selected === t.id ? "text-fg" : "text-fg-dim hover:text-fg"
                 }`}
               >
                 {t.name}
               </button>
-              <span className="text-fg-faint tabular-nums text-[11px] px-1">
+              <span className="text-fg-faint tabular-nums text-[12px] px-1">
                 {t.count.toLocaleString()}
               </span>
               <button

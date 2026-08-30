@@ -338,7 +338,7 @@ export default function App() {
   );
 
   return (
-    <div className="h-screen flex flex-col bg-canvas text-fg text-[13px]">
+    <div className="h-screen flex flex-col bg-canvas text-fg text-[14px]">
       <Toolbar
         matched={matched}
         rows={rows}
@@ -513,7 +513,7 @@ export default function App() {
       )}
       {ui.dragging && (
         <div className="fixed inset-0 z-[70] pointer-events-none flex items-center justify-center bg-accent/10 ring-4 ring-inset ring-accent">
-          <div className="px-5 py-3 rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl text-[14px] text-fg">
+          <div className="px-5 py-3 rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl text-[15px] text-fg">
             놓으면 라이브러리로 가져옵니다 — 원본은 그대로 둡니다
           </div>
         </div>

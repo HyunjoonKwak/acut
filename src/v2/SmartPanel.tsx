@@ -64,7 +64,7 @@ export default function SmartPanel({
       </div>
 
       {items.length === 0 ? (
-        <div className="px-3 py-2 text-[12px] text-fg-mute leading-relaxed">
+        <div className="px-3 py-2 text-[13px] text-fg-mute leading-relaxed">
           저장한 것이 없습니다.
           <br />
           찾기·태그·평점을 고른 뒤 「지금 조건으로 만들기」.
@@ -77,7 +77,7 @@ export default function SmartPanel({
           >
             <button
               onClick={() => onApply(a.filter, a.sort)}
-              className="flex-1 min-w-0 text-left px-3 py-1.5 text-[12.5px] text-fg-dim hover:text-fg truncate"
+              className="flex-1 min-w-0 text-left px-3 py-1.5 text-[13.5px] text-fg-dim hover:text-fg truncate"
             >
               ✦ {a.name}
             </button>

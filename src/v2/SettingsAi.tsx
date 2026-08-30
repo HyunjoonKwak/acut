@@ -97,7 +97,7 @@ export function Ai() {
         }
       >
         {st?.model_present ? (
-          <span className="text-[12.5px] text-keep">받아 둠</span>
+          <span className="text-[13.5px] text-keep">받아 둠</span>
         ) : (
           <Btn tone="accent" disabled={busy} onClick={() => download("vision")}>
             받기
@@ -113,7 +113,7 @@ export function Ai() {
         }
       >
         {st?.text_present ? (
-          <span className="text-[12.5px] text-keep">받아 둠</span>
+          <span className="text-[13.5px] text-keep">받아 둠</span>
         ) : (
           <Btn tone="accent" disabled={busy} onClick={() => download("text")}>
             받기
@@ -154,7 +154,7 @@ export function Ai() {
         }
       >
         {st?.face_present ? (
-          <span className="text-[12.5px] text-keep">받아 둠</span>
+          <span className="text-[13.5px] text-keep">받아 둠</span>
         ) : (
           <Btn tone="accent" disabled={busy} onClick={() => download("face")}>
             받기

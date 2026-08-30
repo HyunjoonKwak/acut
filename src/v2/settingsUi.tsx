@@ -12,7 +12,7 @@ export function Section({
 }) {
   return (
     <section id={`settings-${id}`} className="scroll-mt-4">
-      <h2 className="text-[10.5px] font-bold uppercase tracking-widest text-fg-mute mb-3">
+      <h2 className="text-[11.5px] font-bold uppercase tracking-widest text-fg-mute mb-3">
         {title}
       </h2>
       <div className="rounded-lg bg-chrome ring-1 ring-line divide-y divide-line">
@@ -35,9 +35,9 @@ export function Row({
   return (
     <div className="flex items-center gap-4 px-4 py-2.5">
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] text-fg">{label}</div>
+        <div className="text-[14px] text-fg">{label}</div>
         {hint && (
-          <div className="text-[11.5px] text-fg-mute leading-snug mt-0.5">
+          <div className="text-[12.5px] text-fg-mute leading-snug mt-0.5">
             {hint}
           </div>
         )}
@@ -63,7 +63,7 @@ export function Select<K extends keyof Prefs>({
         if (o) set(o.v);
       }}
       aria-label={String(k)}
-      className="h-control min-w-[140px] px-2 rounded-md bg-raised text-[12.5px] text-fg ring-1 ring-line outline-none focus:ring-accent"
+      className="h-control min-w-[140px] px-2 rounded-md bg-raised text-[13.5px] text-fg ring-1 ring-line outline-none focus:ring-accent"
     >
       {options.map((o) => (
         <option key={String(o.v)} value={String(o.v)}>

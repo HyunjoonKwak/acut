@@ -50,13 +50,13 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
             }}
             className="w-[380px] max-w-[90vw] rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl p-5"
           >
-            <div className="text-[14px] font-semibold text-fg">{ask.title}</div>
+            <div className="text-[15px] font-semibold text-fg">{ask.title}</div>
             {ask.lines && ask.lines.length > 0 && (
               <ul className="mt-3 space-y-1">
                 {ask.lines.map((l, i) => (
                   <li
                     key={i}
-                    className="text-[12.5px] text-fg-dim leading-relaxed"
+                    className="text-[13.5px] text-fg-dim leading-relaxed"
                   >
                     {l}
                   </li>

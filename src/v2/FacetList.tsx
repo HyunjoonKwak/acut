@@ -41,17 +41,17 @@ export default function FacetList({
   const loading = got?.key !== key;
 
   if (loading && items.length === 0) {
-    return <div className="px-3 py-2 text-[12px] text-fg-mute">세는 중…</div>;
+    return <div className="px-3 py-2 text-[13px] text-fg-mute">세는 중…</div>;
   }
   if (items.length === 0) {
-    return <div className="px-3 py-2 text-[12px] text-fg-mute">없음</div>;
+    return <div className="px-3 py-2 text-[13px] text-fg-mute">없음</div>;
   }
 
   return (
     <>
       <button
         onClick={() => onPick(null)}
-        className={`w-full text-left px-3 py-1.5 text-[12.5px] ${
+        className={`w-full text-left px-3 py-1.5 text-[13.5px] ${
           selected === null ? "bg-raised text-fg" : "text-fg-dim"
         }`}
       >
@@ -65,12 +65,12 @@ export default function FacetList({
           key={f.value}
           onClick={() => onPick(selected === f.value ? null : f.value)}
           title={f.label}
-          className={`w-full text-left px-3 py-1 text-[12.5px] truncate ${
+          className={`w-full text-left px-3 py-1 text-[13.5px] truncate ${
             selected === f.value ? "bg-raised text-fg" : "text-fg-dim"
           }`}
         >
           {f.label}{" "}
-          <span className="text-fg-mute tabular-nums text-[11px] float-right">
+          <span className="text-fg-mute tabular-nums text-[12px] float-right">
             {f.count.toLocaleString()}
           </span>
         </button>

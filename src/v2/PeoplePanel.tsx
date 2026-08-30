@@ -27,7 +27,7 @@ export function FaceCrop({
   if (!person.cover_thumb || !box) {
     return (
       <div
-        className="rounded-full bg-raised text-fg-faint flex items-center justify-center text-[10px]"
+        className="rounded-full bg-raised text-fg-faint flex items-center justify-center text-[11px]"
         style={{ width: size, height: size }}
       >
         ?
@@ -152,13 +152,13 @@ export default function PeoplePanel({
         <Btn onClick={start} hint="썸네일에서 얼굴을 찾아 사람으로 묶습니다">
           얼굴 찾기
         </Btn>
-        <span className="text-[11px] text-fg-mute tabular-nums">
+        <span className="text-[12px] text-fg-mute tabular-nums">
           {people.length > 0 && `${people.length}명`}
         </span>
       </div>
 
       {merging !== null && (
-        <div className="mx-2 mb-2 px-2 py-1.5 rounded-md bg-raised text-[11.5px] text-fg-dim flex items-center gap-2">
+        <div className="mx-2 mb-2 px-2 py-1.5 rounded-md bg-raised text-[12.5px] text-fg-dim flex items-center gap-2">
           <span className="flex-1">합칠 사람을 누르세요</span>
           <button className="text-fg-mute" onClick={() => setMerging(null)}>
             취소
@@ -167,7 +167,7 @@ export default function PeoplePanel({
       )}
 
       {people.length === 0 && (
-        <div className="px-3 py-2 text-[12px] text-fg-mute leading-relaxed">
+        <div className="px-3 py-2 text-[13px] text-fg-mute leading-relaxed">
           아직 사람이 없습니다.
           <br />
           「얼굴 찾기」를 누르면 썸네일에서 얼굴을 찾아 사람으로 묶습니다. 얼굴
@@ -203,11 +203,11 @@ export default function PeoplePanel({
                     onBlur={rename}
                     onClick={(e) => e.stopPropagation()}
                     placeholder="이름"
-                    className="flex-1 min-w-0 h-7 px-1.5 rounded bg-canvas text-[12px] text-fg outline-none ring-1 ring-accent"
+                    className="flex-1 min-w-0 h-7 px-1.5 rounded bg-canvas text-[13px] text-fg outline-none ring-1 ring-accent"
                   />
                 ) : (
                   <span
-                    className={`flex-1 min-w-0 truncate text-[12.5px] ${p.name ? "" : "text-fg-mute italic"}`}
+                    className={`flex-1 min-w-0 truncate text-[13.5px] ${p.name ? "" : "text-fg-mute italic"}`}
                     onDoubleClick={(e) => {
                       e.stopPropagation();
                       setEditing({ id: p.id, text: p.name ?? "" });
@@ -217,11 +217,11 @@ export default function PeoplePanel({
                     {personLabel(p)}
                   </span>
                 )}
-                <span className="text-[11px] text-fg-mute tabular-nums">
+                <span className="text-[12px] text-fg-mute tabular-nums">
                   {p.count}
                 </span>
                 <button
-                  className="opacity-0 group-hover:opacity-100 text-[11px] text-fg-mute hover:text-fg px-1"
+                  className="opacity-0 group-hover:opacity-100 text-[12px] text-fg-mute hover:text-fg px-1"
                   title="다른 사람에 합치기"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -238,7 +238,7 @@ export default function PeoplePanel({
 
       {singles.length > 0 && (
         <button
-          className="mx-3 my-2 text-[11px] text-fg-mute hover:text-fg"
+          className="mx-3 my-2 text-[12px] text-fg-mute hover:text-fg"
           onClick={() => setShowSingles((v) => !v)}
         >
           {showSingles

@@ -34,7 +34,7 @@ function Tip({ children }: { children: React.ReactNode }) {
   return (
     <span
       className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 px-2 py-1 rounded-md
-        bg-raised text-fg text-[11.5px] whitespace-nowrap shadow-lg ring-1 ring-line-strong
+        bg-raised text-fg text-[12.5px] whitespace-nowrap shadow-lg ring-1 ring-line-strong
         pointer-events-none"
     >
       {children}
@@ -70,7 +70,7 @@ function Cycle<T extends { v: string; label: string; Icon: IconOf }>({
         bg-raised text-fg-dim hover:text-fg transition-colors"
     >
       <cur.Icon className="w-[17px] h-[17px]" />
-      <span className="text-[12px]">{cur.label}</span>
+      <span className="text-[13px]">{cur.label}</span>
       {hover && (
         <Tip>
           {what}: {cur.label} → 누르면 {nxt.label}

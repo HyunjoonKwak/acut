@@ -12,7 +12,7 @@ export default function SettingsNav() {
               .getElementById(`settings-${s.id}`)
               ?.scrollIntoView({ behavior: "smooth", block: "start" })
           }
-          className="w-full text-left px-3 py-1.5 text-[12.5px] text-fg-dim hover:text-fg hover:bg-chrome"
+          className="w-full text-left px-3 py-1.5 text-[13.5px] text-fg-dim hover:text-fg hover:bg-chrome"
         >
           {s.label}
         </button>

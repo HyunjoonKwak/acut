@@ -230,7 +230,7 @@ export default function Cull({
                   : `공용·내사진 안에 제외될 사본이 있는 ${dry.skipped.toLocaleString()}무리는 건너뜁니다 — 나중에 하나씩`,
               ]
             : []),
-          "파일은 옮기지 않습니다 — 닫은 뒤 상태바의 «제외한 N장 휴지통으로»가 옮깁니다",
+          "파일은 옮기지 않습니다 — 위의 «N장 휴지통으로»가 옮깁니다",
         ],
         confirmLabel: "확정",
       });
@@ -473,9 +473,9 @@ export default function Cull({
           `${dry.groups.toLocaleString()}쌍 — 남김 ${dry.kept.toLocaleString()}장 · 제외 표시 ${dry.rejected.toLocaleString()}장`,
           "두 폴더 사이에서만 겹치는 무리에 적용합니다 — 다른 폴더까지 얽힌 무리는 건너뜁니다",
           ...(risky ? ["주의: 제외될 쪽이 NAS 동기화 폴더입니다 — 휴지통으로 옮기면 NAS에서도 지워집니다"] : []),
-          "파일은 아직 옮기지 않습니다 — 닫은 뒤 상태바의 «제외한 N장 휴지통으로»가 옮깁니다",
+          "파일은 아직 옮기지 않습니다 — 위의 «N장 휴지통으로»가 옮깁니다",
         ],
-        confirmLabel: "전부 이렇게",
+        confirmLabel: "전부 적용",
         danger: risky,
       });
       if (!ok) return;
@@ -569,7 +569,7 @@ export default function Cull({
               key={k.id}
               onClick={() => setKind(k.id)}
               title={k.hint}
-              className={`h-control px-3 rounded-md text-[12.5px] ${
+              className={`h-control px-3 rounded-md text-[13.5px] ${
                 kind === k.id
                   ? "bg-raised text-white ring-1 ring-line-strong"
                   : "text-fg-dim"
@@ -589,14 +589,14 @@ export default function Cull({
           <span className="flex items-center gap-1.5">
             {/* 범위 — 지워질 사본이 이 라이브러리에 있는 무리만 본다. 목록·숫자·모두 확정에 다 걸린다.
                 조작할 것으로 보이게 라벨을 붙이고 테두리를 진하게 (2026-08-30: «이 메뉴는 처음 봤어») */}
-            <label className="flex items-center gap-1.5 text-[12px] text-fg-dim">
+            <label className="flex items-center gap-1.5 text-[13px] text-fg-dim">
               범위
               <select
                 value={scopeLib ?? ""}
                 style={{ flex: "none" }}
                 onChange={(e) => setScopeLib(e.target.value === "" ? null : Number(e.target.value))}
                 title="지워질 사본이 이 라이브러리에 있는 무리만 봅니다 — 목록·숫자·모두 확정에 모두 걸립니다"
-                className="h-control rounded-md bg-raised text-fg text-[12px] px-2 ring-2 ring-accent/70 hover:ring-accent focus:ring-accent outline-none"
+                className="h-control rounded-md bg-raised text-fg text-[13px] px-2 ring-2 ring-accent/70 hover:ring-accent focus:ring-accent outline-none"
               >
                 <option value="">전체 라이브러리</option>
                 {libs.map((l) => (
@@ -609,12 +609,10 @@ export default function Cull({
             {groups.length > 0 && (
               <button
                 onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "", scopeLib)}
-                title="지금 범위의 미결 무리를 한꺼번에 확정 — 공용·내사진 안의 사본이 있는 무리는 건너뜁니다"
-                className="h-control px-3 rounded-md text-[12.5px] bg-keep text-keep-fg font-semibold"
+                title={`${scopeLib === null ? "전체 라이브러리" : `${libs.find((l) => l.id === scopeLib)?.name ?? ""}의 사본만`} — 미결 무리를 한꺼번에 확정합니다. 공용·내사진 안의 사본이 있는 무리는 건너뜁니다`}
+                className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
               >
-                {scopeLib === null
-                  ? "모두 확정"
-                  : `${libs.find((l) => l.id === scopeLib)?.name ?? ""}의 사본 모두 확정`}
+                모두 확정
               </button>
             )}
           </span>
@@ -623,9 +621,9 @@ export default function Cull({
           <button
             onClick={() => void cleanExcluded()}
             title={`지금까지 확정해 제외 표시한 ${toCleanAll?.files.toLocaleString()}장(${fmtBytes(toCleanAll?.bytes ?? 0)}, 모든 라이브러리)을 각 라이브러리의 휴지통으로 옮깁니다 — 휴지통에서 되돌릴 수 있습니다`}
-            className="h-control px-3 rounded-md text-[12.5px] bg-keep text-keep-fg font-semibold"
+            className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
           >
-            제외 표시 {toCleanAll?.files.toLocaleString()}장 휴지통으로
+            {toCleanAll?.files.toLocaleString()}장 휴지통으로
           </button>
         )}
         {scanning ? (
@@ -635,7 +633,7 @@ export default function Cull({
               await invoke("scan_cancel");
               setBusy("");
             }}
-            className="h-control px-3 rounded-md text-[12.5px] text-drop ring-1 ring-drop"
+            className="h-control px-3 rounded-md text-[13.5px] text-drop ring-1 ring-drop"
           >
             멈추기
           </button>
@@ -646,24 +644,24 @@ export default function Cull({
               setBusy("찾는 중…");
               invoke("cull_scan").catch((e) => setBusy(String(e)));
             }}
-            className="h-control px-3 rounded-md text-[12.5px] text-fg-dim ring-1 ring-line-strong"
+            className="h-control px-3 rounded-md text-[13.5px] text-fg-dim ring-1 ring-line-strong"
           >
             다시 찾기
           </button>
         )}
         {scanning && (
-          <span className="flex items-center gap-2 text-keep text-[12px] tabular-nums">
+          <span className="flex items-center gap-2 text-keep text-[13px] tabular-nums">
             <i className="w-2 h-2 rounded-full bg-keep animate-pulse" />
             {scanText}
             <span className="text-fg-mute">· {fmtElapsed(elapsed)}</span>
           </span>
         )}
         </div>
-        <span className="shrink-0 whitespace-nowrap text-[12px] text-fg-mute tabular-nums">
+        <span className="shrink-0 whitespace-nowrap text-[13px] text-fg-mute tabular-nums">
           확보 가능 <b className="text-keep">{fmtBytes(total)}</b>
         </span>
         <button onClick={onClose} className="shrink-0 whitespace-nowrap text-fg-dim px-2">
-          닫기 <span className="text-[10px]">Esc</span>
+          닫기 <span className="text-[11px]">Esc</span>
         </button>
       </div>
 
@@ -688,7 +686,7 @@ export default function Cull({
       ) : (
         <>
       {/* 진행 */}
-      <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[12.5px] bar-scroll">
+      <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[13.5px] bar-scroll">
             {/* 분모는 이 갈래의 미결 무리 전체 — 목록은 200개씩 읽어 두지만 그건 화면 사정이다 */}
             <span
               className="tabular-nums text-fg-dim"
@@ -726,7 +724,7 @@ export default function Cull({
                 <>
                   <i className="w-3 h-3 rounded-full bg-keep animate-pulse" />
                   <div className="text-fg-dim tabular-nums">{scanText}</div>
-                  <div className="text-[12px] tabular-nums">
+                  <div className="text-[13px] tabular-nums">
                     {fmtElapsed(elapsed)} 지남 — 디스크를 읽는 동안은 숫자가
                     단계마다 갱신됩니다. 멈춰도 읽은 해시는 남습니다.
                   </div>
@@ -771,20 +769,22 @@ export default function Cull({
         <button
           onClick={apply}
           disabled={!cur}
-          className="h-control px-3.5 rounded-lg bg-keep text-keep-fg font-semibold text-[13px] disabled:opacity-40 flex items-center gap-2"
+          title="★ 대표는 남기고 나머지에 제외 표시 — 파일은 아직 옮기지 않습니다. 위의 «N장 휴지통으로»가 옮깁니다"
+          className="h-control px-3.5 rounded-lg bg-keep text-keep-fg font-semibold text-[14px] disabled:opacity-40 flex items-center gap-2"
         >
-          이대로 확정
-          <span className="text-[10.5px] bg-black/20 px-1.5 py-0.5 rounded font-mono">
+          확정
+          <span className="text-[11.5px] bg-black/20 px-1.5 py-0.5 rounded font-mono">
             Space
           </span>
         </button>
         <button
           onClick={skip}
           disabled={!cur}
-          className="h-control px-3.5 rounded-lg text-fg-dim text-[13px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
+          title="이 무리는 건너뜁니다 — 판정하지 않고 «보류»로 남깁니다"
+          className="h-control px-3.5 rounded-lg text-fg-dim text-[14px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
         >
           나중에
-          <span className="text-[10.5px] bg-white/8 px-1.5 py-0.5 rounded font-mono">
+          <span className="text-[11.5px] bg-white/8 px-1.5 py-0.5 rounded font-mono">
             S
           </span>
         </button>
@@ -795,23 +795,20 @@ export default function Cull({
             <button
               onClick={() => pairAll(best)}
               title={`«${best.folder || "/"}»를 남기고 «${other.folder || "/"}»의 사본을 제외 — 같은 두 폴더 사이에서 겹치는 다른 무리들에도 한꺼번에. 먼저 몇 쌍·몇 장인지 보여 주고 묻습니다`}
-              className="h-control px-3.5 rounded-lg bg-accent text-accent-fg font-semibold text-[13px] flex items-center gap-2"
+              className="h-control px-3.5 rounded-lg bg-accent text-accent-fg font-semibold text-[14px] flex items-center gap-2"
             >
-              두 폴더 전체에 적용
-              <span className="text-[11px] font-normal opacity-80 truncate max-w-[280px]">
+              두 폴더 전체
+              <span className="text-[12px] font-normal opacity-80 truncate max-w-[280px]">
                 {best.folder.split("/").pop() || "/"} 남김 · {other.folder.split("/").pop() || "/"} 제외
               </span>
             </button>
           );
         })()}
-        <span className="text-[12px] text-fg-mute ml-2">
-          숫자키 <span className="font-mono">1–9</span> 로 남길 것을 바꿉니다 ·
-          두 번 누르면 크게 봅니다
+        {/* 긴 설명은 단추의 풍선(title)으로 — 막대엔 핵심 낱말만 (2026-08-30) */}
+        <span className="text-[13px] text-fg-mute ml-2" title="숫자키를 누르면 그 번호의 사진이 남길 쪽이 됩니다. 두 번 누르면 크게 봅니다">
+          숫자키 <span className="font-mono">1–9</span> 남길 쪽 · 두 번 누르면 크게
         </span>
         <div className="flex-1" />
-        <span className="text-[12px] text-fg-mute">
-          여기서는 판정만 합니다 — 닫으면 상태바에 «확정 (N)»이 나옵니다
-        </span>
       </div>
         </>
       )}

@@ -130,7 +130,7 @@ export default function Tile({
             className={`w-full h-full ${fitOf(style)}`}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-fg-faint text-[10px]">
+          <div className="w-full h-full flex items-center justify-center text-fg-faint text-[11px]">
             {isVideo ? "영상" : "…"}
           </div>
         )}
@@ -155,18 +155,18 @@ export default function Tile({
         {/* 위 — 상태 배지 (Lap: statusBadges). 판정·별점·즐겨찾기 */}
         <div className="absolute top-1 right-1 flex items-center gap-1">
           {file.favorite && (
-            <span className="px-1 h-4 rounded bg-black/55 text-drop text-[10px] flex items-center">
+            <span className="px-1 h-4 rounded bg-black/55 text-drop text-[11px] flex items-center">
               ♥
             </span>
           )}
           {file.rating > 0 && (
-            <span className="px-1 h-4 rounded bg-black/55 text-keep text-[10px] flex items-center tracking-tighter">
+            <span className="px-1 h-4 rounded bg-black/55 text-keep text-[11px] flex items-center tracking-tighter">
               {"★".repeat(file.rating)}
             </span>
           )}
           {file.culling_flag !== 0 && (
             <span
-              className="w-4 h-4 rounded text-[10px] font-bold flex items-center justify-center"
+              className="w-4 h-4 rounded text-[11px] font-bold flex items-center justify-center"
               style={
                 file.culling_flag === 1
                   ? {
@@ -188,17 +188,17 @@ export default function Tile({
         {/* 아래 — 미디어 배지 (Lap: bottom badges). 형식과 길이 */}
         <div className="absolute bottom-1 left-1 flex items-center gap-1">
           {badge === "format" && file.kind === 2 && (
-            <span className="px-1 h-4 rounded bg-black/55 text-keep text-[9px] flex items-center font-semibold">
+            <span className="px-1 h-4 rounded bg-black/55 text-keep text-[10px] flex items-center font-semibold">
               RAW
             </span>
           )}
           {badge === "format" && isVideo && !ready && (
-            <span className="px-1 h-4 rounded bg-black/55 text-fg text-[9px] flex items-center gap-0.5">
+            <span className="px-1 h-4 rounded bg-black/55 text-fg text-[10px] flex items-center gap-0.5">
               ▶{file.duration_ms ? fmtDuration(file.duration_ms) : ""}
             </span>
           )}
           {extra && (
-            <span className="px-1 h-4 rounded bg-black/55 text-fg text-[9px] flex items-center tabular-nums">
+            <span className="px-1 h-4 rounded bg-black/55 text-fg text-[10px] flex items-center tabular-nums">
               {extra}
             </span>
           )}
@@ -209,11 +209,11 @@ export default function Tile({
           말할 때 필요한 건 결국 이름이다. */}
       {caption && (
         <div className="mt-1 leading-[1.25]">
-          <div className="text-[11px] text-fg-dim truncate" title={file.name}>
+          <div className="text-[12px] text-fg-dim truncate" title={file.name}>
             {captionText(file, caption1)}
           </div>
           {caption2 !== "none" && (
-            <div className="text-[10px] text-fg-mute truncate tabular-nums">
+            <div className="text-[11px] text-fg-mute truncate tabular-nums">
               {captionText(file, caption2)}
             </div>
           )}

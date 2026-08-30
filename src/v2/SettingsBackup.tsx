@@ -154,7 +154,7 @@ export function Backup() {
         )}
       </Row>
       {plan && plan.libs.length > 0 && (
-        <div className="px-4 pb-3 text-[11.5px] text-fg-mute tabular-nums">
+        <div className="px-4 pb-3 text-[12.5px] text-fg-mute tabular-nums">
           {plan.libs.map((l) => (
             <div key={l.library_id}>
               {l.name} —{" "}

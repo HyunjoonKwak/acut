@@ -283,7 +283,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       const ok = await ask({
         title: `제외 표시 ${n.toLocaleString()}장을 되돌립니다`,
         lines: ["이 폴더들의 남김·제외 표시를 미판정으로 돌리고, 닫았던 무리는 개별 비교에 다시 나옵니다", "파일은 그대로입니다"],
-        confirmLabel: "표시 취소",
+        confirmLabel: "표시 지우기",
       });
       if (!ok) return;
       try {
@@ -352,7 +352,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           }}
         />
       )}
-      <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line text-[12.5px] flex-wrap">
+      <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line text-[13.5px] flex-wrap">
         <Picker label="A" value={a} onPick={pickSide("a")} startAt={b?.abs ?? null} disabled={locked} />
         <span className="text-fg-mute">⇔</span>
         <Picker label="B" value={b} onPick={pickSide("b")} startAt={a?.abs ?? null} disabled={locked} />
@@ -362,7 +362,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           </span>
         )}
         {rows && !busy && !review && (
-          <span className="flex items-center gap-3 text-[12px]" role="radiogroup" aria-label="보이는 줄">
+          <span className="flex items-center gap-3 text-[13px]" role="radiogroup" aria-label="보이는 줄">
             <label className="flex items-center gap-1 cursor-pointer">
               <input type="radio" name="tf-rows" checked={onlyBoth} onChange={() => setOnlyBoth(true)} className="accent-accent" />
               양쪽에 있는 폴더만 <span className="text-fg-mute tabular-nums">({bothRows.length.toLocaleString()})</span>
@@ -389,9 +389,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
               onClick={merge}
               disabled={locked}
               title="B 나무의 사진을 A 의 같은 자리 폴더로 옮깁니다 — 사본을 먼저 뺀 뒤에. ⌘Z 로 되돌릴 수 있습니다"
-              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[13.5px] disabled:opacity-40"
             >
-              {merging ? "합치는 중…" : "B 폴더를 A 로 합치기"}
+              {merging ? "합치는 중…" : "B → A 합치기"}
             </button>
           </>
         )}
@@ -399,7 +399,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
 
       {/* 검토 단계 — 제외 표시할 폴더만 보이고, 여기서 확인한다 */}
       {rows && review && (
-        <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line bg-keep/10 text-[12.5px] flex-wrap">
+        <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-line bg-keep/10 text-[13.5px] flex-wrap">
           <span className="text-fg">
             {review.mode === "twins" ? (
               <>
@@ -424,9 +424,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           <button
             onClick={() => setReview(null)}
             disabled={locked}
-            className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+            className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[13.5px] disabled:opacity-40"
           >
-            돌아가기
+            목록으로
           </button>
           <button
             onClick={async () => {
@@ -436,7 +436,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
               await mark(picked, side, true, mode);
             }}
             disabled={locked || reviewPicked.length === 0}
-            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
+            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[13.5px] disabled:opacity-40"
           >
             제외 표시 ({reviewPicked.length.toLocaleString()})
           </button>
@@ -445,7 +445,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
 
       {/* 다음에 할 일 — 세 단계를 순서대로. 지금 어디까지 왔는지가 문장에 보인다 */}
       {rows && !review && (
-        <div className="shrink-0 flex items-center gap-x-4 gap-y-1 px-4 py-1.5 border-b border-line bg-raised/40 text-[12.5px] flex-wrap">
+        <div className="shrink-0 flex items-center gap-x-4 gap-y-1 px-4 py-1.5 border-b border-line bg-raised/40 text-[13.5px] flex-wrap">
           <span className="text-fg-mute">① 비교 끝</span>
           <span className="text-fg-faint">→</span>
           <span className="flex items-center gap-2">
@@ -461,9 +461,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                     onClick={() => setReview({ side: "b", mode: "drop", unchecked: new Set() })}
                     disabled={locked}
                     title="B쪽 사진이 전부 A쪽에 있는 폴더 — B쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다. 파일은 아직 그대로"
-                    className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
+                    className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[13.5px] disabled:opacity-40"
                   >
-                    B쪽 폴더 {todoB.length.toLocaleString()}개 제외 표시
+                    B쪽 {todoB.length.toLocaleString()}개 제외
                   </button>
                 )}
                 {todoA.length > 0 && (
@@ -471,19 +471,19 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                     onClick={() => setReview({ side: "a", mode: "drop", unchecked: new Set() })}
                     disabled={locked}
                     title="A쪽 사진이 전부 B쪽에 있는 폴더 — A쪽(하위 폴더 포함)의 사진에 제외 표시를 붙입니다. 반대 방향이니 A를 남기는 중이면 누르지 마세요"
-                    className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
+                    className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[13.5px] disabled:opacity-40"
                   >
-                    A쪽 폴더 {todoA.length.toLocaleString()}개 제외 표시
+                    A쪽 {todoA.length.toLocaleString()}개 제외
                   </button>
                 )}
                 {twinRows.length > 0 && (
                   <button
                     onClick={() => setReview({ side: "b", mode: "twins", unchecked: new Set() })}
                     disabled={locked}
-                    title="부분만 겹치는 폴더에서, B쪽 사진 가운데 A쪽에도 같은 내용이 있는 것만 제외 표시합니다 — 폴더는 남고 A에 없는 사진도 남습니다"
-                    className="h-7 px-3 rounded-md ring-1 ring-keep text-keep font-semibold text-[12.5px] disabled:opacity-40"
+                    title={`부분만 겹치는 폴더 ${twinRows.length.toLocaleString()}개에서, B쪽 사진 가운데 A쪽에도 같은 내용이 있는 ${twinCount.toLocaleString()}장만 제외 표시합니다 — 폴더는 남고 A에 없는 사진도 남습니다`}
+                    className="h-7 px-3 rounded-md ring-1 ring-keep text-keep font-semibold text-[13.5px] disabled:opacity-40"
                   >
-                    B쪽 사진 중 A쪽에도 있는 {twinCount.toLocaleString()}장 제외 표시 ({twinRows.length.toLocaleString()}개 폴더)
+                    B쪽 겹침 {twinCount.toLocaleString()}장 제외
                   </button>
                 )}
                 {flagged > 0 && (
@@ -498,9 +498,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                     onClick={() => unmark(rows)}
                     disabled={locked}
                     title="이 비교에서 붙인 남김·제외 표시를 전부 미판정으로 되돌립니다 — 파일은 그대로"
-                    className="h-7 px-2.5 rounded-md text-fg-dim ring-1 ring-line-strong text-[12px] disabled:opacity-40"
+                    className="h-7 px-2.5 rounded-md text-fg-dim ring-1 ring-line-strong text-[13px] disabled:opacity-40"
                   >
-                    표시 취소
+                    표시 지우기
                   </button>
                 )}
                 {todoB.length + todoA.length === 0 && flagged === 0 && (
@@ -521,9 +521,9 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                 onClick={sweep}
                 disabled={locked}
                 title="②에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다. 파일이 실제로 움직이지만 휴지통에서 되돌릴 수 있습니다. 영구 삭제는 휴지통 화면의 «영구히 비우기»"
-                className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
+                className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[13.5px] disabled:opacity-40"
               >
-                제외 표시된 {flagged.toLocaleString()}장 휴지통으로 보내기
+                {flagged.toLocaleString()}장 휴지통으로
               </button>
             ) : (
               <span className="text-fg-mute">②를 먼저</span>
@@ -533,7 +533,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
       )}
 
       {left && rows && rows.every((r) => !r.b) && (
-        <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 text-[12px] bg-keep/10 border-b border-line flex-wrap">
+        <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 text-[13px] bg-keep/10 border-b border-line flex-wrap">
           <span className="text-fg">
             B 폴더에 <b>사진이 아닌 파일 {left.files.toLocaleString()}개</b>({fmtBytes(left.bytes)})가 남아 있어 Finder 엔 폴더가 남습니다
             <span className="text-fg-dim"> — {left.kinds.map(([k, n]) => `${k} ${n.toLocaleString()}`).join(" · ")}</span>
@@ -542,14 +542,15 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           <button
             onClick={moveRest}
             disabled={locked}
-            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12px] disabled:opacity-40"
+            title="사진이 아닌 남은 파일(txt·zip 등)도 A 의 같은 자리로 옮기고, 빈 B 폴더를 지웁니다"
+            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[13px] disabled:opacity-40"
           >
-            남은 파일도 A 로 옮기고 폴더 지우기
+            남은 파일도 옮기기
           </button>
         </div>
       )}
       {unhashed > 0 && rows && (
-        <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 text-[12px] bg-keep/10 border-b border-line flex-wrap">
+        <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 text-[13px] bg-keep/10 border-b border-line flex-wrap">
           <span className="text-fg">
             <b>해시가 없는 사진 {unhashed.toLocaleString()}장</b>
             <span className="text-fg-dim"> — «다시 찾기» 뒤에 들어온 사진이라 아직 내용을 견줄 수 없습니다. 그 사진이 든 폴더는 «똑같음»이 되지 않습니다.</span>
@@ -558,22 +559,23 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
           <button
             onClick={hashNow}
             disabled={locked}
-            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12px] disabled:opacity-40"
+            title="이 두 폴더의 해시 없는 사진을 읽어 해시를 만든 뒤 다시 비교합니다"
+            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[13px] disabled:opacity-40"
           >
-            {hashing ? "해시 계산 중…" : "이 두 폴더 해시 계산 뒤 다시 비교"}
+            {hashing ? "해시 계산 중…" : "해시 만들고 다시 비교"}
           </button>
         </div>
       )}
       {missing > 0 && (
-        <div className="shrink-0 px-4 py-1.5 text-[12px] text-drop bg-drop/10 border-b border-line">
+        <div className="shrink-0 px-4 py-1.5 text-[13px] text-drop bg-drop/10 border-b border-line">
           디스크에 없는 폴더 {missing.toLocaleString()}개는 뺐습니다 — Finder 에서 지운 폴더의 기록이 남은 것입니다. 왼쪽 앨범에서 라이브러리의 ⟳(다시 스캔)을 누르면 정리됩니다.
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-y-auto scroll-thin">
         {rows === null ? (
-          <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute text-[13px]">
+          <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute text-[14px]">
             <div>«폴더 고르기…»로 비교할 두 폴더를 Finder 에서 고르세요 — 등록한 라이브러리 안의 폴더면 됩니다.</div>
-            <div className="text-fg-faint text-[12px]">예: A = T7 › 통합전후보 › 후보1번 › 연도별, B = T7 › 통합전후보 › 후보2번</div>
+            <div className="text-fg-faint text-[13px]">예: A = T7 › 통합전후보 › 후보1번 › 연도별, B = T7 › 통합전후보 › 후보2번</div>
           </div>
         ) : rows.length === 0 ? (
           <div className="h-full flex items-center justify-center text-fg-mute">
@@ -584,8 +586,8 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
             양쪽에 다 있는 폴더가 없습니다 — «전부»를 고르면 한쪽에만 있는 폴더도 보입니다
           </div>
         ) : (
-          <table className="w-full text-[12.5px] tabular-nums">
-            <thead className="text-[10.5px] text-fg-mute uppercase tracking-wider sticky top-0 bg-canvas">
+          <table className="w-full text-[13.5px] tabular-nums">
+            <thead className="text-[11.5px] text-fg-mute uppercase tracking-wider sticky top-0 bg-canvas">
               <tr className="text-left">
                 {review && <th className="py-1.5 pl-4 w-8 font-medium"></th>}
                 <th className="py-1.5 px-4 font-medium">A · {a && `${a.library} · ${a.path || "/"}`}</th>
@@ -658,14 +660,14 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                       <button
                         onClick={() => setViewing(r)}
                         disabled={locked}
-                        className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong mr-1 disabled:opacity-40"
+                        className="h-6 px-2 rounded text-[12.5px] text-fg-dim ring-1 ring-line-strong mr-1 disabled:opacity-40"
                         title="두 폴더의 사진을 나란히 놓고 직접 골라 표시합니다"
                       >
                         보기
                       </button>
                     )}
                     {done ? (
-                      <span className="text-[11.5px]">
+                      <span className="text-[12.5px]">
                         <span className="text-ok">처리됨 — {done === "a" ? "A" : "B"}쪽 제외</span>
                         <button
                           onClick={() => unmark([r])}
@@ -682,7 +684,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                           <button
                             onClick={() => mark([r], "b")}
                             disabled={locked}
-                            className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong mr-1 disabled:opacity-40"
+                            className="h-6 px-2 rounded text-[12.5px] text-fg-dim ring-1 ring-line-strong mr-1 disabled:opacity-40"
                             title="B쪽 폴더(하위 포함)의 사진에 제외 표시 — 전부 A쪽에 있습니다"
                           >
                             B쪽 제외
@@ -692,7 +694,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
                           <button
                             onClick={() => mark([r], "a")}
                             disabled={locked}
-                            className="h-6 px-2 rounded text-[11.5px] text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
+                            className="h-6 px-2 rounded text-[12.5px] text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
                             title="A쪽 폴더(하위 포함)의 사진에 제외 표시 — 전부 B쪽에 있습니다"
                           >
                             A쪽 제외
@@ -723,9 +725,9 @@ function Cell({ f, sub, tree }: { f: FolderIn | null; sub: FolderHit | null; tre
       : `${f.library} · ${f.folder || "/"}`;
   return (
     <span className="truncate block" title={`${f.library} / ${f.folder || "/"}`}>
-      {settled(f) && <span className="text-keep text-[10px] mr-1">NAS</span>}
+      {settled(f) && <span className="text-keep text-[11px] mr-1">NAS</span>}
       {shown}
-      {tree && <span className="text-fg-mute text-[10.5px] ml-1" title="하위 폴더까지 합쳐서 본 줄">/…</span>}
+      {tree && <span className="text-fg-mute text-[11.5px] ml-1" title="하위 폴더까지 합쳐서 본 줄">/…</span>}
     </span>
   );
 }

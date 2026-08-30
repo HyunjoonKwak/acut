@@ -93,7 +93,7 @@ export default function Histogram({
   return (
     <>
       {!compact && (
-        <div className="text-[10.5px] text-fg-mute uppercase tracking-wider mb-2">
+        <div className="text-[11.5px] text-fg-mute uppercase tracking-wider mb-2">
           밝기 분포
         </div>
       )}
@@ -140,7 +140,7 @@ export default function Histogram({
         </svg>
       </div>
       {h && (h.clippedHighlight > 0.005 || h.clippedShadow > 0.005) && (
-        <div className="mt-1.5 flex gap-3 text-[10.5px] tabular-nums">
+        <div className="mt-1.5 flex gap-3 text-[11.5px] tabular-nums">
           {h.clippedShadow > 0.005 && (
             <span className="text-fg-mute">
               뭉갠 그림자 {(h.clippedShadow * 100).toFixed(1)}%

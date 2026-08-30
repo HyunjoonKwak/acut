@@ -45,7 +45,7 @@ export function Btn({
       disabled={disabled}
       title={title}
       autoFocus={autoFocus}
-      className={`h-control px-2.5 rounded-md text-[12.5px] whitespace-nowrap
+      className={`h-control px-2.5 rounded-md text-[13.5px] whitespace-nowrap
         inline-flex items-center gap-1.5 transition-colors
         disabled:opacity-35 disabled:pointer-events-none
         ${active && tone === "plain" ? "bg-hover text-fg ring-1 ring-line-strong" : TONE[tone]}`}
@@ -75,7 +75,7 @@ export function IconBtn({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`h-control w-control rounded-md text-[13px] inline-flex items-center justify-center
+      className={`h-control w-control rounded-md text-[14px] inline-flex items-center justify-center
         transition-colors disabled:opacity-35 disabled:pointer-events-none
         ${active ? "bg-hover text-accent" : "text-fg-dim hover:text-fg hover:bg-hover"}`}
     >
@@ -86,7 +86,7 @@ export function IconBtn({
 
 export function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <span className="text-[10px] font-mono text-fg-faint leading-none">
+    <span className="text-[11px] font-mono text-fg-faint leading-none">
       {children}
     </span>
   );
@@ -99,7 +99,7 @@ export function Sep() {
 /** 목록 위의 작은 제목 */
 export function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-[0.08em] text-fg-faint">
+    <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-[0.08em] text-fg-faint">
       {children}
     </div>
   );
@@ -171,7 +171,7 @@ export function MenuItem({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-3 px-3 py-1.5 text-[12.5px] text-left
+      className={`flex w-full items-center gap-3 px-3 py-1.5 text-[13.5px] text-left
         hover:bg-hover transition-colors
         ${danger ? "text-drop" : selected ? "text-accent" : "text-fg-dim"}`}
     >
@@ -204,13 +204,13 @@ export function QuickRow({
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12.5px] ${
+      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[13.5px] ${
         on ? "bg-raised text-fg" : "text-fg-dim hover:text-fg hover:bg-chrome"
       }`}
     >
       <span className="flex-1 text-left truncate">{label}</span>
       {count !== undefined && (
-        <span className="text-fg-mute tabular-nums text-[11px]">
+        <span className="text-fg-mute tabular-nums text-[12px]">
           {count.toLocaleString()}
         </span>
       )}

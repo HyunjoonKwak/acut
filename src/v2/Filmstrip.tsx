@@ -113,7 +113,7 @@ export default function Filmstrip<T extends StripFile>({
                   className="w-full h-full object-cover"
                 />
               ) : (
-                <span className="w-full h-full flex items-center justify-center text-fg-faint text-[10px]">
+                <span className="w-full h-full flex items-center justify-center text-fg-faint text-[11px]">
                   {f.kind === 1 ? "영상" : "…"}
                 </span>
               )}
@@ -121,7 +121,7 @@ export default function Filmstrip<T extends StripFile>({
               {/* 판정만 표시한다. 좁은 칸에 별점까지 넣으면 아무것도 안 읽힌다 */}
               {f.culling_flag !== 0 && (
                 <span
-                  className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded text-[9px] font-bold flex items-center justify-center"
+                  className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded text-[10px] font-bold flex items-center justify-center"
                   style={
                     f.culling_flag === 1
                       ? {
@@ -138,7 +138,7 @@ export default function Filmstrip<T extends StripFile>({
                 </span>
               )}
               {f.kind === 1 && (
-                <span className="absolute bottom-0.5 left-0.5 px-1 rounded bg-black/55 text-fg text-[9px] tabular-nums">
+                <span className="absolute bottom-0.5 left-0.5 px-1 rounded bg-black/55 text-fg text-[10px] tabular-nums">
                   ▶{f.duration_ms ? fmtDuration(f.duration_ms) : ""}
                 </span>
               )}

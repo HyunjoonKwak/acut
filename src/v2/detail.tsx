@@ -7,7 +7,7 @@ export function Row({ k, v, dim }: { k: string; v: string; dim?: boolean }) {
     <div className="flex justify-between gap-3 py-[3px]">
       <span className="text-fg-mute shrink-0">{k}</span>
       <span
-        className={`text-right truncate font-mono text-[11px] ${dim ? "text-keep" : "text-fg-dim"}`}
+        className={`text-right truncate font-mono text-[12px] ${dim ? "text-keep" : "text-fg-dim"}`}
         title={v}
       >
         {v}

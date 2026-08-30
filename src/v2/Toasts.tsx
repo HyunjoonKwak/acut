@@ -18,7 +18,7 @@ export default function Toasts() {
           key={t.id}
           onClick={() => dismiss(t.id)}
           role="status"
-          className={`pointer-events-auto max-w-[360px] text-left px-3 py-2 rounded-lg shadow-lg ring-1 text-[12.5px] leading-snug ${TONE[t.tone]}`}
+          className={`pointer-events-auto max-w-[360px] text-left px-3 py-2 rounded-lg shadow-lg ring-1 text-[13.5px] leading-snug ${TONE[t.tone]}`}
         >
           {t.text}
         </button>

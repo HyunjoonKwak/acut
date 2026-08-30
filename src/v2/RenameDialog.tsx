@@ -64,19 +64,19 @@ export default function RenameDialog({
         }}
         className="w-[380px] max-w-[90vw] rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl p-5"
       >
-        <div className="text-[14px] font-semibold text-fg">이름 바꾸기</div>
+        <div className="text-[15px] font-semibold text-fg">이름 바꾸기</div>
         <input
           ref={selectStem}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           aria-label="새 이름"
-          className="mt-3 w-full h-control px-2 rounded-md bg-canvas text-[13px] text-fg
+          className="mt-3 w-full h-control px-2 rounded-md bg-canvas text-[14px] text-fg
             outline-none ring-1 ring-line focus:ring-accent"
         />
         {(problem && value !== name) || err ? (
-          <div className="mt-2 text-[12px] text-drop">{err ?? problem}</div>
+          <div className="mt-2 text-[13px] text-drop">{err ?? problem}</div>
         ) : (
-          <div className="mt-2 text-[12px] text-fg-mute">
+          <div className="mt-2 text-[13px] text-fg-mute">
             같은 이름이 있으면 바꾸지 않습니다.
           </div>
         )}

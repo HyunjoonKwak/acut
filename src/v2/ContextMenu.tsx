@@ -86,7 +86,7 @@ export default function ContextMenu({
               it.run();
               onClose();
             }}
-            className={`flex w-full items-center gap-3 px-3 py-1.5 text-[12.5px] hover:bg-hover ${
+            className={`flex w-full items-center gap-3 px-3 py-1.5 text-[13.5px] hover:bg-hover ${
               it.danger ? "text-drop" : "text-fg"
             }`}
           >
@@ -94,7 +94,7 @@ export default function ContextMenu({
               {it.label}
             </span>
             {it.hint && (
-              <span className="text-[10.5px] font-mono text-fg-mute">
+              <span className="text-[11.5px] font-mono text-fg-mute">
                 {it.hint}
               </span>
             )}

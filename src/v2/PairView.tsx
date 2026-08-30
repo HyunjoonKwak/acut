@@ -85,7 +85,7 @@ export default function PairView({
       await invoke("files_mark", { ids: [...picked], rating: null, cullingFlag: flag, favorite: null });
       toast(
         flag === 2
-          ? `${picked.size.toLocaleString()}장에 제외 표시했습니다 — 비교 화면의 «휴지통으로 보내기»로 옮깁니다`
+          ? `${picked.size.toLocaleString()}장에 제외 표시했습니다 — 비교 화면의 «N장 휴지통으로»로 옮깁니다`
           : flag === 1
             ? `${picked.size.toLocaleString()}장에 남김 표시했습니다`
             : `${picked.size.toLocaleString()}장의 표시를 지웠습니다`,
@@ -104,20 +104,20 @@ export default function PairView({
 
   return (
     <div className="absolute inset-0 z-30 bg-canvas flex flex-col">
-      <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[12.5px] bar-fixed">
+      <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[13.5px] bar-fixed">
         <span className="text-fg font-semibold">폴더 보기</span>
         <span className="text-fg-dim">
           같은 사진에는 <span className="text-ok font-semibold">동일</span> 표시 — 클릭해서 고르고 아래에서 표시를 붙입니다
         </span>
         <div className="flex-1" />
-        <button onClick={() => pickTwins("a")} className="h-7 px-2.5 rounded-md text-fg-dim ring-1 ring-line-strong text-[12px]">
-          A쪽 동일 사진 전부 선택
+        <button onClick={() => pickTwins("a")} title="A쪽에서 B쪽과 같은 사진을 전부 고릅니다" className="h-7 px-2.5 rounded-md text-fg-dim ring-1 ring-line-strong text-[13px]">
+          A쪽 동일 전부
         </button>
-        <button onClick={() => pickTwins("b")} className="h-7 px-2.5 rounded-md text-fg-dim ring-1 ring-line-strong text-[12px]">
-          B쪽 동일 사진 전부 선택
+        <button onClick={() => pickTwins("b")} title="B쪽에서 A쪽과 같은 사진을 전부 고릅니다" className="h-7 px-2.5 rounded-md text-fg-dim ring-1 ring-line-strong text-[13px]">
+          B쪽 동일 전부
         </button>
-        <button onClick={onClose} className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px]">
-          닫기 <span className="text-[10px] font-mono">Esc</span>
+        <button onClick={onClose} className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[13.5px]">
+          닫기 <span className="text-[11px] font-mono">Esc</span>
         </button>
       </div>
 
@@ -127,7 +127,7 @@ export default function PairView({
           const list = side === "a" ? photos?.a : photos?.b;
           return (
             <div key={side} className="min-h-0 flex flex-col">
-              <div className="shrink-0 px-4 py-1.5 text-[12px] border-b border-line flex items-center gap-2">
+              <div className="shrink-0 px-4 py-1.5 text-[13px] border-b border-line flex items-center gap-2">
                 <span className="text-fg-mute font-semibold">{side.toUpperCase()}</span>
                 <span className="truncate" title={`${f.library} / ${f.folder || "/"}`}>
                   {f.library} · {f.folder || "/"}
@@ -140,7 +140,7 @@ export default function PairView({
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto scroll-thin p-3">
                 {!list ? (
-                  <div className="text-fg-mute text-[12.5px]">읽는 중…</div>
+                  <div className="text-fg-mute text-[13.5px]">읽는 중…</div>
                 ) : (
                   <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))" }}>
                     {list.map((p) => {
@@ -173,27 +173,27 @@ export default function PairView({
                               <div className="w-full h-full flex items-center justify-center text-fg-faint">…</div>
                             )}
                             {p.twin !== null && (
-                              <span className="absolute top-1 left-1 h-4 px-1.5 rounded bg-ok/90 text-[#0b2a1a] text-[10px] font-bold flex items-center">
+                              <span className="absolute top-1 left-1 h-4 px-1.5 rounded bg-ok/90 text-[#0b2a1a] text-[11px] font-bold flex items-center">
                                 동일
                               </span>
                             )}
                             {p.culling_flag === 2 && (
-                              <span className="absolute top-1 right-1 h-4 px-1.5 rounded bg-drop/90 text-drop-fg text-[10px] font-bold flex items-center">
+                              <span className="absolute top-1 right-1 h-4 px-1.5 rounded bg-drop/90 text-drop-fg text-[11px] font-bold flex items-center">
                                 제외
                               </span>
                             )}
                             {p.culling_flag === 1 && (
-                              <span className="absolute top-1 right-1 h-4 px-1.5 rounded bg-keep text-keep-fg text-[10px] font-bold flex items-center">
+                              <span className="absolute top-1 right-1 h-4 px-1.5 rounded bg-keep text-keep-fg text-[11px] font-bold flex items-center">
                                 남김
                               </span>
                             )}
                             {on && (
-                              <span className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-accent text-accent-fg text-[10px] flex items-center justify-center">
+                              <span className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-accent text-accent-fg text-[11px] flex items-center justify-center">
                                 ✓
                               </span>
                             )}
                           </div>
-                          <div className="mt-1 text-[10.5px] text-fg-mute truncate">
+                          <div className="mt-1 text-[11.5px] text-fg-mute truncate">
                             {p.sub ? <span className="text-fg-faint">{p.sub}/</span> : null}
                             {p.name}
                           </div>
@@ -208,7 +208,7 @@ export default function PairView({
         })}
       </div>
 
-      <div className="h-12 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line text-[12.5px] bar-fixed">
+      <div className="h-12 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line text-[13.5px] bar-fixed">
         <span className="tabular-nums">
           <b className="text-accent">{picked.size.toLocaleString()}장</b> 선택
           <span className="text-fg-mute"> · {fmtBytes(pickedBytes)}</span>
@@ -218,7 +218,7 @@ export default function PairView({
           disabled={busy || picked.size === 0}
           className="h-control px-3 rounded-md bg-keep text-keep-fg font-semibold disabled:opacity-40"
         >
-          고른 사진 제외 표시
+          제외 표시
         </button>
         <button
           onClick={() => mark(1)}

@@ -150,10 +150,10 @@ export default function Compare({
 
   return (
     <div className="fixed inset-0 z-[60] bg-canvas flex flex-col">
-      <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[12.5px]">
+      <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[13.5px]">
         <span className="text-fg font-semibold">나란히 보기</span>
         <span className="text-fg-mute tabular-nums">{ids.length}장</span>
-        <span className="text-fg-faint text-[11.5px]">
+        <span className="text-fg-faint text-[12.5px]">
           휠로 확대 · 끌어서 이동 · 함께 움직입니다
         </span>
         <div className="flex-1" />
@@ -166,17 +166,17 @@ export default function Compare({
             className="text-fg-dim px-2 tabular-nums"
           >
             {zoom.toFixed(1)}× 되돌리기{" "}
-            <span className="text-[10px] font-mono">0</span>
+            <span className="text-[11px] font-mono">0</span>
           </button>
         )}
         <button
           onClick={() => setShowInfo((s) => !s)}
           className={`px-2 ${showInfo ? "text-accent" : "text-fg-dim"}`}
         >
-          정보 <span className="text-[10px] font-mono">I</span>
+          정보 <span className="text-[11px] font-mono">I</span>
         </button>
         <button onClick={onClose} className="text-fg-dim px-2">
-          닫기 <span className="text-[10px] font-mono">Esc</span>
+          닫기 <span className="text-[11px] font-mono">Esc</span>
         </button>
       </div>
 
@@ -216,7 +216,7 @@ export default function Compare({
 
               {/* 칸 번호 — 키보드로 겨눌 때 쓴다 */}
               <span
-                className={`absolute top-1.5 left-1.5 w-5 h-5 rounded text-[11px] font-bold
+                className={`absolute top-1.5 left-1.5 w-5 h-5 rounded text-[12px] font-bold
                   flex items-center justify-center ${
                     on ? "bg-accent text-accent-fg" : "bg-black/55 text-fg-dim"
                   }`}
@@ -227,21 +227,21 @@ export default function Compare({
               {d && (
                 <div className="absolute bottom-0 inset-x-0 bg-black/60 px-2 py-1.5">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-[11.5px] text-fg truncate flex-1">
+                    <span className="text-[12.5px] text-fg truncate flex-1">
                       {d.name}
                     </span>
                     {d.cullingFlag === 1 && (
-                      <span className="px-1.5 rounded bg-keep text-keep-fg text-[10px] font-bold shrink-0">
+                      <span className="px-1.5 rounded bg-keep text-keep-fg text-[11px] font-bold shrink-0">
                         ★ 남김
                       </span>
                     )}
                     {d.cullingFlag === 2 && (
-                      <span className="px-1.5 rounded bg-drop text-drop-fg text-[10px] font-bold shrink-0">
+                      <span className="px-1.5 rounded bg-drop text-drop-fg text-[11px] font-bold shrink-0">
                         ✕ 제외
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 text-[10.5px] text-fg-mute tabular-nums mt-0.5">
+                  <div className="flex items-center gap-2 text-[11.5px] text-fg-mute tabular-nums mt-0.5">
                     <span>{fmtBytes(d.size)}</span>
                     {d.width && d.height && (
                       <span>
@@ -263,7 +263,7 @@ export default function Compare({
                       onClick={() =>
                         mark(id, { cullingFlag: d.cullingFlag === 1 ? 0 : 1 })
                       }
-                      className={`px-1.5 h-5 rounded text-[10.5px] font-semibold ${
+                      className={`px-1.5 h-5 rounded text-[11.5px] font-semibold ${
                         d.cullingFlag === 1
                           ? "bg-keep text-keep-fg"
                           : "text-fg-dim ring-1 ring-line"
@@ -275,7 +275,7 @@ export default function Compare({
                       onClick={() =>
                         mark(id, { cullingFlag: d.cullingFlag === 2 ? 0 : 2 })
                       }
-                      className={`px-1.5 h-5 rounded text-[10.5px] font-semibold ${
+                      className={`px-1.5 h-5 rounded text-[11.5px] font-semibold ${
                         d.cullingFlag === 2
                           ? "bg-drop text-drop-fg"
                           : "text-fg-dim ring-1 ring-line"

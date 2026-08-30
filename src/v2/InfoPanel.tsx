@@ -42,9 +42,9 @@ export default function InfoPanel({
   const thumb = file ? thumbUrl(file) : null;
 
   return (
-    <aside className="w-64 shrink-0 bg-raised border-l border-line overflow-y-auto text-[12px]">
+    <aside className="w-64 shrink-0 bg-raised border-l border-line overflow-y-auto text-[13px]">
       <div className="flex items-center justify-between px-4 pt-3 pb-1">
-        <span className="text-[10.5px] text-fg-mute uppercase tracking-wider">
+        <span className="text-[11.5px] text-fg-mute uppercase tracking-wider">
           정보
         </span>
         <button
@@ -58,7 +58,7 @@ export default function InfoPanel({
       </div>
 
       {!file || !detail ? (
-        <div className="px-4 py-6 text-fg-faint text-[11.5px]">
+        <div className="px-4 py-6 text-fg-faint text-[12.5px]">
           {file ? "읽는 중…" : "사진을 고르면 여기에 상세가 뜹니다"}
         </div>
       ) : (

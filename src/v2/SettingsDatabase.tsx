@@ -83,7 +83,7 @@ export function Database() {
   return (
     <Section id="database" title="데이터베이스">
       <Row label="지금 쓰는 파일" hint={info?.path ?? "—"}>
-        <span className="text-[12.5px] text-fg-mute tabular-nums">
+        <span className="text-[13.5px] text-fg-mute tabular-nums">
           {info ? fmtBytes(info.bytes) : "—"}
         </span>
         <Btn onClick={() => invoke("db_backups_reveal").catch(() => {})}>
@@ -103,7 +103,7 @@ export function Database() {
           {backups.map((b) => (
             <div
               key={b.name}
-              className="group flex items-baseline gap-3 text-[12px] tabular-nums"
+              className="group flex items-baseline gap-3 text-[13px] tabular-nums"
             >
               <span className="text-fg-dim">{fmtDateTime(b.made_at)}</span>
               <span className="text-fg-faint">{fmtBytes(b.bytes)}</span>
@@ -121,7 +121,7 @@ export function Database() {
         label="썸네일 캐시"
         hint="사진을 다시 읽지 않으려고 만들어 둔 작은 그림들"
       >
-        <span className="text-[12.5px] text-fg-mute tabular-nums">
+        <span className="text-[13.5px] text-fg-mute tabular-nums">
           {cache ? fmtBytes(cache.bytes) : "—"}
         </span>
         <Btn onClick={refreshCache}>다시 세기</Btn>

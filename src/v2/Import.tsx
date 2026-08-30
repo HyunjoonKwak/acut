@@ -126,8 +126,8 @@ export default function Import({
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50">
       <div className="w-[520px] max-w-[92vw] rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl p-5">
         <div className="flex items-baseline gap-3">
-          <span className="text-[15px] font-semibold text-fg">가져오기</span>
-          <span className="text-[11.5px] text-fg-mute">
+          <span className="text-[16px] font-semibold text-fg">가져오기</span>
+          <span className="text-[12.5px] text-fg-mute">
             복사만 합니다 — 원본은 그대로 둡니다
           </span>
         </div>
@@ -137,7 +137,7 @@ export default function Import({
         <div className="flex items-center gap-2">
           <div className="flex-1 min-w-0 h-control px-2 rounded-md bg-canvas ring-1 ring-line flex items-center">
             <span
-              className="text-[12px] truncate"
+              className="text-[13px] truncate"
               title={sources.join("\n") || undefined}
             >
               {sources.length === 0 ? (
@@ -159,7 +159,7 @@ export default function Import({
         {/* 어디로 */}
         <Label>어디로</Label>
         {usable.length === 0 ? (
-          <div className="text-[12px] text-drop">
+          <div className="text-[13px] text-drop">
             연결된 라이브러리가 없습니다.
           </div>
         ) : (
@@ -169,7 +169,7 @@ export default function Import({
                 key={l.id}
                 disabled={running}
                 onClick={() => setTarget(l.id)}
-                className={`h-control px-2.5 rounded-md text-[12px] disabled:opacity-40 ${
+                className={`h-control px-2.5 rounded-md text-[13px] disabled:opacity-40 ${
                   target === l.id
                     ? "bg-accent text-accent-fg"
                     : "bg-raised text-fg-dim hover:text-fg"
@@ -183,19 +183,19 @@ export default function Import({
 
         {/* 무엇이 들어가나 */}
         {looking && (
-          <div className="mt-4 text-[12px] text-fg-mute">세는 중…</div>
+          <div className="mt-4 text-[13px] text-fg-mute">세는 중…</div>
         )}
         {preview && !running && !report && (
           <div className="mt-4 rounded-lg bg-raised p-3">
             {preview.files === 0 ? (
-              <div className="text-[12.5px] text-fg-dim">
+              <div className="text-[13.5px] text-fg-dim">
                 새로 들일 사진이 없습니다.
                 {preview.duplicates > 0 &&
                   ` ${preview.duplicates.toLocaleString()}장은 이미 있습니다.`}
               </div>
             ) : (
               <>
-                <div className="text-[13px] text-fg">
+                <div className="text-[14px] text-fg">
                   <b className="tabular-nums">
                     {preview.files.toLocaleString()}장
                   </b>{" "}
@@ -203,7 +203,7 @@ export default function Import({
                     · {fmtBytes(preview.bytes)}
                   </span>
                 </div>
-                <div className="mt-1.5 text-[11.5px] text-fg-mute leading-relaxed">
+                <div className="mt-1.5 text-[12.5px] text-fg-mute leading-relaxed">
                   찍은 날짜로 갈라 넣습니다 ({preview.day_count}일치)
                   <br />
                   <span className="text-fg-faint font-mono">
@@ -214,7 +214,7 @@ export default function Import({
                   </span>
                 </div>
                 {preview.duplicates > 0 && (
-                  <div className="mt-1.5 text-[11.5px] text-fg-mute">
+                  <div className="mt-1.5 text-[12.5px] text-fg-mute">
                     이미 있는 {preview.duplicates.toLocaleString()}장은
                     건너뜁니다
                   </div>
@@ -227,7 +227,7 @@ export default function Import({
         {/* 하는 중 */}
         {progress && (
           <div className="mt-4">
-            <div className="flex items-baseline gap-2 text-[12.5px]">
+            <div className="flex items-baseline gap-2 text-[13.5px]">
               <span className="text-fg tabular-nums">
                 {progress.copied.toLocaleString()} /{" "}
                 {progress.found.toLocaleString()}
@@ -255,27 +255,27 @@ export default function Import({
 
         {/* 끝났다 */}
         {report && (
-          <div className="mt-4 rounded-lg bg-raised p-3 text-[12.5px]">
+          <div className="mt-4 rounded-lg bg-raised p-3 text-[13.5px]">
             <div className="text-fg">
               {report.copied.toLocaleString()}장 들였습니다{" "}
               <span className="text-fg-mute tabular-nums">
                 · {fmtBytes(report.bytes)}
               </span>
             </div>
-            <div className="mt-1 text-[11.5px] text-fg-mute">
+            <div className="mt-1 text-[12.5px] text-fg-mute">
               {report.skipped > 0 &&
                 `이미 있던 ${report.skipped.toLocaleString()}장은 건너뛰었습니다. `}
               썸네일은 뒤에서 계속 만들어집니다.
             </div>
             {report.failed > 0 && (
-              <div className="mt-1 text-[11.5px] text-drop">
+              <div className="mt-1 text-[12.5px] text-drop">
                 {report.failed.toLocaleString()}장 실패 — {report.first_error}
               </div>
             )}
           </div>
         )}
 
-        {error && <div className="mt-3 text-[12px] text-drop">{error}</div>}
+        {error && <div className="mt-3 text-[13px] text-drop">{error}</div>}
 
         <div className="mt-5 flex justify-end gap-2">
           <Btn onClick={onClose} disabled={running}>
@@ -303,7 +303,7 @@ export default function Import({
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-4 mb-1.5 text-[10.5px] uppercase tracking-wider text-fg-mute">
+    <div className="mt-4 mb-1.5 text-[11.5px] uppercase tracking-wider text-fg-mute">
       {children}
     </div>
   );

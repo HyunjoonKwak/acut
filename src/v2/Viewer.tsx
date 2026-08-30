@@ -225,7 +225,7 @@ export default function Viewer({
       } flex flex-col ${viewerBg === "black" ? "bg-black" : viewerBg === "gray" ? "bg-[#3a3f46]" : "bg-canvas"}`}
     >
       {/* 상단 */}
-      <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[12.5px]">
+      <div className="h-11 shrink-0 flex items-center gap-3 px-4 bg-raised/95 border-b border-line text-[13.5px]">
         <button
           onClick={() => onRename && setRenaming(true)}
           title={onRename ? "이름 바꾸기" : undefined}
@@ -237,12 +237,12 @@ export default function Viewer({
           {index + 1} / {ids.length}
         </span>
         {detail && detail.cullingFlag === 1 && (
-          <span className="px-2 py-0.5 rounded bg-keep text-keep-fg text-[11px] font-bold">
+          <span className="px-2 py-0.5 rounded bg-keep text-keep-fg text-[12px] font-bold">
             ★ 남김
           </span>
         )}
         {detail && detail.cullingFlag === 2 && (
-          <span className="px-2 py-0.5 rounded bg-drop text-drop-fg text-[11px] font-bold">
+          <span className="px-2 py-0.5 rounded bg-drop text-drop-fg text-[12px] font-bold">
             ✕ 제외
           </span>
         )}
@@ -263,23 +263,23 @@ export default function Viewer({
           className={`px-2 ${playing ? "text-accent" : "text-fg-dim"}`}
         >
           {playing ? "멈춤" : "슬라이드쇼"}{" "}
-          <span className="text-[10px] font-mono">S</span>
+          <span className="text-[11px] font-mono">S</span>
         </button>
         <button
           onClick={() => setShowInfo((s) => !s)}
           className="text-fg-dim px-2"
         >
-          정보 <span className="text-[10px] font-mono">I</span>
+          정보 <span className="text-[11px] font-mono">I</span>
         </button>
         <button
           onClick={onToggleFullScreen}
           className={`px-2 ${fullScreen ? "text-accent" : "text-fg-dim"}`}
         >
           {fullScreen ? "창 안에서" : "전체화면"}{" "}
-          <span className="text-[10px] font-mono">\</span>
+          <span className="text-[11px] font-mono">\</span>
         </button>
         <button onClick={onClose} className="text-fg-dim px-2">
-          닫기 <span className="text-[10px] font-mono">Esc</span>
+          닫기 <span className="text-[11px] font-mono">Esc</span>
         </button>
       </div>
 
@@ -301,16 +301,16 @@ export default function Viewer({
           }}
         >
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center text-fg-faint text-[13px] pointer-events-none">
+            <div className="absolute inset-0 flex items-center justify-center text-fg-faint text-[14px] pointer-events-none">
               불러오는 중…
             </div>
           )}
           {failed ? (
-            <div className="flex flex-col items-center gap-2 text-fg-mute text-[13px]">
+            <div className="flex flex-col items-center gap-2 text-fg-mute text-[14px]">
               {isVideo
                 ? "이 앱이 틀 수 없는 영상입니다"
                 : "읽을 수 없는 파일입니다"}
-              <span className="text-[11.5px] text-fg-faint">
+              <span className="text-[12.5px] text-fg-faint">
                 {detail?.name}
               </span>
               {/* WebKit이 H.264·HEVC·VP9까지만 튼다. 나머지(ProRes 등)는 QuickTime에 맡긴다. */}
@@ -320,7 +320,7 @@ export default function Viewer({
                     e.stopPropagation();
                     invoke("open_in_default_app", { id }).catch(() => {});
                   }}
-                  className="mt-1 h-control px-3 rounded-md bg-raised text-fg text-[12px] hover:bg-hover"
+                  className="mt-1 h-control px-3 rounded-md bg-raised text-fg text-[13px] hover:bg-hover"
                 >
                   QuickTime으로 열기
                 </button>
@@ -370,7 +370,7 @@ export default function Viewer({
 
           {/* 영상 배지 — 재생기가 아직 안 떴을 때만. 떴으면 컨트롤이 말해 준다 */}
           {isVideo && !failed && loading && (
-            <span className="absolute bottom-4 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/60 text-fg text-[12px] pointer-events-none">
+            <span className="absolute bottom-4 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/60 text-fg text-[13px] pointer-events-none">
               ▶ 영상
               {detail?.durationMs ? ` · ${fmtDuration(detail.durationMs)}` : ""}
             </span>
@@ -403,7 +403,7 @@ export default function Viewer({
 
         {/* 인스펙터 */}
         {showInfo && detail && (
-          <aside className="w-64 shrink-0 bg-raised border-l border-line p-4 overflow-y-auto text-[12px]">
+          <aside className="w-64 shrink-0 bg-raised border-l border-line p-4 overflow-y-auto text-[13px]">
             <DetailRows detail={detail} />
             <CommentBox
               key={id}
@@ -414,7 +414,7 @@ export default function Viewer({
             <CameraRows detail={detail} />
 
             <Sep />
-            <div className="text-[10.5px] text-fg-mute uppercase tracking-wider mb-2">
+            <div className="text-[11.5px] text-fg-mute uppercase tracking-wider mb-2">
               판정
             </div>
             <div className="flex gap-1 mb-2">
@@ -435,25 +435,25 @@ export default function Viewer({
                 onClick={() =>
                   mark({ cullingFlag: detail.cullingFlag === 1 ? 0 : 1 })
                 }
-                className={`flex-1 h-7 rounded text-[11.5px] font-semibold ${
+                className={`flex-1 h-7 rounded text-[12.5px] font-semibold ${
                   detail.cullingFlag === 1
                     ? "bg-keep text-keep-fg"
                     : "text-fg-dim ring-1 ring-line"
                 }`}
               >
-                남김 <span className="font-mono text-[10px]">P</span>
+                남김 <span className="font-mono text-[11px]">P</span>
               </button>
               <button
                 onClick={() =>
                   mark({ cullingFlag: detail.cullingFlag === 2 ? 0 : 2 })
                 }
-                className={`flex-1 h-7 rounded text-[11.5px] font-semibold ${
+                className={`flex-1 h-7 rounded text-[12.5px] font-semibold ${
                   detail.cullingFlag === 2
                     ? "bg-drop text-drop-fg"
                     : "text-fg-dim ring-1 ring-line"
                 }`}
               >
-                제외 <span className="font-mono text-[10px]">X</span>
+                제외 <span className="font-mono text-[11px]">X</span>
               </button>
             </div>
 
@@ -469,7 +469,7 @@ export default function Viewer({
             <TagEditor id={id} />
 
             <Sep />
-            <div className="text-[10.5px] text-fg-mute leading-relaxed">
+            <div className="text-[11.5px] text-fg-mute leading-relaxed">
               <b className="text-fg-mute">단축키</b>
               <br />← → 이동 · Space 확대 · 0–5 별점
               <br />P 남김 · X 제외 · F 즐겨찾기

@@ -40,7 +40,7 @@ export default function TrashPanel() {
           onClick={() => go(r.library_id)}
         />
       ))}
-      <p className="px-3 pt-3 text-[11px] text-fg-mute leading-snug">
+      <p className="px-3 pt-3 text-[12px] text-fg-mute leading-snug">
         휴지통은 라이브러리마다 따로 있습니다 — 같은 디스크 안 <code>.acut/휴지통</code>.
         되돌리기·영구히 비우기는 지금 보는 라이브러리 것에만 듭니다.
       </p>
@@ -65,13 +65,13 @@ function Row({
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12.5px] ${
+      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[13.5px] ${
         on ? "bg-raised text-fg" : "text-fg-dim hover:text-fg hover:bg-chrome"
       }`}
     >
       <span className="flex-1 text-left truncate">{label}</span>
       <span
-        className={`tabular-nums text-[11px] whitespace-nowrap ${
+        className={`tabular-nums text-[12px] whitespace-nowrap ${
           empty ? "text-fg-mute" : on ? "text-fg" : "text-fg-dim"
         }`}
       >

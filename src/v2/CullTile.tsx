@@ -64,29 +64,29 @@ export default function CullTile<M extends CullMember>({
             </div>
           )}
           {m.is_best && m.culling_flag !== 2 ? (
-            <span className="absolute top-2 left-2 h-5 px-2 rounded bg-keep text-keep-fg text-[11px] font-bold flex items-center">
+            <span className="absolute top-2 left-2 h-5 px-2 rounded bg-keep text-keep-fg text-[12px] font-bold flex items-center">
               ★ 남김
             </span>
           ) : (
-            <span className="absolute top-2 left-2 h-5 px-2 rounded bg-drop/90 text-drop-fg text-[11px] font-bold flex items-center">
+            <span className="absolute top-2 left-2 h-5 px-2 rounded bg-drop/90 text-drop-fg text-[12px] font-bold flex items-center">
               ✕ 제외
             </span>
           )}
           {i < 9 && (
-            <span className="absolute top-2 right-2 w-5 h-5 rounded bg-black/55 text-white text-[11px] flex items-center justify-center tabular-nums">
+            <span className="absolute top-2 right-2 w-5 h-5 rounded bg-black/55 text-white text-[12px] flex items-center justify-center tabular-nums">
               {i + 1}
             </span>
           )}
         </div>
         <div className="flex justify-between items-baseline mt-1.5 gap-2">
-          <span className="text-[11.5px] text-fg-dim truncate">{m.name}</span>
-          <span className="text-[11px] text-fg-mute tabular-nums shrink-0">
+          <span className="text-[12.5px] text-fg-dim truncate">{m.name}</span>
+          <span className="text-[12px] text-fg-mute tabular-nums shrink-0">
             {fmtBytes(m.size)}
           </span>
         </div>
         {/* 어디 있는 사본인가 — 어느 쪽을 남길지는 결국 폴더로 정한다 */}
         <div
-          className={`text-[10.5px] truncate ${
+          className={`text-[11.5px] truncate ${
             m.area === 1 || m.area === 2 ? "text-keep" : "text-fg-mute"
           }`}
           title={`${m.library} / ${m.folder || "/"}`}
@@ -98,14 +98,14 @@ export default function CullTile<M extends CullMember>({
         <div className="flex gap-1.5 mt-1.5 h-7 items-center">
           {m.is_best ? (
             // 이미 남길 사진 — 단추가 아니라 상태. 다른 쪽을 «선택»하면 이쪽이 제외로 바뀐다
-            <span className="text-[12px] text-keep font-semibold">
+            <span className="text-[13px] text-keep font-semibold">
               ★ 남길 사진
             </span>
           ) : (
             <button
               onClick={() => onKeep(m)}
               title="이 사진을 남기고, 지금 ★인 사진을 비롯한 나머지에 제외 표시 — 바로 확정됩니다"
-              className="h-7 px-2.5 rounded-md bg-keep text-keep-fg text-[12px] font-semibold"
+              className="h-7 px-2.5 rounded-md bg-keep text-keep-fg text-[13px] font-semibold"
             >
               선택
             </button>

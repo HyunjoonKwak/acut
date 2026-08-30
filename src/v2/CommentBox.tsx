@@ -34,7 +34,7 @@ export default function CommentBox({
 
   return (
     <div className="pt-2">
-      <div className="text-[10.5px] text-fg-mute uppercase tracking-wider mb-1">
+      <div className="text-[11.5px] text-fg-mute uppercase tracking-wider mb-1">
         코멘트
       </div>
       <textarea
@@ -45,7 +45,7 @@ export default function CommentBox({
         placeholder="이 사진에 대해…"
         rows={2}
         aria-label="코멘트"
-        className="w-full px-1.5 py-1 rounded bg-canvas text-[11.5px] text-fg leading-snug resize-y
+        className="w-full px-1.5 py-1 rounded bg-canvas text-[12.5px] text-fg leading-snug resize-y
           placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
       />
     </div>

@@ -40,7 +40,7 @@ function Key({ children }: { children: React.ReactNode }) {
   if (children === "–" || children === "+")
     return <span className="text-fg-faint px-0.5">{children}</span>;
   return (
-    <kbd className="px-1.5 h-5 min-w-[20px] inline-flex items-center justify-center rounded bg-canvas ring-1 ring-line text-[11px] font-mono text-fg-dim">
+    <kbd className="px-1.5 h-5 min-w-[20px] inline-flex items-center justify-center rounded bg-canvas ring-1 ring-line text-[12px] font-mono text-fg-dim">
       {children}
     </kbd>
   );
@@ -49,7 +49,7 @@ function Key({ children }: { children: React.ReactNode }) {
 function Table({ title, rows }: { title: string; rows: Row[] }) {
   return (
     <div className="min-w-0">
-      <div className="text-[10.5px] uppercase tracking-wider text-fg-mute mb-2">
+      <div className="text-[11.5px] uppercase tracking-wider text-fg-mute mb-2">
         {title}
       </div>
       <div className="space-y-1">
@@ -60,7 +60,7 @@ function Table({ title, rows }: { title: string; rows: Row[] }) {
                 <Key key={i}>{k}</Key>
               ))}
             </span>
-            <span className="text-[12px] text-fg-dim truncate">{r.what}</span>
+            <span className="text-[13px] text-fg-dim truncate">{r.what}</span>
           </div>
         ))}
       </div>
@@ -86,13 +86,13 @@ export default function Shortcuts({ onClose }: { onClose: () => void }) {
           bg-chrome ring-1 ring-line-strong shadow-2xl p-6"
       >
         <div className="flex items-baseline gap-3 mb-5">
-          <span className="text-[15px] font-semibold text-fg">단축키</span>
-          <span className="text-[11.5px] text-fg-mute">
+          <span className="text-[16px] font-semibold text-fg">단축키</span>
+          <span className="text-[12.5px] text-fg-mute">
             찾기 칸에 글을 쓰는 중에는 듣지 않습니다
           </span>
           <div className="flex-1" />
-          <button onClick={onClose} className="text-fg-dim text-[12.5px] px-2">
-            닫기 <span className="text-[10px] font-mono">Esc</span>
+          <button onClick={onClose} className="text-fg-dim text-[13.5px] px-2">
+            닫기 <span className="text-[11px] font-mono">Esc</span>
           </button>
         </div>
         <div className="grid gap-7 sm:grid-cols-3">

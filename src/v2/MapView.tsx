@@ -147,7 +147,7 @@ export default function MapView({ filter }: { filter: Filter }) {
   return (
     <div className="relative h-[42%] min-h-[180px] shrink-0 border-b border-line">
       <div ref={box} className="absolute inset-0 bg-canvas" />
-      <div className="absolute top-2 right-2 z-[500] flex items-center gap-1.5 text-[11.5px]">
+      <div className="absolute top-2 right-2 z-[500] flex items-center gap-1.5 text-[12.5px]">
         {count !== null && (
           <span className="px-2 h-7 rounded-md bg-raised/90 text-fg-dim flex items-center tabular-nums">
             위치 있는 사진 {count.toLocaleString()}장
@@ -171,7 +171,7 @@ export default function MapView({ filter }: { filter: Filter }) {
         )}
       </div>
       {offline && (
-        <div className="absolute left-2 bottom-6 z-[500] px-2 py-1 rounded-md bg-raised/95 text-[11.5px] text-fg-dim">
+        <div className="absolute left-2 bottom-6 z-[500] px-2 py-1 rounded-md bg-raised/95 text-[12.5px] text-fg-dim">
           지도 타일을 못 받았습니다 — 오프라인? 왼쪽 목록으로 고르세요.
         </div>
       )}

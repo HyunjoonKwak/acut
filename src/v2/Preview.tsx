@@ -23,7 +23,7 @@ export default function Preview({
   const [loopVideo] = usePref("loopVideo");
   if (!file) {
     return (
-      <div className="flex-1 flex items-center justify-center text-fg-mute text-[13px]">
+      <div className="flex-1 flex items-center justify-center text-fg-mute text-[14px]">
         위 띠에서 사진을 고르세요
       </div>
     );
@@ -39,7 +39,7 @@ export default function Preview({
       title="두 번 누르면 크게 보기"
     >
       {failed ? (
-        <div className="text-fg-mute text-[13px]">
+        <div className="text-fg-mute text-[14px]">
           읽을 수 없는 파일입니다 — {file.name}
         </div>
       ) : isVideo ? (
@@ -64,7 +64,7 @@ export default function Preview({
         />
       )}
       {isVideo && file.duration_ms ? (
-        <span className="absolute bottom-3 right-3 px-2 py-0.5 rounded bg-black/55 text-fg text-[11px] tabular-nums pointer-events-none">
+        <span className="absolute bottom-3 right-3 px-2 py-0.5 rounded bg-black/55 text-fg text-[12px] tabular-nums pointer-events-none">
           ▶ {fmtDuration(file.duration_ms)}
         </span>
       ) : null}

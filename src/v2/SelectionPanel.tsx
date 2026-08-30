@@ -48,10 +48,10 @@ export default function SelectionPanel({
     return (
       <div className="h-11 shrink-0 flex items-center gap-2 px-3 bg-chrome border-t border-line bar-fixed">
         <div className="w-[176px] shrink-0 flex items-baseline gap-2 tabular-nums overflow-hidden">
-          <span className="text-accent font-semibold text-[13px] whitespace-nowrap">
+          <span className="text-accent font-semibold text-[14px] whitespace-nowrap">
             {picked.size.toLocaleString()}장 선택
           </span>
-          <span className="text-[11.5px] text-fg-mute whitespace-nowrap truncate">{fmtBytes(bytes)}</span>
+          <span className="text-[12.5px] text-fg-mute whitespace-nowrap truncate">{fmtBytes(bytes)}</span>
         </div>
         <Sep />
         <button
@@ -59,7 +59,7 @@ export default function SelectionPanel({
             if (await onRestore?.([...picked])) clearPicked();
           }}
           title="고른 사진을 원래 폴더로 되돌립니다"
-          className="h-control px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px]"
+          className="h-control px-3 rounded-md bg-accent text-accent-fg font-semibold text-[13.5px]"
         >
           되돌리기
         </button>
@@ -68,13 +68,13 @@ export default function SelectionPanel({
             if (await onDelete?.([...picked])) clearPicked();
           }}
           title="고른 사진을 디스크에서 영구히 지웁니다 — 되돌릴 수 없습니다"
-          className="h-control px-3 rounded-md text-drop ring-1 ring-drop text-[12.5px]"
+          className="h-control px-3 rounded-md text-drop ring-1 ring-drop text-[13.5px]"
         >
           영구히 지우기
         </button>
         <div className="flex-1" />
-        <button onClick={clearPicked} className="h-control px-2 rounded-md text-fg-dim text-[12.5px]">
-          선택 해제 <span className="text-[10px] font-mono">Esc</span>
+        <button onClick={clearPicked} className="h-control px-2 rounded-md text-fg-dim text-[13.5px]">
+          선택 해제 <span className="text-[11px] font-mono">Esc</span>
         </button>
       </div>
     );
@@ -85,10 +85,10 @@ export default function SelectionPanel({
       {/* 장수·용량은 폭을 못박는다 — 사진마다 글자 길이가 달라 뒤의 버튼들이
           흔들리면 키보드로 빠르게 넘길 때 어지럽다 */}
       <div className="w-[176px] shrink-0 flex items-baseline gap-2 tabular-nums overflow-hidden">
-        <span className="text-accent font-semibold text-[13px] whitespace-nowrap">
+        <span className="text-accent font-semibold text-[14px] whitespace-nowrap">
           {picked.size.toLocaleString()}장 선택
         </span>
-        <span className="text-[11.5px] text-fg-mute whitespace-nowrap truncate">
+        <span className="text-[12.5px] text-fg-mute whitespace-nowrap truncate">
           {fmtBytes(bytes)}
         </span>
       </div>
@@ -113,7 +113,7 @@ export default function SelectionPanel({
             key={n}
             onClick={() => markPicked({ rating: n })}
             title={`별 ${n}개`}
-            className="w-5 h-6 text-[13px] text-fg-faint hover:text-keep"
+            className="w-5 h-6 text-[14px] text-fg-faint hover:text-keep"
           >
             ★
           </button>
@@ -128,7 +128,7 @@ export default function SelectionPanel({
             ? "옮겨 넣을 라이브러리를 왼쪽에서 고르세요"
             : undefined
         }
-        className="h-control px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
+        className="h-control px-3 rounded-md bg-accent text-accent-fg font-semibold text-[13.5px] disabled:opacity-40"
       >
         {next === null ? "정리" : `${areaLabel(next)}으로 정리`}
       </button>
@@ -136,16 +136,16 @@ export default function SelectionPanel({
         onClick={async () => {
           if (await onTrash([...picked])) clearPicked();
         }}
-        className="h-control px-3 rounded-md text-drop ring-1 ring-drop text-[12.5px]"
+        className="h-control px-3 rounded-md text-drop ring-1 ring-drop text-[13.5px]"
       >
         휴지통으로
       </button>
       <div className="flex-1" />
       <button
         onClick={clearPicked}
-        className="h-control px-2 rounded-md text-fg-dim text-[12.5px]"
+        className="h-control px-2 rounded-md text-fg-dim text-[13.5px]"
       >
-        선택 해제 <span className="text-[10px] font-mono">Esc</span>
+        선택 해제 <span className="text-[11px] font-mono">Esc</span>
       </button>
     </div>
   );
@@ -164,11 +164,11 @@ function PanelBtn({
   return (
     <button
       onClick={onClick}
-      className="h-control px-2.5 rounded-md text-[12.5px] text-fg-dim ring-1 ring-line-strong hover:text-white"
+      className="h-control px-2.5 rounded-md text-[13.5px] text-fg-dim ring-1 ring-line-strong hover:text-white"
     >
       {children}
       {hint && (
-        <span className="ml-1 text-[10px] font-mono text-fg-mute">{hint}</span>
+        <span className="ml-1 text-[11px] font-mono text-fg-mute">{hint}</span>
       )}
     </button>
   );

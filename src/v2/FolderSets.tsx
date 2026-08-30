@@ -49,7 +49,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
       const ok = await ask({
         title: `제외 표시 ${n.toLocaleString()}장을 되돌립니다`,
         lines: ["이 묶음 폴더들의 남김·제외 표시를 미판정으로 돌리고, 닫았던 무리는 개별 비교에 다시 나옵니다", "파일은 그대로입니다"],
-        confirmLabel: "표시 취소",
+        confirmLabel: "표시 지우기",
       });
       if (!ok) return;
       try {
@@ -121,7 +121,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
             ...(risky.length
               ? [`주의: ${risky.map((d) => d.library).join(", ")}은 NAS 동기화 폴더입니다 — 휴지통으로 옮기면 NAS에서도 지워집니다`]
               : []),
-            "파일은 아직 옮기지 않습니다 — 표시한 뒤 위의 «제외한 N장 휴지통으로»를 누르면 옮깁니다",
+            "파일은 아직 옮기지 않습니다 — 표시한 뒤 위의 «N장 휴지통으로»를 누르면 옮깁니다",
           ],
           confirmLabel: "제외 표시",
           danger: risky.length > 0,
@@ -166,7 +166,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
         ...(risky.length > 0
           ? [`주의: ${risky.length.toLocaleString()}묶음은 지워질 쪽에 NAS 동기화 폴더(내사진·공용)가 있습니다 — 휴지통으로 옮기면 NAS에서도 지워집니다`]
           : []),
-        "파일은 아직 옮기지 않습니다 — 표시한 뒤 위의 «제외한 N장 휴지통으로»를 누르면 옮깁니다",
+        "파일은 아직 옮기지 않습니다 — 표시한 뒤 위의 «N장 휴지통으로»를 누르면 옮깁니다",
       ],
       confirmLabel: "제외 표시",
       danger: risky.length > 0,
@@ -188,8 +188,8 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
     }
     toast(
       failed
-        ? `${(todo.length - failed).toLocaleString()}묶음 처리 · ${failed}묶음 실패 (${firstErr})`
-        : `${todo.length.toLocaleString()}묶음 처리했습니다 — 위의 «휴지통으로»로 옮깁니다`,
+        ? `${(todo.length - failed).toLocaleString()}묶음 표시 · ${failed}묶음 실패 (${firstErr})`
+        : `${todo.length.toLocaleString()}묶음 표시했습니다 — 위의 «휴지통으로»로 옮깁니다`,
       failed ? "drop" : "ok",
     );
     setPickedSets(new Set());
@@ -220,7 +220,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
         ...(passed > 0 ? [`${passed.toLocaleString()}묶음은 남길 폴더가 NAS 것이 아니라 건너뜁니다`] : []),
         "파일은 아직 옮기지 않습니다",
       ],
-      confirmLabel: "전부 처리",
+      confirmLabel: "전부 표시",
     });
     if (!ok) return;
     let failed = 0;
@@ -239,8 +239,8 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
     }
     toast(
       failed
-        ? `${(todo.length - failed).toLocaleString()}묶음 처리 · ${failed}묶음 실패 (${firstErr}) — 목록을 새로 읽습니다`
-        : `${todo.length.toLocaleString()}묶음 처리했습니다 — 위의 «휴지통으로»로 옮깁니다`,
+        ? `${(todo.length - failed).toLocaleString()}묶음 표시 · ${failed}묶음 실패 (${firstErr}) — 목록을 새로 읽습니다`
+        : `${todo.length.toLocaleString()}묶음 표시했습니다 — 위의 «휴지통으로»로 옮깁니다`,
       failed ? "drop" : "ok",
     );
     setTick((t) => t + 1);
@@ -278,7 +278,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
           }}
         />
       )}
-      <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[12.5px] bar-fixed">
+      <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-line text-[13.5px] bar-fixed">
         <span className="text-fg-dim tabular-nums">
           완전히 같은 폴더(하위 포함) <b className="text-fg">{sets.length.toLocaleString()}묶음</b>
           {sets.length >= 5000 && <span className="text-drop"> (5,000묶음까지만 보입니다 — 처리하면 다음 묶음이 올라옵니다)</span>}
@@ -304,23 +304,23 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
               onClick={() => unmark(sets)}
               disabled={sweeping}
               title="여기서 붙인 남김·제외 표시를 전부 미판정으로 되돌립니다 — 파일은 그대로"
-              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[13.5px] disabled:opacity-40"
             >
-              표시 취소
+              표시 지우기
             </button>
             <button
               onClick={sweep}
               disabled={sweeping}
               title="여기 나온 폴더 안에서 제외 표시한 사진을 라이브러리 안 휴지통으로 옮깁니다 — 되돌릴 수 있습니다"
-              className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[12.5px] disabled:opacity-40"
+              className="h-7 px-3 rounded-md bg-drop text-drop-fg font-semibold text-[13.5px] disabled:opacity-40"
             >
-              제외한 {flagged.toLocaleString()}장 휴지통으로
+              {flagged.toLocaleString()}장 휴지통으로
             </button>
           </>
         )}
         {pending.length > 0 && (
           <>
-            <label className="flex items-center gap-1.5 text-[12px] cursor-pointer" title="아직 안 한 묶음 전부 고르기/풀기">
+            <label className="flex items-center gap-1.5 text-[13px] cursor-pointer" title="아직 안 한 묶음 전부 고르기/풀기">
               <input
                 type="checkbox"
                 className="accent-accent w-3.5 h-3.5"
@@ -334,17 +334,18 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                 onClick={applyPicked}
                 disabled={sweeping}
                 title="고른 묶음마다 ● 폴더를 남기고 나머지에 제외 표시"
-                className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[12.5px] disabled:opacity-40"
+                className="h-7 px-3 rounded-md bg-accent text-accent-fg font-semibold text-[13.5px] disabled:opacity-40"
               >
-                고른 {pickedSets.size.toLocaleString()}묶음 처리
+                고른 {pickedSets.size.toLocaleString()}묶음 표시
               </button>
             )}
             <button
               onClick={applyAllNas}
               disabled={sweeping}
-              className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12.5px] disabled:opacity-40"
+              title="아직 안 한 묶음 전부 — NAS 동기화 폴더(내사진·공용) 쪽을 남기고 나머지 폴더의 사진에 제외 표시"
+              className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[13.5px] disabled:opacity-40"
             >
-              NAS 것 남기고 전부 처리
+              NAS 쪽 남기고 전부
             </button>
           </>
         )}
@@ -359,14 +360,14 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
               key={key}
               className={`px-4 py-3 border-b border-line ${s.pending ? "" : "opacity-45"}`}
             >
-              <div className="flex items-center gap-3 mb-1.5 text-[12px] text-fg-mute tabular-nums">
+              <div className="flex items-center gap-3 mb-1.5 text-[13px] text-fg-mute tabular-nums">
                 {s.pending && (
                   <input
                     type="checkbox"
                     className="accent-accent w-3.5 h-3.5"
                     checked={pickedSets.has(key)}
                     onChange={() => togglePicked(key)}
-                    title="이 묶음을 골라 위의 «고른 N묶음 처리»로 한 번에"
+                    title="이 묶음을 골라 위의 «고른 N묶음 표시»로 한 번에"
                   />
                 )}
                 <span>
@@ -395,9 +396,10 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                         onChanged();
                       }
                     }}
-                    className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12px]"
+                    title="● 남김 폴더만 남기고 나머지 폴더의 사진에 제외 표시 — 파일은 아직 그대로"
+                    className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[13px]"
                   >
-                    고른 것만 남기고 나머지 제외 표시
+                    나머지 제외
                   </button>
                 )}
               </div>
@@ -407,7 +409,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                     key={f.folder_id}
                     className={`contents cursor-pointer ${s.pending ? "" : "pointer-events-none"}`}
                   >
-                    <span className="flex items-center justify-center w-16 text-[11px]">
+                    <span className="flex items-center justify-center w-16 text-[12px]">
                       <input
                         type="radio"
                         name={`keep-${key}`}
@@ -419,12 +421,12 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                         {k === j ? "남김" : "제외"}
                       </span>
                     </span>
-                    <span className="truncate text-[13px]" title={`${f.library} / ${f.folder || "/"}`}>
+                    <span className="truncate text-[14px]" title={`${f.library} / ${f.folder || "/"}`}>
                       <span className={settled(f) ? "text-keep" : "text-fg-mute"}>{f.library}</span>
                       <span className="text-fg-mute"> · </span>
                       <span className="text-fg">{f.folder || "/"}</span>
                     </span>
-                    <span className="text-[11px] text-fg-mute pl-3 flex items-center gap-2">
+                    <span className="text-[12px] text-fg-mute pl-3 flex items-center gap-2">
                       {settled(f) ? "NAS 동기화 폴더" : ""}
                       {j !== k && s.ids[j].length > 1 && <span className="text-fg-faint">/…</span>}
                       {j !== k && (
@@ -433,7 +435,7 @@ export default function FolderSets({ onChanged }: { onChanged: () => void }) {
                             e.preventDefault();
                             setViewing({ a: s.folders[k], b: f, aIds: s.ids[k], bIds: s.ids[j] });
                           }}
-                          className="h-5 px-1.5 rounded text-[11px] text-fg-dim ring-1 ring-line-strong pointer-events-auto"
+                          className="h-5 px-1.5 rounded text-[12px] text-fg-dim ring-1 ring-line-strong pointer-events-auto"
                           title="남길 폴더(●)와 이 폴더의 사진을 나란히 놓고 직접 봅니다"
                         >
                           보기

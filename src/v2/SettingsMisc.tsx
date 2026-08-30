@@ -77,7 +77,7 @@ export function About() {
         label="에이컷"
         hint="대규모 로컬 라이브러리를 위한 오프라인 우선 사진 관리자. 사진은 원래 자리에 그대로 둡니다."
       >
-        <span className="text-[12.5px] text-fg-mute tabular-nums">
+        <span className="text-[13.5px] text-fg-mute tabular-nums">
           {ver ? `v${ver}` : "—"}
         </span>
       </Row>

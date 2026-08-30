@@ -27,7 +27,7 @@ function Chip({
   return (
     <button
       onClick={onClick}
-      className={`h-control px-2 rounded-md text-[12px] ${
+      className={`h-control px-2 rounded-md text-[13px] ${
         on ? "bg-accent text-accent-fg" : "bg-raised text-fg-dim hover:text-fg"
       }`}
     >
@@ -38,7 +38,7 @@ function Chip({
 
 function Head({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-3 pt-3 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
+    <div className="px-3 pt-3 pb-1 text-[11.5px] uppercase tracking-wider text-fg-mute">
       {children}
     </div>
   );
@@ -86,7 +86,7 @@ export default function SearchPanel({
           }}
           placeholder="AI로 찾기 — «바닷가 강아지» ⏎"
           title="글로 찾습니다. 한국어·영어 다 됩니다. 설정 › AI에서 글로 찾기 모델을 받아야 합니다."
-          className="w-full h-control px-2 rounded-md bg-canvas text-[12px] text-fg
+          className="w-full h-control px-2 rounded-md bg-canvas text-[13px] text-fg
             placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
         />
       </div>
@@ -95,7 +95,7 @@ export default function SearchPanel({
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="파일 이름"
-          className="w-full h-control px-2 rounded-md bg-canvas text-[12px] text-fg
+          className="w-full h-control px-2 rounded-md bg-canvas text-[13px] text-fg
             placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
         />
       </div>

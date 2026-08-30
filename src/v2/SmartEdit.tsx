@@ -101,7 +101,7 @@ export default function SmartEdit({
         className="w-[420px] max-w-[92vw] max-h-[86vh] overflow-y-auto rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl"
       >
         <div className="px-5 pt-5">
-          <div className="text-[15px] font-semibold text-fg">
+          <div className="text-[16px] font-semibold text-fg">
             {initial && initial.id !== 0
               ? "스마트 앨범 고치기"
               : "스마트 앨범 만들기"}
@@ -113,7 +113,7 @@ export default function SmartEdit({
             onKeyDown={(e) => e.key === "Enter" && save()}
             placeholder="이름"
             aria-label="이름"
-            className="mt-3 w-full h-control px-2 rounded-md bg-canvas text-[13px] text-fg
+            className="mt-3 w-full h-control px-2 rounded-md bg-canvas text-[14px] text-fg
               placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
           />
         </div>
@@ -158,7 +158,7 @@ export default function SmartEdit({
 
 function Head({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-5 pt-4 pb-1.5 text-[10.5px] uppercase tracking-wider text-fg-mute">
+    <div className="px-5 pt-4 pb-1.5 text-[11.5px] uppercase tracking-wider text-fg-mute">
       {children}
     </div>
   );
@@ -176,7 +176,7 @@ function Chip({
   return (
     <button
       onClick={onClick}
-      className={`h-control px-2.5 rounded-md text-[12px] ${
+      className={`h-control px-2.5 rounded-md text-[13px] ${
         on ? "bg-accent text-accent-fg" : "bg-raised text-fg-dim hover:text-fg"
       }`}
     >

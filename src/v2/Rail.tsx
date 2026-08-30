@@ -81,7 +81,7 @@ export default function Rail({
         )}
 
         {s.v === "trash" && trashCount > 0 && (
-          <span className="absolute top-0.5 right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-drop text-drop-fg text-[9px] font-bold flex items-center justify-center tabular-nums">
+          <span className="absolute top-0.5 right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-drop text-drop-fg text-[10px] font-bold flex items-center justify-center tabular-nums">
             {trashCount > 99 ? "99+" : trashCount}
           </span>
         )}
@@ -89,7 +89,7 @@ export default function Rail({
         {tooltips && hover === s.v && (
           <span
             className="absolute left-full ml-1.5 z-50 px-2 py-1 rounded-md bg-raised text-fg
-              text-[12px] whitespace-nowrap shadow-lg ring-1 ring-line-strong pointer-events-none"
+              text-[13px] whitespace-nowrap shadow-lg ring-1 ring-line-strong pointer-events-none"
           >
             {s.label}
           </span>

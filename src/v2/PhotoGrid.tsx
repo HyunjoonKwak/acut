@@ -70,10 +70,10 @@ export default function PhotoGrid({
     key: string,
   ) => (
     <div key={key} style={style} className="flex items-baseline gap-2 px-0.5">
-      <span className="text-[13px] font-semibold text-fg">
+      <span className="text-[14px] font-semibold text-fg">
         {headerLabel(label, group)}
       </span>
-      <span className="text-[11.5px] text-fg-mute tabular-nums">
+      <span className="text-[12.5px] text-fg-mute tabular-nums">
         {count.toLocaleString()}장
       </span>
       <div className="flex-1 h-px bg-line" />

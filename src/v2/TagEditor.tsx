@@ -60,7 +60,7 @@ export default function TagEditor({
 
   return (
     <>
-      <div className="text-[10.5px] text-fg-mute uppercase tracking-wider mb-2">
+      <div className="text-[11.5px] text-fg-mute uppercase tracking-wider mb-2">
         태그
       </div>
       {mine.length > 0 && (
@@ -68,7 +68,7 @@ export default function TagEditor({
           {mine.map((t) => (
             <span
               key={t.id}
-              className="group flex items-center gap-1 h-5 pl-1.5 pr-1 rounded bg-chrome text-[11px] text-fg-dim"
+              className="group flex items-center gap-1 h-5 pl-1.5 pr-1 rounded bg-chrome text-[12px] text-fg-dim"
             >
               {t.name}
               <button
@@ -91,7 +91,7 @@ export default function TagEditor({
           if (e.key === "Enter") add(text);
         }}
         placeholder="태그 붙이기"
-        className="w-full h-6 px-1.5 rounded bg-canvas text-[11.5px] text-fg
+        className="w-full h-6 px-1.5 rounded bg-canvas text-[12.5px] text-fg
           placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
       />
       {hint.length > 0 && (
@@ -100,7 +100,7 @@ export default function TagEditor({
             <button
               key={n}
               onClick={() => add(n)}
-              className="h-5 px-1.5 rounded bg-chrome text-[11px] text-fg-mute hover:text-fg"
+              className="h-5 px-1.5 rounded bg-chrome text-[12px] text-fg-mute hover:text-fg"
             >
               {n}
             </button>

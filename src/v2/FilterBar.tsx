@@ -63,7 +63,7 @@ export default function FilterButton({
             autoFocus
             onChange={(e) => setText(e.target.value)}
             placeholder="파일명"
-            className="h-control px-2 rounded-md bg-canvas text-[12.5px] text-fg
+            className="h-control px-2 rounded-md bg-canvas text-[13.5px] text-fg
               placeholder:text-fg-faint outline-none ring-1 ring-line focus:ring-accent"
           />
 
@@ -102,7 +102,7 @@ export default function FilterButton({
                   onClick={() =>
                     set({ min_rating: value.min_rating === n ? null : n })
                   }
-                  className={`w-5 h-6 text-[13px] ${
+                  className={`w-5 h-6 text-[14px] ${
                     (value.min_rating ?? 0) >= n
                       ? "text-keep"
                       : "text-fg-faint hover:text-fg-mute"
@@ -128,7 +128,7 @@ export default function FilterButton({
                 onChange(EMPTY);
                 close();
               }}
-              className="h-control rounded-md text-[12px] text-fg-dim ring-1 ring-line-strong hover:bg-hover"
+              className="h-control rounded-md text-[13px] text-fg-dim ring-1 ring-line-strong hover:bg-hover"
             >
               조건 모두 지우기
             </button>
@@ -148,7 +148,7 @@ function Group({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-[10px] uppercase tracking-[0.08em] text-fg-faint">
+      <span className="text-[11px] uppercase tracking-[0.08em] text-fg-faint">
         {label}
       </span>
       <div className="flex flex-wrap items-center gap-1.5">{children}</div>
@@ -176,7 +176,7 @@ function Chip({
   return (
     <button
       onClick={onClick}
-      className={`h-6 px-2 rounded text-[11.5px] whitespace-nowrap transition-colors ${
+      className={`h-6 px-2 rounded text-[12.5px] whitespace-nowrap transition-colors ${
         on ? active : "text-fg-dim ring-1 ring-line-strong hover:text-fg"
       }`}
     >

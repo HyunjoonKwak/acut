@@ -27,10 +27,10 @@ export default function AreaPickDialog({
   return (
     <div className="fixed inset-0 z-[70] bg-canvas/80 backdrop-blur-sm flex items-center justify-center p-6">
       <div className="w-[460px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
-        <div className="text-[15px] font-semibold text-fg mb-1">
+        <div className="text-[16px] font-semibold text-fg mb-1">
           이 폴더는 어느 영역입니까?
         </div>
-        <div className="text-[12px] text-fg-mute truncate mb-4" title={path}>
+        <div className="text-[13px] text-fg-mute truncate mb-4" title={path}>
           {path}
         </div>
         <div className="flex flex-col gap-1.5 mb-4">
@@ -40,8 +40,8 @@ export default function AreaPickDialog({
               onClick={() => onPick(a.v)}
               className="text-left px-3 py-2 rounded-md ring-1 ring-line hover:ring-accent hover:bg-hover"
             >
-              <div className="text-[13px] text-fg font-medium">{a.label}</div>
-              <div className="text-[11.5px] text-fg-mute">{a.hint}</div>
+              <div className="text-[14px] text-fg font-medium">{a.label}</div>
+              <div className="text-[12.5px] text-fg-mute">{a.hint}</div>
             </button>
           ))}
         </div>

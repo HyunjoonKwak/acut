@@ -68,7 +68,7 @@ export default function Calendar({
   }, [buckets]);
 
   if (years.length === 0) {
-    return <div className="px-3 py-2 text-[12px] text-fg-mute">없음</div>;
+    return <div className="px-3 py-2 text-[13px] text-fg-mute">없음</div>;
   }
 
   const total = years.reduce((a, [, v]) => a + v.count, 0);
@@ -99,19 +99,19 @@ export default function Calendar({
                     return n;
                   })
                 }
-                className="w-5 shrink-0 text-[9px] text-fg-mute hover:text-fg"
+                className="w-5 shrink-0 text-[10px] text-fg-mute hover:text-fg"
               >
                 {expanded ? "▼" : "▶"}
               </button>
               <button
                 onClick={() => onPick(y, null, null)}
-                className={`flex-1 min-w-0 text-left py-1 text-[12.5px] ${
+                className={`flex-1 min-w-0 text-left py-1 text-[13.5px] ${
                   year === y ? "text-fg" : "text-fg-dim"
                 }`}
               >
                 {y}년
               </button>
-              <span className="text-fg-faint tabular-nums text-[11px]">
+              <span className="text-fg-faint tabular-nums text-[12px]">
                 {v.count.toLocaleString()}
               </span>
             </div>
@@ -131,7 +131,7 @@ export default function Calendar({
                       >
                         <button
                           onClick={() => setOpenMonth(expanded ? null : key)}
-                          className="w-8 shrink-0 pl-3 text-left text-[9px] text-fg-mute hover:text-fg"
+                          className="w-8 shrink-0 pl-3 text-left text-[10px] text-fg-mute hover:text-fg"
                         >
                           {expanded ? "▼" : "▶"}
                         </button>
@@ -139,13 +139,13 @@ export default function Calendar({
                           onClick={() =>
                             onPick(y, month === key ? null : key, null)
                           }
-                          className={`flex-1 min-w-0 text-left py-1 text-[12.5px] ${
+                          className={`flex-1 min-w-0 text-left py-1 text-[13.5px] ${
                             month === key ? "text-fg" : "text-fg-dim"
                           }`}
                         >
                           {b.month}월
                         </button>
-                        <span className="text-fg-faint tabular-nums text-[11px]">
+                        <span className="text-fg-faint tabular-nums text-[12px]">
                           {b.count.toLocaleString()}
                         </span>
                       </div>
@@ -191,12 +191,12 @@ function Row({
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center pr-2 py-1 text-[12.5px] ${
+      className={`w-full flex items-center pr-2 py-1 text-[13.5px] ${
         level === 2 ? "pl-12" : level === 1 ? "pl-8" : "pl-3"
       } ${on ? "bg-raised text-fg" : "text-fg-dim hover:text-fg"}`}
     >
       <span className="flex-1 text-left truncate">{label}</span>
-      <span className="text-fg-faint tabular-nums text-[11px]">
+      <span className="text-fg-faint tabular-nums text-[12px]">
         {count.toLocaleString()}
       </span>
     </button>

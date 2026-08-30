@@ -30,12 +30,12 @@ export default function Breadcrumb({
       <div className="flex items-baseline gap-1.5 min-w-0">
         {parts.map((p, i) => (
           <span key={i} className="flex items-baseline gap-1.5 min-w-0">
-            {i > 0 && <span className="text-fg-faint text-[11px]">›</span>}
+            {i > 0 && <span className="text-fg-faint text-[12px]">›</span>}
             <span
               className={`truncate ${
                 i === parts.length - 1
-                  ? "text-fg text-[14px] font-semibold"
-                  : "text-fg-mute text-[12.5px]"
+                  ? "text-fg text-[15px] font-semibold"
+                  : "text-fg-mute text-[13.5px]"
               }`}
               title={p}
             >
@@ -45,12 +45,12 @@ export default function Breadcrumb({
         ))}
       </div>
       {matched > 0 && (
-        <span className="text-fg-mute text-[12px] tabular-nums shrink-0">
+        <span className="text-fg-mute text-[13px] tabular-nums shrink-0">
           {matched.toLocaleString()}장
         </span>
       )}
       {lib && !lib.online && (
-        <span className="text-drop text-[11px] shrink-0">연결 안 됨</span>
+        <span className="text-drop text-[12px] shrink-0">연결 안 됨</span>
       )}
     </div>
   );

@@ -165,7 +165,7 @@ export default function Sidebar({
                 selected={picks.camera ?? null}
                 onPick={(v) => patchPicks({ camera: v })}
               />
-              <div className="px-3 pt-4 pb-1 text-[10.5px] uppercase tracking-wider text-fg-mute">
+              <div className="px-3 pt-4 pb-1 text-[11.5px] uppercase tracking-wider text-fg-mute">
                 렌즈
               </div>
               <FacetList

@@ -6,9 +6,9 @@ import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 
 import { personLabel, type Person } from "./peopleItems";
+import { thumbUrlPath } from "./types";
 
-const url = (thumb: string) =>
-  `thumb://localhost/${thumb.split("/").map(encodeURIComponent).join("/")}`;
+const url = (thumb: string) => thumbUrlPath(thumb);
 
 /**
  * 얼굴 한 칸 — 썸네일에서 얼굴 자리만 오려 보인다.

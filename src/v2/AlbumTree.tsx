@@ -129,23 +129,24 @@ export default function AlbumTree({
                   </button>
                   <span
                     className={`text-fg-mute tabular-nums text-[11px] shrink-0 pl-1.5 ${
-                      root ? "group-hover:invisible" : ""
+                      root ? "pr-14" : ""
                     }`}
                   >
                     {f.file_count.toLocaleString()}
                   </span>
 
+                  {/* 라이브러리 줄의 ⟳·⋯ — 늘 보이고 누를 자리가 넉넉하게(«너무 작고 누르기 힘들다» 2026-08-30) */}
                   {root && lib && (
-                    <div className="absolute right-1 hidden group-hover:flex bg-raised rounded">
+                    <div className="absolute right-1 flex items-center gap-0.5">
                       <button
                         onClick={() => rescan([lib.id])}
                         disabled={!lib.online || busy}
                         title={
                           busy
                             ? "스캔이 도는 중입니다"
-                            : "이 라이브러리 다시 스캔"
+                            : `«${lib.name}» 다시 스캔 — 새 사진을 넣고 사라진 사진의 기록을 정리합니다`
                         }
-                        className="px-1.5 text-fg-mute hover:text-accent disabled:opacity-30"
+                        className="h-6 w-7 rounded-md flex items-center justify-center text-[15px] leading-none text-fg-mute hover:text-accent hover:bg-hover disabled:opacity-30"
                       >
                         ⟳
                       </button>
@@ -154,7 +155,7 @@ export default function AlbumTree({
                           setUi({ menuFor: menuFor === lib.id ? null : lib.id })
                         }
                         title="더 보기"
-                        className="px-1.5 text-fg-mute hover:text-fg"
+                        className="h-6 w-6 rounded-md flex items-center justify-center text-fg-mute hover:text-fg hover:bg-hover"
                       >
                         ⋯
                       </button>

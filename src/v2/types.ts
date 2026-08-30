@@ -116,9 +116,12 @@ export const thumbUrl = (r: {
   thumb: string | null;
   library_id: number | null;
 }): string | null =>
-  r.thumb && r.library_id !== null
-    ? `thumb://localhost/${r.library_id}/${r.thumb
-        .split("/")
-        .map(encodeURIComponent)
-        .join("/")}`
-    : null;
+  r.thumb && r.library_id !== null ? thumbUrlOf(r.library_id, r.thumb) : null;
+
+/** 라이브러리 id + 캐시 상대경로 → thumb:// 주소. 화면 네 곳이 저마다 만들던 것을 하나로 */
+export const thumbUrlOf = (libraryId: number, rel: string): string =>
+  `thumb://localhost/${libraryId}/${rel.split("/").map(encodeURIComponent).join("/")}`;
+
+/** 이미 «라이브러리 id/상대경로» 꼴로 온 것(사람 대표 얼굴 등) */
+export const thumbUrlPath = (path: string): string =>
+  `thumb://localhost/${path.split("/").map(encodeURIComponent).join("/")}`;

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useData } from "./dataStore";
+import { thumbUrlOf } from "./types";
 import { listen } from "@tauri-apps/api/event";
 import Viewer from "./Viewer";
 import { fmtBytes } from "./format";
@@ -102,9 +104,7 @@ export default function Cull({
 
   /// 캐시가 라이브러리마다 따로 있어 주소 앞에 라이브러리 id가 붙는다
   const url = (rel: string | null, libraryId: number | null) =>
-    rel && libraryId !== null
-      ? `thumb://localhost/${libraryId}/${rel.split("/").map(encodeURIComponent).join("/")}`
-      : null;
+    rel && libraryId !== null ? thumbUrlOf(libraryId, rel) : null;
 
   const loadSummary = useCallback(async () => {
     try {
@@ -124,6 +124,9 @@ export default function Cull({
   /// 무리는 200개씩 — 끝에 가까워지면 다음 200개를 이어 붙인다 (처리한 무리는 목록에서 빠지니
   /// 다음 쪽의 offset 은 «지금 들고 있는 미결 수»다)
   const [groupsDone, setGroupsDone] = useState(false);
+  /// «모두 확정»의 범위 — null 이면 전체
+  const [scopeLib, setScopeLib] = useState<number | null>(null);
+  const libs = useData((s) => s.libs);
   const loadingMore = useRef(false);
   const loadGroups = useCallback(async (k: number) => {
     const gen = ++groupsGen.current;
@@ -176,7 +179,7 @@ export default function Cull({
   /// 무리를 한꺼번에 확정한다 — 먼저 세어 보여 주고 묻는다. 정착 구역(내사진·
   /// 공용)에 제외될 사본이 있는 무리는 건너뛴다: 거기서 지우면 NAS에서도 지워진다.
   const applyAll = useCallback(
-    async (folderId: number | null, what: string) => {
+    async (folderId: number | null, what: string, libraryId: number | null = null) => {
       let dry: ApplyAll;
       try {
         dry = await invoke<ApplyAll>("cull_apply_all", {
@@ -184,6 +187,7 @@ export default function Cull({
           skipSettled: true,
           dryRun: true,
           folderId,
+          libraryId,
         });
       } catch (e) {
         toast(String(e), "drop");
@@ -222,6 +226,7 @@ export default function Cull({
         skipSettled: true,
         dryRun: false,
         folderId,
+        libraryId,
       });
       } catch (e) {
         toast(String(e), "drop");
@@ -552,13 +557,29 @@ export default function Cull({
           );
         })}
         {!scanning && (kind === 0 || kind === 1) && groups.length > 0 && (
-          <button
-            onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "")}
-            title="미결 무리를 한꺼번에 확정 — 공용·내사진 안의 사본이 있는 무리는 건너뜁니다"
-            className="h-control px-3 rounded-md text-[12.5px] bg-keep text-keep-fg font-semibold"
-          >
-            모두 확정
-          </button>
+          <span className="flex items-center gap-1.5">
+            {/* 범위 — 제외될 사본이 이 라이브러리에 있는 무리만. «연도별 안 사본만 먼저» 같은 흐름 */}
+            <select
+              value={scopeLib ?? ""}
+              onChange={(e) => setScopeLib(e.target.value === "" ? null : Number(e.target.value))}
+              title="모두 확정의 범위 — 제외될 사본이 이 라이브러리에 있는 무리만"
+              className="h-control rounded-md bg-raised text-fg text-[12px] px-1.5 ring-1 ring-line-strong"
+            >
+              <option value="">전체 라이브러리</option>
+              {libs.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}의 사본만
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "", scopeLib)}
+              title="미결 무리를 한꺼번에 확정 — 공용·내사진 안의 사본이 있는 무리는 건너뜁니다"
+              className="h-control px-3 rounded-md text-[12.5px] bg-keep text-keep-fg font-semibold"
+            >
+              모두 확정
+            </button>
+          </span>
         )}
         {scanning ? (
           // 찾는 중에는 멈출 수 있어야 한다. 해시를 읽느라 오래 걸린다.

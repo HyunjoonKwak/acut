@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { thumbUrlOf } from "./types";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { Filter } from "./viewStore";
@@ -20,10 +21,7 @@ type Cell = {
   thumb: string | null;
 };
 
-const thumbUrl = (c: Cell) =>
-  c.thumb && c.library_id !== null
-    ? `thumb://localhost/${c.library_id}/${c.thumb.split("/").map(encodeURIComponent).join("/")}`
-    : null;
+const thumbUrl = (c: Cell) => (c.thumb && c.library_id !== null ? thumbUrlOf(c.library_id, c.thumb) : null);
 
 /** 타일은 온라인 — 사용자 결정(2026-08-27). 어두운 바탕이 앱과 맞는다. */
 const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";

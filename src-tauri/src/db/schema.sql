@@ -205,7 +205,8 @@ CREATE TABLE IF NOT EXISTS groups (
     reason     TEXT,                           -- '스크린샷' 등 세부 사유
     size_bytes INTEGER NOT NULL DEFAULT 0,     -- 정리하면 확보되는 용량
     state      INTEGER NOT NULL DEFAULT 0,     -- 0 대기 · 1 처리됨 · 2 보류
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    done_at    INTEGER                         -- 처리된 시각 — «처리됨 보기»를 최근 순으로
 );
 CREATE TABLE IF NOT EXISTS group_members (
     group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,

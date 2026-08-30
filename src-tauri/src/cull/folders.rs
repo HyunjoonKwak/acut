@@ -345,7 +345,7 @@ pub fn apply_trees(tx: &Transaction, keep: &[i64], drop: &[i64]) -> rusqlite::Re
     let list = format!("{keep_list},{drop_list}");
     let groups = tx.execute(
         &format!(
-            "UPDATE groups SET state = 1 WHERE kind = 0 AND state = 0
+            "UPDATE groups SET state = 1, done_at = strftime('%s','now') WHERE kind = 0 AND state = 0
                AND id IN (SELECT m.group_id FROM group_members m JOIN files f ON f.id = m.file_id
                           WHERE f.folder_id IN ({list}))
                AND NOT EXISTS (SELECT 1 FROM group_members m JOIN files f ON f.id = m.file_id
@@ -413,7 +413,7 @@ pub fn apply_pair(tx: &Transaction, keep: i64, drop: i64, dry_run: bool) -> rusq
            SELECT file_id FROM group_members WHERE group_id IN (SELECT id FROM temp.todo) AND is_best = 0)",
         [],
     )?;
-    tx.execute("UPDATE groups SET state = 1 WHERE id IN (SELECT id FROM temp.todo)", [])?;
+    tx.execute("UPDATE groups SET state = 1, done_at = strftime('%s','now') WHERE id IN (SELECT id FROM temp.todo)", [])?;
     tx.execute_batch("DROP TABLE temp.todo;")?;
     Ok(ApplyAll { groups, kept, rejected, skipped: 0 })
 }

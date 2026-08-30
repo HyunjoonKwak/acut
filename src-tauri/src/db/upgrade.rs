@@ -12,6 +12,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_trash_columns(c)?;
     add_faces_at(c)?;
     add_image_hash(c)?;
+    add_done_at(c)?;
     add_nas_pulls(c)?;
     rename_old_labels(c)?;
     Ok(())
@@ -57,6 +58,14 @@ fn add_image_hash(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_files_image_hash ON files(image_hash) WHERE image_hash IS NOT NULL;",
     )
+}
+
+/// «처리됨 보기»(2026-08-31) — 확정한 무리를 최근 순으로 다시 보고 무리 단위로 취소한다
+fn add_done_at(c: &Connection) -> rusqlite::Result<()> {
+    if !has_column(c, "groups", "done_at")? {
+        c.execute_batch("ALTER TABLE groups ADD COLUMN done_at INTEGER")?;
+    }
+    Ok(())
 }
 
 fn add_faces_at(c: &Connection) -> rusqlite::Result<()> {
@@ -286,6 +295,19 @@ mod tests {
         })
         .unwrap();
         db.write(|c| c.execute("UPDATE files SET image_hash='abc'", [])).unwrap();
+    }
+
+    #[test]
+    fn done_at_column_is_added_to_an_old_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(include_str!("schema.sql")).unwrap();
+            c.execute_batch("ALTER TABLE groups DROP COLUMN done_at;").unwrap();
+        }
+        let db = Db::open(&path).expect("done_at 전 DB도 열려야 한다");
+        db.write(|c| c.execute("UPDATE groups SET done_at = 1", [])).unwrap();
     }
 
     #[test]

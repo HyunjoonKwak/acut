@@ -20,6 +20,8 @@ type Group = {
   size_bytes: number;
   member_count: number;
   cover: string | null;
+  name: string | null;
+  folder: string | null;
 };
 type Member = {
   file_id: number;
@@ -48,6 +50,8 @@ type Summary = {
   groups: number;
   photos: number;
   reclaimable: number;
+  /** 처리된(확정한) 무리 — «처리됨 보기» */
+  done: number;
 };
 
 const KINDS = [
@@ -121,6 +125,12 @@ export default function Cull({
   const [scopeCounts, setScopeCounts] = useState<Map<number, number>>(new Map());
   /// 방금 확정한 무리들 — «↩ 확정 취소»가 하나씩 되돌린다 (2026-08-31 «취소하고 다시 선택할 방법이 없어»)
   const [undoStack, setUndoStack] = useState<Group[]>([]);
+  /// 처리됨 보기 — 확정한 무리를 최근 순으로 다시 넘겨 보며 무리 단위로 취소한다. 껐다 켜도 남는다
+  const [viewDone, setViewDone] = useState(false);
+  const viewDoneRef = useRef(viewDone);
+  useEffect(() => {
+    viewDoneRef.current = viewDone;
+  }, [viewDone]);
   const loadSummary = useCallback(async () => {
     try {
       setSummary(await invoke<Summary[]>("cull_summary", { libraryId: scopeRef.current }));
@@ -165,6 +175,7 @@ export default function Cull({
         limit: PAGE_GROUPS,
         offset: 0,
         libraryId: scopeRef.current,
+        done: viewDoneRef.current,
       });
     } catch (e) {
       toast(String(e), "drop");
@@ -187,6 +198,7 @@ export default function Cull({
         limit: PAGE_GROUPS,
         offset: groups.length,
         libraryId: scopeRef.current,
+        done: viewDoneRef.current,
       });
       if (gen !== groupsGen.current || k !== kindRef.current) return;
       setGroupsDone(more.length < PAGE_GROUPS);
@@ -290,6 +302,7 @@ export default function Cull({
             limit: PAGE_GROUPS,
             offset: 0,
             libraryId: scopeLib,
+            done: viewDone,
           });
     load.then(
       (g) => {
@@ -302,7 +315,7 @@ export default function Cull({
     return () => {
       live = false;
     };
-  }, [kind, scopeLib]);
+  }, [kind, scopeLib, viewDone]);
 
   // 현재 그룹의 구성원
   const current = groups[idx];
@@ -402,7 +415,9 @@ export default function Cull({
         return;
       }
       setUndoStack((s) => s.filter((x) => x.id !== g.id));
-      setGroups((prev) => [g, ...prev.filter((x) => x.id !== g.id)]);
+      setGroups((prev) =>
+        viewDoneRef.current ? prev.filter((x) => x.id !== g.id) : [g, ...prev.filter((x) => x.id !== g.id)],
+      );
       setIdx(0);
       loadSummary();
     },
@@ -536,6 +551,7 @@ export default function Cull({
     const onKey = (e: KeyboardEvent) => {
       if (viewerAt !== null) return; // 크게 보기가 열려 있으면 뷰어가 키를 가져간다
       if ((kind === -3 || kind === -4) && e.key !== "Escape") return; // 폴더 비교는 제 손잡이가 있다
+      if (viewDone && e.key !== "Escape") return; // 처리됨 보기는 구경 + 취소뿐
       if (e.key === " ") {
         e.preventDefault();
         apply();
@@ -550,7 +566,7 @@ export default function Cull({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [apply, skip, pick, members, onClose, viewerAt, kind]);
+  }, [apply, skip, pick, members, onClose, viewerAt, kind, viewDone]);
 
   /// 크게 본 상태에서 P(남김)를 누르면 그 사진이 이 그룹의 남길 것이 된다
   const viewerMark = useCallback(
@@ -729,7 +745,12 @@ export default function Cull({
             >
               {groups.length === 0
                 ? "0 / 0"
-                : `${idx + 1} / ${Math.max(groups.length, summary.find((x) => x.kind === kind)?.groups ?? 0).toLocaleString()}`}
+                : `${idx + 1} / ${Math.max(
+                    groups.length,
+                    (viewDone
+                      ? summary.find((x) => x.kind === kind)?.done
+                      : summary.find((x) => x.kind === kind)?.groups) ?? 0,
+                  ).toLocaleString()}`}
             </span>
             <div className="w-56 h-1.5 rounded bg-raised overflow-hidden">
               <i
@@ -741,6 +762,22 @@ export default function Cull({
                 }}
               />
             </div>
+            {viewDone && (
+              <span className="h-6 px-2 rounded bg-keep/15 text-keep text-[12.5px] font-semibold flex items-center">
+                처리됨 보기 — 취소만 할 수 있습니다
+              </span>
+            )}
+            {((summary.find((x) => x.kind === kind)?.done ?? 0) > 0 || viewDone) && (
+              <button
+                onClick={() => setViewDone((v) => !v)}
+                title="확정한 무리를 최근 순으로 다시 봅니다 — 앱을 껐다 켜도 남고, «↩ 확정 취소»로 무리 단위로 되돌립니다"
+                className={`h-6 px-2 rounded text-[12.5px] ring-1 ${viewDone ? "bg-raised text-fg ring-line-strong" : "text-fg-dim ring-line-strong"}`}
+              >
+                {viewDone
+                  ? "미결로 돌아가기"
+                  : `처리됨 ${(summary.find((x) => x.kind === kind)?.done ?? 0).toLocaleString()}개 보기`}
+              </button>
+            )}
             {cur && (
               <span className="text-fg-mute">
                 {cur.reason} · {cur.member_count}장 · 확보{" "}
@@ -801,6 +838,21 @@ export default function Cull({
 
       {/* 액션 */}
       <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line bar-fixed">
+        {viewDone && (
+          <>
+            <button
+              onClick={() => cur && void unapplyOne(cur)}
+              disabled={!cur}
+              title="이 무리의 남김·제외 표시를 지우고 미결로 되돌립니다 — 이미 휴지통으로 옮긴 사진은 그대로"
+              className="h-control px-3.5 rounded-lg text-fg-dim text-[14px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
+            >
+              ↩ 확정 취소
+            </button>
+            <span className="text-[13px] text-fg-mute">최근에 확정한 것부터 — 취소하면 미결 목록 맨 앞으로 돌아갑니다</span>
+          </>
+        )}
+        {!viewDone && (
+        <>
         <button
           onClick={apply}
           disabled={!cur}
@@ -839,16 +891,20 @@ export default function Cull({
             </button>
           );
         })()}
+        </>
+        )}
         {/* 긴 설명은 단추의 풍선(title)으로 — 막대엔 핵심 낱말만 (2026-08-30) */}
+        {!viewDone && (
         <span className="text-[13px] text-fg-mute ml-2" title="숫자키를 누르면 그 번호의 사진이 남길 쪽이 됩니다. 두 번 누르면 크게 봅니다">
           숫자키 <span className="font-mono">1–9</span> 남길 쪽 · 두 번 누르면 크게
         </span>
+        )}
         <div className="flex-1" />
       </div>
       {/* 확정한 무리 띠 — 몇 쌍 지나간 뒤에도 특정 쌍만 골라 취소할 수 있게 (2026-08-31).
           이 세션에서 확정한 최근 20개. «다시 찾기» 뒤에는 무리 id 를 못 믿어 비운다 */}
       {undoStack.length > 0 && (
-        <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-chrome/70 border-t border-line overflow-x-auto">
+        <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-chrome/70 border-t border-line overflow-x-auto scroll-thin">
           <span className="shrink-0 text-[13px] text-fg-mute whitespace-nowrap">
             확정한 무리 <b className="text-fg-dim">{undoStack.length}</b>개 — ↩ 로 그것만 취소
           </span>
@@ -856,7 +912,7 @@ export default function Cull({
             <span
               key={g.id}
               className="shrink-0 flex items-center gap-1.5 pl-1.5 pr-1 h-12 rounded-md bg-raised ring-1 ring-line"
-              title={`${g.reason ?? ""} · ${g.member_count}장`}
+              title={`${g.reason ?? ""} · ${g.member_count}장 · ${fmtBytes(g.size_bytes)} 확보${g.name ? `\n${g.name}` : ""}${g.folder ? `\n${g.folder}` : ""}`}
             >
               {g.cover ? (
                 <img src={thumbUrlPath(g.cover)} className="w-9 h-9 object-cover rounded" alt="" />

@@ -28,6 +28,9 @@ pub struct GroupRow {
     pub member_count: i64,
     /// 대표 미리보기용 — 대표 파일의 썸네일 경로
     pub cover: Option<String>,
+    /// 대표 파일 이름·폴더 — 확정 띠의 풍선에 «무슨 사진인지»를 보여 준다
+    pub name: Option<String>,
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,10 +134,14 @@ pub async fn cull_groups(
     offset: usize,
     settled: Option<bool>,
     library_id: Option<i64>,
+    done: Option<bool>,
 ) -> Result<Vec<GroupRow>, String> {
     let limit = limit.clamp(1, 200);
     // 정착 구역(내사진·공용) 안에 제외될 사본이 있는 무리만 — 사람이 하나씩 보는 것
     let settled = settled.unwrap_or(false);
+    // «처리됨 보기» — 확정한 무리를 최근 순으로. 앱을 껐다 켜도 남는다 (2026-08-31)
+    let done = done.unwrap_or(false);
+    let (want_state, order) = if done { (1, "g.done_at DESC, g.id DESC") } else { (0, "g.size_bytes DESC") };
     state
         .db
         .read(|c| {
@@ -146,19 +153,24 @@ pub async fn cull_groups(
                          JOIN folders fo ON fo.id = fi.folder_id
                          JOIN thumbs t ON t.file_id = m.file_id AND t.state = 1
                          WHERE m.group_id = g.id
-                         ORDER BY m.is_best DESC LIMIT 1)
+                         ORDER BY m.is_best DESC LIMIT 1),
+                        (SELECT fi.name FROM group_members m JOIN files fi ON fi.id = m.file_id
+                         WHERE m.group_id = g.id ORDER BY m.is_best DESC, m.file_id LIMIT 1),
+                        (SELECT fo.rel_path FROM group_members m JOIN files fi ON fi.id = m.file_id
+                         JOIN folders fo ON fo.id = fi.folder_id
+                         WHERE m.group_id = g.id ORDER BY m.is_best DESC, m.file_id LIMIT 1)
                  FROM groups g
-                 WHERE g.kind = ?1 AND g.state = 0
+                 WHERE g.kind = ?1 AND g.state = ?6
                    AND (?4 = 0 OR EXISTS (
                          SELECT 1 FROM group_members m JOIN files fi ON fi.id = m.file_id
                          JOIN folders fo ON fo.id = fi.folder_id
                          WHERE m.group_id = g.id AND m.is_best = 0 AND fo.area IN (1, 2)))
                    AND {SCOPE}
-                 ORDER BY g.size_bytes DESC
+                 ORDER BY {order}
                  LIMIT ?2 OFFSET ?3"
             ))?;
             let it = st.query_map(
-                rusqlite::params![kind, limit as i64, offset as i64, settled as i32, library_id],
+                rusqlite::params![kind, limit as i64, offset as i64, settled as i32, library_id, want_state],
                 |r| {
                     Ok(GroupRow {
                         id: r.get(0)?,
@@ -168,6 +180,8 @@ pub async fn cull_groups(
                         state: r.get(4)?,
                         member_count: r.get(5)?,
                         cover: r.get(6)?,
+                        name: r.get(7)?,
+                        folder: r.get(8)?,
                     })
                 },
             )?;
@@ -467,6 +481,8 @@ pub struct CullSummary {
     pub groups: i64,
     pub photos: i64,
     pub reclaimable: i64,
+    /// 처리된(확정한) 무리 수 — «처리됨 보기» 토글에 붙는다
+    pub done: i64,
 }
 
 /// 세 갈래의 현재 상태. 화면 상단에 "중복 1,956 · 같은순간 5,700" 식으로 쓴다.
@@ -481,10 +497,13 @@ pub async fn cull_summary(
             // 범위를 걸면 장수도 그 무리들의 것이어야 한다 — 머리 숫자와 넘겨 보는 무리를 맞춘다
             let scope = SCOPE.replace("?5", "?1");
             let mut st = c.prepare(&format!(
-                "SELECT g.kind, COUNT(DISTINCT g.id),
-                        COALESCE(SUM((SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id)),0),
-                        COALESCE(SUM(g.size_bytes),0)
-                 FROM groups g WHERE g.state = 0 AND {scope} GROUP BY g.kind ORDER BY g.kind"
+                "SELECT g.kind,
+                        COALESCE(SUM(g.state = 0),0),
+                        COALESCE(SUM(CASE WHEN g.state = 0 THEN
+                          (SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id) ELSE 0 END),0),
+                        COALESCE(SUM(CASE WHEN g.state = 0 THEN g.size_bytes ELSE 0 END),0),
+                        COALESCE(SUM(g.state = 1),0)
+                 FROM groups g WHERE {scope} GROUP BY g.kind ORDER BY g.kind"
             ))?;
             let it = st.query_map([library_id], |r| {
                 Ok(CullSummary {
@@ -492,6 +511,7 @@ pub async fn cull_summary(
                     groups: r.get(1)?,
                     photos: r.get(2)?,
                     reclaimable: r.get(3)?,
+                    done: r.get(4)?,
                 })
             })?;
             it.collect::<rusqlite::Result<Vec<_>>>()

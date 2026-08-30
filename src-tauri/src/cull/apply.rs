@@ -51,7 +51,7 @@ pub fn apply_groups(tx: &Transaction, group_ids: &[i64]) -> rusqlite::Result<(us
                 [gid],
             )?;
         }
-        tx.execute("UPDATE groups SET state = 1 WHERE id = ?1", [gid])?;
+        tx.execute("UPDATE groups SET state = 1, done_at = strftime('%s','now') WHERE id = ?1", [gid])?;
     }
     Ok((kept, rejected))
 }
@@ -68,7 +68,7 @@ pub fn unapply_groups(tx: &Transaction, group_ids: &[i64]) -> rusqlite::Result<u
                AND id IN (SELECT file_id FROM group_members WHERE group_id = ?1)",
             [gid],
         )?;
-        tx.execute("UPDATE groups SET state = 0 WHERE id = ?1", [gid])?;
+        tx.execute("UPDATE groups SET state = 0, done_at = NULL WHERE id = ?1", [gid])?;
     }
     Ok(n)
 }
@@ -189,7 +189,7 @@ pub fn apply_all(
                 [],
             )?;
         } else {
-            tx.execute("UPDATE groups SET state = 1 WHERE id IN (SELECT id FROM temp.todo)", [])?;
+            tx.execute("UPDATE groups SET state = 1, done_at = strftime('%s','now') WHERE id IN (SELECT id FROM temp.todo)", [])?;
         }
     }
     tx.execute_batch("DROP TABLE temp.todo;")?;

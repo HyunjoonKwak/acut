@@ -25,9 +25,19 @@ const pair = (o: Partial<PairRow>): PairRow => ({
   flagged_b: 0,
   b_in_a: true,
   a_in_b: true,
+  kept_a: 0,
+  kept_b: 0,
   a_ids: [1],
   b_ids: [2],
   ...o,
+});
+
+test("«남김»이 붙은 쪽은 제외 후보가 아니다 — 남김은 결정", () => {
+  const r = pair({ same: false, b_in_a: false, a_in_b: true, kept_a: 3, files_a: 3, files_b: 8 });
+  assert.equal(droppable(r, "a"), false, "A쪽에 남김이 있으면 A쪽 제외를 권하지 않는다");
+  assert.equal(verdict(r).text, "A쪽 사진이 B쪽에 다 있음 — A쪽은 남김");
+  assert.equal(droppable(pair({ kept_b: 1 }), "b"), false);
+  assert.equal(droppable(pair({ kept_b: 1 }), "a"), true, "반대쪽은 그대로");
 });
 
 test("한쪽이 다른 쪽에 다 들어 있으면 그쪽만 지울 수 있다 — 하위 폴더까지 합쳐 본 결과", () => {

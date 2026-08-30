@@ -199,9 +199,8 @@ pub fn apply_set(tx: &Transaction, keep: i64, drops: &[i64]) -> rusqlite::Result
 /// 폴더까지 통째로 짝지을 때 쓴다. 제외는 **남길 쪽 나무 어딘가에 같은 내용이 지금 있는**
 /// 파일에만 붙는다 — 남길 쪽에 없는 사진이 지워지는 일은 없다 (리뷰 C12).
 ///
-/// 제외할 쪽에 이미 «남김»(1)이 붙어 있어도 내린다: 그 남김은 대개 앞선 짝에서 이 폴더가
-/// 남는 쪽이었을 때 자동으로 붙은 것이고, 사용자가 목록을 보고 «이쪽을 제외»라고 확정한
-/// 자리다. 안 내리면 그 폴더가 «아직 안 한 것»으로 영영 되돌아온다 (실측 2026-08-30, 2개 폴더)
+/// 이미 «남김»(1)인 파일은 내리지 않는다 — 남김은 결정이다. 남김이 붙은 폴더는 비교 화면이
+/// 애초에 제외 후보로 올리지 않는다(`kept_a`/`kept_b`). 지우고 싶으면 먼저 «표시 취소»
 pub fn apply_trees(tx: &Transaction, keep: &[i64], drop: &[i64]) -> rusqlite::Result<ApplyAll> {
     if keep.is_empty() || drop.is_empty() || keep.iter().any(|k| drop.contains(k)) {
         return Err(rusqlite::Error::InvalidQuery);
@@ -215,7 +214,7 @@ pub fn apply_trees(tx: &Transaction, keep: &[i64], drop: &[i64]) -> rusqlite::Re
     let rejected = tx.execute(
         &format!(
             "UPDATE files SET culling_flag = 2
-             WHERE folder_id IN ({drop_list}) AND trashed_at IS NULL AND culling_flag <> 2
+             WHERE folder_id IN ({drop_list}) AND trashed_at IS NULL AND culling_flag <> 1
                AND full_hash IS NOT NULL
                AND full_hash IN (SELECT k.full_hash FROM files k
                                  WHERE k.folder_id IN ({keep_list}) AND k.trashed_at IS NULL AND k.full_hash IS NOT NULL)"
@@ -370,6 +369,9 @@ pub struct PairRow {
     /// 이미 제외 표시된 파일 수 — 한쪽이 전부면 그 짝은 «처리됨»
     pub flagged_a: i64,
     pub flagged_b: i64,
+    /// «남김»이 붙은 파일 수 — 남김은 결정이라 그쪽은 제외 후보가 아니다
+    pub kept_a: i64,
+    pub kept_b: i64,
     /// B 쪽 사진이 전부 A 쪽(하위 폴더 포함)에 있다 — B 를 지워도 잃는 것이 없다
     pub b_in_a: bool,
     /// A 쪽 사진이 전부 B 쪽에 있다
@@ -387,6 +389,8 @@ struct Agg {
     bytes: i64,
     /// culling_flag = 2 인 파일 수
     flagged: i64,
+    /// culling_flag = 1 인 파일 수
+    kept: i64,
     hashes: Vec<String>,
     all_hashed: bool,
     has_children: bool,
@@ -398,7 +402,7 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<(Vec<
     let esc = crate::db::query::escape_like(rel);
     let mut st = c.prepare(
         "SELECT fo.id, fo.rel_path, fo.area, l.id, l.name, l.rel_path, f.full_hash, f.size,
-                f.culling_flag = 2
+                f.culling_flag = 2, f.culling_flag = 1
          FROM folders fo
          JOIN libraries l ON l.id = fo.library_id
          LEFT JOIN files f ON f.folder_id = fo.id AND f.trashed_at IS NULL
@@ -417,10 +421,11 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<(Vec<
             r.get::<_, Option<String>>(6)?,
             r.get::<_, Option<i64>>(7)?,
             r.get::<_, Option<bool>>(8)?.unwrap_or(false),
+            r.get::<_, Option<bool>>(9)?.unwrap_or(false),
         ))
     })?;
     for row in rows {
-        let (id, fo_rel, area, lib_id, lib_name, lib_rel, hash, size, flagged) = row?;
+        let (id, fo_rel, area, lib_id, lib_name, lib_rel, hash, size, flagged, kept) = row?;
         if out.last().map(|a| a.info.folder_id) != Some(id) {
             let sub = fo_rel
                 .strip_prefix(rel)
@@ -438,6 +443,7 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<(Vec<
                 files: 0,
                 bytes: 0,
                 flagged: 0,
+                kept: 0,
                 hashes: Vec::new(),
                 all_hashed: true,
                 has_children: false,
@@ -448,6 +454,7 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<(Vec<
             cur.files += 1;
             cur.bytes += size;
             cur.flagged += flagged as i64;
+            cur.kept += kept as i64;
             match hash {
                 Some(h) => cur.hashes.push(h),
                 None => cur.all_hashed = false,
@@ -496,6 +503,7 @@ struct Tree {
     files: i64,
     bytes: i64,
     flagged: i64,
+    kept: i64,
     counts: HashMap<String, i64>,
     all_hashed: bool,
 }
@@ -505,12 +513,13 @@ fn tree_of(aggs: &[Agg], root: usize) -> Tree {
     let members: Vec<usize> = (0..aggs.len())
         .filter(|&i| i == root || sub.is_empty() || aggs[i].sub.starts_with(&format!("{sub}/")))
         .collect();
-    let mut t = Tree { members: Vec::new(), files: 0, bytes: 0, flagged: 0, counts: HashMap::new(), all_hashed: true };
+    let mut t = Tree { members: Vec::new(), files: 0, bytes: 0, flagged: 0, kept: 0, counts: HashMap::new(), all_hashed: true };
     for &i in &members {
         let g = &aggs[i];
         t.files += g.files;
         t.bytes += g.bytes;
         t.flagged += g.flagged;
+        t.kept += g.kept;
         t.all_hashed &= g.all_hashed;
         for h in &g.hashes {
             *t.counts.entry(h.clone()).or_default() += 1;
@@ -574,6 +583,8 @@ pub fn compare_two(
                     bytes: 0,
                     flagged_a: ga.flagged,
                     flagged_b: 0,
+                    kept_a: ga.kept,
+                    kept_b: 0,
                     b_in_a: false,
                     a_in_b: false,
                     a_ids: vec![ga.info.folder_id],
@@ -609,6 +620,8 @@ pub fn compare_two(
                 bytes: if b_in_a && a_in_b { ta.bytes.min(tb.bytes) } else if b_in_a { tb.bytes } else { ta.bytes },
                 flagged_a: ta.flagged,
                 flagged_b: tb.flagged,
+                kept_a: ta.kept,
+                kept_b: tb.kept,
                 b_in_a,
                 a_in_b,
                 a_ids: ta.members.iter().map(|&i| a[i].info.folder_id).collect(),
@@ -649,6 +662,8 @@ pub fn compare_two(
             bytes,
             flagged_a: ga.flagged,
             flagged_b: gb.flagged,
+            kept_a: ga.kept,
+            kept_b: gb.kept,
             b_in_a: false,
             a_in_b: false,
             a_ids: vec![ga.info.folder_id],
@@ -669,6 +684,8 @@ pub fn compare_two(
             bytes: 0,
             flagged_a: 0,
             flagged_b: gb.flagged,
+            kept_a: 0,
+            kept_b: gb.kept,
             b_in_a: false,
             a_in_b: false,
             a_ids: Vec::new(),
@@ -917,9 +934,10 @@ mod tests {
         assert_eq!(db.transaction(|tx| unapply_folders(tx, &[])).unwrap(), (0, 0));
     }
 
-    /// 앞선 짝에서 자동으로 붙은 «남김»은 사용자가 그 폴더를 제외하기로 하면 내려간다
+    /// «남김»은 결정 — 앞선 짝에서 붙은 남김이 있는 폴더는 다시 제외되지 않고, 비교 화면도
+    /// 그쪽을 제외 후보로 올리지 않는다(kept_a/kept_b)
     #[test]
-    fn a_tree_drop_overrides_an_earlier_automatic_keep() {
+    fn a_kept_tree_is_not_demoted_and_not_offered() {
         let (_d, db) = setup();
         let sets = db.read(|c| identical_sets(c, 100)).unwrap();
         let s = &sets[0];
@@ -930,17 +948,22 @@ mod tests {
             .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE folder_id = ?1 AND culling_flag = 1", [a_id], |r| r.get(0)))
             .unwrap();
         assert_eq!(kept, 2);
-        // 2) 생각이 바뀌어 c 를 남기고 a 를 제외 — a 의 «남김»이 «제외»로 내려가야 한다
+        // 2) c 를 남기고 a 를 제외하려 해도 a 의 «남김»은 내려가지 않는다
         let r = db.transaction(|tx| apply_trees(tx, &[c_id], &[a_id])).unwrap();
-        assert_eq!(r.rejected, 2, "{r:?}");
-        let flags: Vec<i64> = db
+        assert_eq!(r.rejected, 0, "{r:?}");
+        // 비교 화면도 a 쪽을 후보로 안 올린다 — kept_a 가 보인다
+        let (vol, a_rel, c_rel): (String, String, String) = db
             .read(|c| {
-                let mut st = c.prepare("SELECT culling_flag FROM files WHERE folder_id = ?1 ORDER BY name")?;
-                let it = st.query_map([a_id], |r| r.get(0))?;
-                it.collect()
+                let vol: String = c.query_row("SELECT volume_uuid FROM folders WHERE id = ?1", [a_id], |r| r.get(0))?;
+                let a_rel: String = c.query_row("SELECT rel_path FROM folders WHERE id = ?1", [a_id], |r| r.get(0))?;
+                let c_rel: String = c.query_row("SELECT rel_path FROM folders WHERE id = ?1", [c_id], |r| r.get(0))?;
+                Ok((vol, a_rel, c_rel))
             })
             .unwrap();
-        assert_eq!(flags, vec![2, 2]);
+        let rows = db.read(|c| compare_two(c, (&vol, &a_rel), (&vol, &c_rel))).unwrap().rows;
+        assert_eq!(rows.len(), 1);
+        // 2)에서 c 가 남는 쪽이 됐으니 c 에도 «남김» — 양쪽 다 남김이면 어느 쪽도 후보가 아니다
+        assert!(rows[0].same && rows[0].kept_a == 2 && rows[0].kept_b == 2, "{:?}", rows[0]);
     }
 
     #[test]

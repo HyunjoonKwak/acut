@@ -205,6 +205,30 @@ export function useScanEvents(cb: {
       job().clear();
       toast(`옮기기 실패 — ${e}`, "drop");
     });
+    // 폴더 합치기 — 두 폴더 비교의 «B 폴더를 A 로 합치기»
+    on<{ done: number; total: number }>("merge-progress", (p) =>
+      job().progress({ label: "폴더 합치는 중", done: p.done, total: p.total }),
+    );
+    on<{ moved: number; failed: number; first_error: string | null; folders_removed?: number }>(
+      "merge-done",
+      async (o) => {
+        job().clear();
+        toast(
+          o.failed > 0
+            ? `${o.moved.toLocaleString()}장 옮김 · ${o.failed}장 실패 — ${o.first_error ?? ""}`
+            : `${o.moved.toLocaleString()}장을 합쳤습니다${(o.folders_removed ?? 0) > 0 ? ` · 빈 폴더 ${o.folders_removed}개 지움` : ""} — ⌘Z 로 되돌릴 수 있습니다`,
+          o.failed > 0 ? "drop" : "ok",
+        );
+        await useData.getState().refreshLibs();
+        useData.getState().loadFolders();
+        ref.current.reload();
+        ref.current.refreshMeta();
+      },
+    );
+    on<string>("merge-error", (e) => {
+      job().clear();
+      toast(`폴더 합치기 실패 — ${e}`, "drop");
+    });
     // NAS — 내려받기·비우기·XMP
     on<{ done: number; total: number; percent: number }>(
       "nas-pull-progress",

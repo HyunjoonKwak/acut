@@ -4,6 +4,7 @@ import { fmtBytes } from "./format";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { doneSide, droppable, overlaps, verdict, type FolderHit, type PairRow } from "./twoFoldersLogic";
 import PairView from "./PairView";
 
@@ -156,6 +157,54 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     () => reviewRows.filter((r) => !review?.unchecked.has(rowKey(r))),
     [reviewRows, review],
   );
+  /// 폴더 합치기 — 사본을 다 뺀 뒤 B 나무를 A 안으로. 끝나면 목록을 새로 읽는다
+  const [merging, setMerging] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const subs = [
+      listen("merge-done", () => {
+        if (!alive) return;
+        setMerging(false);
+        onChanged();
+        setTick((t) => t + 1);
+      }),
+      listen("merge-error", () => alive && setMerging(false)),
+    ];
+    return () => {
+      alive = false;
+      subs.forEach((p) => p.then((f) => f()));
+    };
+  }, [onChanged]);
+  const merge = useCallback(async () => {
+    if (!a || !b || !rows) return;
+    if (a.library_id !== b.library_id) {
+      toast("같은 라이브러리 안의 폴더끼리만 합칠 수 있습니다", "drop");
+      return;
+    }
+    const bFiles = rows.reduce((s, r) => s + (r.b ? r.files_b : 0), 0);
+    const ok = await ask({
+      title: `«${b.path || "/"}» 폴더를 «${a.path || "/"}» 안으로 합칩니다`,
+      lines: [
+        `· B 의 사진 ${bFiles.toLocaleString()}장을 A 의 같은 자리 폴더로 옮깁니다 (하위 폴더 구조 그대로)`,
+        "· 같은 이름의 사진이 있으면 «이름 (2)»로 두고 덮어쓰지 않습니다",
+        "· 비어 버린 B 폴더는 디스크에서 지웁니다 · ⌘Z 로 되돌릴 수 있습니다",
+        ...(twinCount > 0
+          ? [`주의: B 에는 A 에도 있는 사진 ${twinCount.toLocaleString()}장이 아직 남아 있습니다 — 그대로 합치면 사본이 «(2)»로 쌓입니다. 먼저 ②에서 빼는 게 좋습니다`]
+          : []),
+      ],
+      confirmLabel: "합치기",
+      danger: twinCount > 0,
+    });
+    if (!ok) return;
+    setMerging(true);
+    try {
+      await invoke("folder_merge", { libraryId: a.library_id, srcRel: b.vol_rel, dstRel: a.vol_rel });
+    } catch (e) {
+      setMerging(false);
+      toast(String(e), "drop");
+    }
+  }, [a, b, rows, ask, twinCount]);
+
   /// 한쪽에만 있는 폴더는 비교할 것이 없다 — 기본은 양쪽에 있는 폴더만 (사용자 요청 2026-08-30)
   const [onlyBoth, setOnlyBoth] = useState(true);
   const bothRows = useMemo(() => (rows ?? []).filter((r) => r.a && r.b), [rows]);
@@ -187,7 +236,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   /// 이 비교에 나온 폴더들 안에서 제외 표시된 장수 — 표시했으면 여기서 바로 치운다
   const flagged = useMemo(() => (rows ?? []).reduce((s, r) => s + r.flagged_a + r.flagged_b, 0), [rows]);
   const [sweeping, setSweeping] = useState(false);
-  const locked = busy || marking !== null || sweeping;
+  const locked = busy || marking !== null || sweeping || merging;
 
   /// 표시한 것을 휴지통으로 — 세 화면을 건너다니지 않게 비교 화면 안에서 끝낸다.
   /// 라이브러리 전체가 아니라 이 비교의 폴더들만
@@ -267,6 +316,19 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
               <> · A쪽 사진이 B쪽에 다 있음 {rows.filter((r) => r.a_in_b && !r.same).length.toLocaleString()}</>
             )}
           </span>
+        )}
+        {rows && !review && (
+          <>
+            <div className="flex-1" />
+            <button
+              onClick={merge}
+              disabled={locked}
+              title="B 나무의 사진을 A 의 같은 자리 폴더로 옮깁니다 — 사본을 먼저 뺀 뒤에. ⌘Z 로 되돌릴 수 있습니다"
+              className="h-7 px-3 rounded-md text-fg-dim ring-1 ring-line-strong text-[12.5px] disabled:opacity-40"
+            >
+              {merging ? "합치는 중…" : "B 폴더를 A 로 합치기"}
+            </button>
+          </>
         )}
       </div>
 

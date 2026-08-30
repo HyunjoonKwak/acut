@@ -1183,6 +1183,35 @@ pub async fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64
     Ok(())
 }
 
+/// 폴더 합치기 — `src_rel` 나무를 같은 라이브러리의 `dst_rel` 안으로. 진행 `merge-progress`, 끝 `merge-done`.
+#[tauri::command]
+pub async fn folder_merge(app: AppHandle, library_id: i64, src_rel: String, dst_rel: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let Some(guard) = job::try_start(&state.running, "에이컷 폴더 합치기") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
+    let db = Arc::clone(&state.db);
+    let cancel = Arc::clone(&state.cancel);
+    cancel.store(false, Ordering::Relaxed);
+    std::thread::spawn(move || {
+        let _guard = guard;
+        let handle = app.clone();
+        let r = crate::ops::merge::merge_tree(&db, library_id, &src_rel, &dst_rel, &cancel, |p| {
+            let _ = handle.emit("merge-progress", p);
+        });
+        app.state::<AppState>().forget_dirs();
+        match r {
+            Ok(o) => {
+                let _ = app.emit("merge-done", &o);
+            }
+            Err(e) => {
+                let _ = app.emit("merge-error", e.to_string());
+            }
+        }
+    });
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct StartupInfo {
     /// 프로세스 시작 → DB 준비

@@ -412,7 +412,7 @@ pub struct PairIds {
 /// 폴더 비교 — 내용이 완전히 같은 폴더 묶음들.
 #[tauri::command]
 pub async fn cull_folder_sets(state: State<'_, AppState>) -> Result<Vec<folders::FolderSet>, String> {
-    state.db.read(|c| folders::identical_sets(c, 500)).map_err(err)
+    state.db.read(|c| folders::identical_sets(c, 5000)).map_err(err)
 }
 
 /// 두 폴더 비교 — A·B 아래 폴더들을 내용으로 짝짓는다.

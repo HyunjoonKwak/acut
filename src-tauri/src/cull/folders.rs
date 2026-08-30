@@ -1404,8 +1404,25 @@ mod tests {
         )
         .unwrap();
         let vol: String = c
-            .query_row("SELECT volume_uuid FROM libraries WHERE name = '통합전후보'", [], |r| r.get(0))
-            .unwrap();
+            .query_row("SELECT volume_uuid FROM libraries WHERE name IN ('통합전후보', '로컬사진통합자료') LIMIT 1", [], |r| r.get(0))
+            .unwrap_or_default();
+        if std::env::var_os("ACUT_SETS").is_some() {
+            let sets = identical_sets(&c, 5000).unwrap();
+            let pending: Vec<&FolderSet> = sets.iter().filter(|s| s.pending).collect();
+            eprintln!("sets {} pending {}", sets.len(), pending.len());
+            for s in pending.iter().take(12) {
+                let names: Vec<String> = s.folders.iter().map(|f| format!("{}·{}{}", f.library, f.folder, if f.area == 1 || f.area == 2 { "(NAS)" } else { "" })).collect();
+                let kept: i64 = c
+                    .query_row(
+                        &format!("SELECT COUNT(*) FROM files WHERE folder_id IN ({}) AND trashed_at IS NULL AND culling_flag = 1", s.ids.iter().flatten().map(i64::to_string).collect::<Vec<_>>().join(",")),
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                eprintln!("  {}장 flagged {} kept {} | {}", s.files, s.flagged, kept, names.join(" ⇔ "));
+            }
+            return;
+        }
         let a_root = std::env::var("ACUT_A").unwrap_or_else(|_| "통합전후보/후보1번/연도별".into());
         let b_root = std::env::var("ACUT_B").unwrap_or_else(|_| "통합전후보/후보2번".into());
         let r = compare_two(&c, (&vol, &a_root), (&vol, &b_root)).unwrap();

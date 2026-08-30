@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
+import { thumbUrlPath } from "./types";
 import CullTile from "./CullTile";
 import { listen } from "@tauri-apps/api/event";
 import Viewer from "./Viewer";
@@ -391,6 +392,23 @@ export default function Cull({
     setIdx((i) => Math.max(0, Math.min(i, groups.length - 2)));
   }, [idx, groups.length]);
 
+  /// 확정 하나를 골라 되돌린다 — 표시를 지우고 그 무리를 목록 맨 앞에 되살린다
+  const unapplyOne = useCallback(
+    async (g: Group) => {
+      try {
+        await invoke("cull_unapply", { groupIds: [g.id] });
+      } catch (e) {
+        toast(String(e), "drop");
+        return;
+      }
+      setUndoStack((s) => s.filter((x) => x.id !== g.id));
+      setGroups((prev) => [g, ...prev.filter((x) => x.id !== g.id)]);
+      setIdx(0);
+      loadSummary();
+    },
+    [loadSummary],
+  );
+
   const apply = useCallback(async () => {
     const g = groups[idx];
     if (!g) return;
@@ -618,7 +636,7 @@ export default function Cull({
                 <option value="">전체 라이브러리</option>
                 {libs.map((l) => (
                   <option key={l.id} value={l.id}>
-                    {l.name}의 사본만 ({(scopeCounts.get(l.id) ?? 0).toLocaleString()})
+                    {l.name} 쪽을 지울 것만 ({(scopeCounts.get(l.id) ?? 0).toLocaleString()})
                   </option>
                 ))}
               </select>
@@ -626,7 +644,7 @@ export default function Cull({
             {groups.length > 0 && (
               <button
                 onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "", scopeLib)}
-                title={`${scopeLib === null ? "전체 라이브러리" : `${libs.find((l) => l.id === scopeLib)?.name ?? ""}의 사본만`} — 미결 무리를 한꺼번에 확정합니다. 공용·내사진 안의 사본이 있는 무리는 건너뜁니다`}
+                title={`${scopeLib === null ? "전체 라이브러리" : `${libs.find((l) => l.id === scopeLib)?.name ?? ""} 쪽을 지울 무리만`} — 한꺼번에 확정합니다. 공용·내사진 안의 사본이 있는 무리는 건너뜁니다`}
                 className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
               >
                 모두 확정
@@ -826,28 +844,37 @@ export default function Cull({
           숫자키 <span className="font-mono">1–9</span> 남길 쪽 · 두 번 누르면 크게
         </span>
         <div className="flex-1" />
-        {undoStack.length > 0 && (
-          <button
-            onClick={async () => {
-              const g = undoStack[0];
-              try {
-                await invoke("cull_unapply", { groupIds: [g.id] });
-              } catch (e) {
-                toast(String(e), "drop");
-                return;
-              }
-              setUndoStack((s) => s.slice(1));
-              setGroups((prev) => [g, ...prev.filter((x) => x.id !== g.id)]);
-              setIdx(0);
-              loadSummary();
-            }}
-            title="방금 확정한 무리의 남김·제외 표시를 지우고 그 무리를 다시 보여 줍니다 — 이미 휴지통으로 옮긴 사진은 그대로"
-            className="h-control px-3.5 rounded-lg text-fg-dim text-[14px] ring-1 ring-line-strong flex items-center gap-2"
-          >
-            ↩ 확정 취소
-          </button>
-        )}
       </div>
+      {/* 확정한 무리 띠 — 몇 쌍 지나간 뒤에도 특정 쌍만 골라 취소할 수 있게 (2026-08-31).
+          이 세션에서 확정한 최근 20개. «다시 찾기» 뒤에는 무리 id 를 못 믿어 비운다 */}
+      {undoStack.length > 0 && (
+        <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-chrome/70 border-t border-line overflow-x-auto">
+          <span className="shrink-0 text-[13px] text-fg-mute whitespace-nowrap">
+            확정한 무리 <b className="text-fg-dim">{undoStack.length}</b>개 — ↩ 로 그것만 취소
+          </span>
+          {undoStack.map((g) => (
+            <span
+              key={g.id}
+              className="shrink-0 flex items-center gap-1.5 pl-1.5 pr-1 h-12 rounded-md bg-raised ring-1 ring-line"
+              title={`${g.reason ?? ""} · ${g.member_count}장`}
+            >
+              {g.cover ? (
+                <img src={thumbUrlPath(g.cover)} className="w-9 h-9 object-cover rounded" alt="" />
+              ) : (
+                <span className="w-9 h-9 rounded bg-canvas" />
+              )}
+              <span className="text-[12px] text-fg-dim tabular-nums">{g.member_count}장</span>
+              <button
+                onClick={() => void unapplyOne(g)}
+                title="이 무리의 남김·제외 표시를 지우고 목록 맨 앞에 다시 보여 줍니다 — 이미 휴지통으로 옮긴 사진은 그대로"
+                className="h-7 w-7 rounded text-fg-dim hover:text-fg hover:bg-hover text-[14px]"
+              >
+                ↩
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
         </>
       )}
     </div>

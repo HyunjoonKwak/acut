@@ -5,6 +5,7 @@ import type {
   Bucket,
   CacheUsage,
   Counted,
+  TrashByLib,
   FolderRow,
   Library,
   Stats,
@@ -25,6 +26,8 @@ type Store = {
   /** 휴지통에 든 것 / 제외 판정만 하고 아직 안 치운 것 */
   trash: Counted | null;
   toClean: Counted | null;
+  /** 라이브러리마다의 휴지통 — 고른 것만 보면 다른 쪽을 빠뜨린다 */
+  trashByLib: TrashByLib[];
   batches: Batch[];
   buckets: Bucket[];
   folders: FolderRow[];
@@ -81,6 +84,7 @@ export const useData = create<Store>()((set, get) => ({
   cache: null,
   trash: null,
   toClean: null,
+  trashByLib: [],
   batches: [],
   buckets: [],
   folders: [],
@@ -118,11 +122,12 @@ export const useData = create<Store>()((set, get) => ({
   },
   refreshTrash: async (libId) => {
     try {
-      const [trash, toClean] = await Promise.all([
+      const [trash, toClean, trashByLib] = await Promise.all([
         invoke<Counted>("trash_summary", { libraryId: libId }),
         invoke<Counted>("trash_pending", { libraryId: libId }),
+        invoke<TrashByLib[]>("trash_by_library"),
       ]);
-      set({ trash, toClean });
+      set({ trash, toClean, trashByLib });
     } catch {
       /* 아직 라이브러리가 없을 수 있다 */
     }

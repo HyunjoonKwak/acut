@@ -9,8 +9,8 @@ import PeoplePanel from "./PeoplePanel";
 import SettingsNav from "./SettingsNav";
 import SmartPanel from "./SmartPanel";
 import TagPanel from "./TagPanel";
+import TrashPanel from "./TrashPanel";
 import { useData } from "./dataStore";
-import { fmtBytes } from "./format";
 import { EMPTY, isEmpty } from "./picks";
 import { usePref } from "./prefs";
 import { sourceTitle } from "./railItems";
@@ -46,7 +46,8 @@ export default function Sidebar({
   const dragPanel = useRef(false);
 
   const libs = useData((s) => s.libs);
-  const trash = useData((s) => s.trash);
+  // 갈래 표시의 숫자는 모든 라이브러리 합 — 고른 것만 세면 다른 쪽 휴지통이 숨는다
+  const trashTotal = useData((s) => s.trashByLib.reduce((a, r) => a + r.files, 0));
   const refreshTags = useData((s) => s.refreshTags);
   const sel = useView((s) => s.sel);
   const picks = useView((s) => s.picks);
@@ -76,7 +77,7 @@ export default function Sidebar({
       <Rail
         value={source}
         open={panelOpen}
-        trashCount={trash?.files ?? 0}
+        trashCount={trashTotal}
         onPick={(s) => {
           // 같은 갈래를 다시 누르면 접힌다 — 사진을 넓게 보고 싶을 때
           if (s === source && panelOpen) {
@@ -216,20 +217,7 @@ export default function Sidebar({
             />
           )}
           {source === "settings" && <SettingsNav />}
-          {source === "trash" && (
-            <div className="px-3 py-2 text-[12px] text-fg-dim">
-              {/* 휴지통은 라이브러리마다 하나(같은 디스크 안 .acut/휴지통) — 어느 것을 보는지 적는다 */}
-              <div className="text-fg font-semibold mb-0.5">
-                {libId === null ? "모든 라이브러리의 휴지통" : `«${libs.find((l) => l.id === libId)?.name ?? ""}» 휴지통`}
-              </div>
-              버린 사진 {(trash?.files ?? 0).toLocaleString()}장
-              <br />
-              <span className="text-fg-mute">{fmtBytes(trash?.bytes ?? 0)}</span>
-              <div className="mt-2 text-[11px] text-fg-mute leading-snug">
-                휴지통은 라이브러리마다 따로 있습니다(같은 디스크 안 <code>.acut/휴지통</code>). 전부 보려면 앨범 맨 위 «전체»를 고르세요.
-              </div>
-            </div>
-          )}
+          {source === "trash" && <TrashPanel />}
         </aside>
       )}
 

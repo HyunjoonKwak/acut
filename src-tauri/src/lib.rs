@@ -191,6 +191,7 @@ pub fn run() {
             api::cache_migrate,
             api::trash::trash_pending,
             api::trash::trash_summary,
+            api::trash::trash_by_library,
             api::trash::trash_apply,
             api::trash::trash_files,
             api::trash::trash_restore,

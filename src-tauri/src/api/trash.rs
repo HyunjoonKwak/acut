@@ -43,6 +43,12 @@ pub async fn trash_summary(
     trash::summary(&state.db, library_id).map_err(err)
 }
 
+/// 라이브러리마다 휴지통에 든 것 — 왼쪽 패널이 목록으로 보이고 바로 옮겨 간다
+#[tauri::command]
+pub async fn trash_by_library(state: State<'_, AppState>) -> Result<Vec<trash::LibrarySummary>, String> {
+    trash::summary_by_library(&state.db).map_err(err)
+}
+
 /// 제외로 판정한 것을 전부 휴지통으로 옮긴다.
 #[tauri::command]
 pub async fn trash_apply(

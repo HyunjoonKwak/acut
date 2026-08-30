@@ -505,6 +505,34 @@ pub fn summary(db: &Db, library_id: Option<i64>) -> Result<Summary> {
     })
 }
 
+/// 라이브러리 하나의 휴지통 집계 — 휴지통은 라이브러리마다 따로 있다(같은 디스크 안
+/// `.acut/휴지통`). 한 라이브러리 것만 보여 주면 다른 쪽을 빠뜨린다 (2026-08-30 지적).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LibrarySummary {
+    pub library_id: i64,
+    pub name: String,
+    pub files: i64,
+    pub bytes: i64,
+}
+
+/// 모든 라이브러리의 휴지통을 한눈에 — 빈 것도 0으로 나온다
+pub fn summary_by_library(db: &Db) -> Result<Vec<LibrarySummary>> {
+    db.read(|c| {
+        let mut st = c.prepare(
+            "SELECT l.id, l.name,
+                    (SELECT COUNT(*) FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+                      WHERE fo.library_id = l.id AND fi.trashed_at IS NOT NULL),
+                    (SELECT COALESCE(SUM(fi.size),0) FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+                      WHERE fo.library_id = l.id AND fi.trashed_at IS NOT NULL)
+             FROM libraries l ORDER BY l.name",
+        )?;
+        let it = st.query_map([], |r| {
+            Ok(LibrarySummary { library_id: r.get(0)?, name: r.get(1)?, files: r.get(2)?, bytes: r.get(3)? })
+        })?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })
+}
+
 /// 제외로 판정했지만 아직 치우지 않은 것들의 id.
 pub fn pending(db: &Db, library_id: Option<i64>) -> Result<Vec<i64>> {
     db.read(|c| {
@@ -584,6 +612,20 @@ mod tests {
             .read(|c| c.query_row("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%여행'", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn every_library_reports_its_own_trash() {
+        let (_d, db, ids) = setup();
+        let before = summary_by_library(&db).unwrap();
+        assert_eq!(before.len(), 1);
+        assert_eq!((before[0].files, before[0].bytes), (0, 0), "비어도 줄은 나온다");
+        to_trash(&db, &ids, "휴지통으로").unwrap();
+        let after = summary_by_library(&db).unwrap();
+        assert_eq!(after[0].files, 3);
+        assert_eq!(after[0].bytes, 3 * 120);
+        restore(&db, &ids[..1]).unwrap();
+        assert_eq!(summary_by_library(&db).unwrap()[0].files, 2);
     }
 
     #[test]

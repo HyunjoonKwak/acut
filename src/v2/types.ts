@@ -56,6 +56,8 @@ export type Stats = {
 /** 캐시 용량 — 디스크를 훑어야 해서 자주 부르지 않는다 */
 export type CacheUsage = { bytes: number; files: number };
 export type Counted = { files: number; bytes: number };
+/** 라이브러리 하나의 휴지통 — 휴지통은 라이브러리마다 따로 있다 */
+export type TrashByLib = { library_id: number; name: string; files: number; bytes: number };
 
 export type Batch = {
   id: number;

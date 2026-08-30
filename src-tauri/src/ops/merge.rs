@@ -93,21 +93,34 @@ pub fn merge_tree(
             }
         };
         let src_path = mount.join(&it.dir).join(&it.name);
-        let dest_path = free_path(mount.join(&dest_dir_rel).join(&it.name));
+        // 이름은 디스크에도 DB 에도 비어 있어야 한다 — 휴지통에 간 파일의 행이 그 이름을 쥐고 있으면
+        // UNIQUE(folder_id, name) 에 걸려 합치기가 중간에 멈춘다 (실측 2026-08-30: 17,067장에서 멈춤)
+        let dest_path = free_name(db, folder_id, free_path(mount.join(&dest_dir_rel).join(&it.name)))?;
         let new_name = dest_path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| it.name.clone());
         let from_vol_rel = format!("{}/{}", it.dir, it.name);
         let to_vol_rel = format!("{dest_dir_rel}/{new_name}");
         match move_with_sidecars(&src_path, &dest_path) {
             Ok(()) => {
                 super::record(db, batch_id, "move", it.id, &lib.volume_uuid, &from_vol_rel, Some(&to_vol_rel), Ok(()))?;
-                db.write(|c| {
+                // 행 갱신이 실패해도 합치기를 통째로 멈추지 않는다 — 파일은 이미 옮겨졌으니 세어 알리고
+                // 계속 간다. 남은 어긋남은 다시 스캔이 맞춘다
+                let upd = db.write(|c| {
                     c.execute(
                         "UPDATE files SET folder_id = ?2, name = ?3 WHERE id = ?1",
                         rusqlite::params![it.id, folder_id, new_name],
                     )
-                })?;
-                out.moved += 1;
-                out.bytes += it.size;
+                });
+                match upd {
+                    Ok(_) => {
+                        out.moved += 1;
+                        out.bytes += it.size;
+                    }
+                    Err(e) => {
+                        log::warn!("합치기: 파일은 옮겼는데 행 갱신 실패 {to_vol_rel}: {e}");
+                        out.failed += 1;
+                        out.first_error.get_or_insert(format!("옮긴 뒤 기록 실패 — 다시 스캔으로 맞춰집니다: {e}"));
+                    }
+                }
                 src_dirs.insert(mount.join(&it.dir));
             }
             Err(e) => {
@@ -139,6 +152,40 @@ pub fn merge_tree(
         )
     })?;
     Ok(out)
+}
+
+/// DB 의 그 폴더 행에도 없는 이름으로 — «이름 (n).ext». 디스크 기준 빈 이름에서 시작한다
+fn free_name(db: &Db, folder_id: i64, want: PathBuf) -> Result<PathBuf> {
+    let taken = |name: &str| -> Result<bool> {
+        db.read(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM files WHERE folder_id = ?1 AND name = ?2",
+                rusqlite::params![folder_id, name],
+                |r| r.get::<_, i64>(0),
+            )
+        })
+        .map(|n| n > 0)
+    };
+    let name = want.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    if !taken(&name)? {
+        return Ok(want);
+    }
+    let dir = want.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), Some(e.to_string())),
+        None => (name.clone(), None),
+    };
+    for n in 2..10_000 {
+        let cand = match &ext {
+            Some(e) => format!("{stem} ({n}).{e}"),
+            None => format!("{stem} ({n})"),
+        };
+        let p = dir.join(&cand);
+        if !p.exists() && !taken(&cand)? {
+            return Ok(p);
+        }
+    }
+    Ok(want)
 }
 
 /// 목적지 폴더 행 — 없으면 만든다 (organize::ensure_folder 와 같은 규칙)
@@ -215,6 +262,27 @@ mod tests {
         assert!(dir.path().join("B/2016/a.jpg").is_file());
         assert!(dir.path().join("B/2016/x/deep.jpg").is_file());
         assert!(!dir.path().join("A/2016/a (2).jpg").exists());
+    }
+
+    /// 휴지통에 간 파일의 행이 목적지에서 같은 이름을 쥐고 있어도 멈추지 않는다
+    #[test]
+    fn a_trashed_row_holding_the_name_does_not_abort_the_merge() {
+        let (dir, db, lib, b, a, _) = setup();
+        // A/2016/only-b.jpg 라는 «휴지통 행»을 만든다 — 디스크엔 없고 DB 에만 있다
+        let a2016: i64 = db
+            .read(|c| c.query_row("SELECT id FROM folders WHERE rel_path LIKE '%A/2016'", [], |r| r.get(0)))
+            .unwrap();
+        // 기존 행(A/2017/c.jpg)을 «A/2016 의 only-b.jpg 휴지통 행»으로 바꿔 둔다 — NOT NULL 열을 다 채울 필요 없이
+        db.write(|c| {
+            c.execute(
+                "UPDATE files SET folder_id = ?1, name = 'only-b.jpg', trashed_at = 1, trash_path = 'x' WHERE name = 'c.jpg'",
+                [a2016],
+            )
+        })
+        .unwrap();
+        let out = merge_tree(&db, lib, &b, &a, &AtomicBool::new(false), |_| {}).unwrap();
+        assert_eq!((out.moved, out.failed), (3, 0), "{out:?}");
+        assert!(dir.path().join("A/2016/only-b (2).jpg").is_file(), "DB 에서도 빈 이름으로: {:?}", std::fs::read_dir(dir.path().join("A/2016")).unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>());
     }
 
     #[test]

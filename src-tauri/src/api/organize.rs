@@ -55,6 +55,10 @@ pub async fn organize_move(
     date: String,
     title: String,
 ) -> Result<Outcome, String> {
+    // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
+    let Some(_guard) = super::job::try_start(&state.running, "에이컷 정리") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
     let area = crate::db::libraries::get(&state.db, library_id).map_err(err)?.map(|l| l.area).unwrap_or(2);
     let rel_dir = organize::event_rel_dir_for(area, &date, &title);
     let dest = organize::Dest { library_id, rel_dir: rel_dir.clone() };
@@ -83,5 +87,9 @@ pub async fn batches_recent(
 
 #[tauri::command]
 pub async fn batch_undo(state: State<'_, AppState>, batch_id: i64) -> Result<Outcome, String> {
+    // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
+    let Some(_guard) = super::job::try_start(&state.running, "에이컷 되돌리기") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
     undo::undo(&state.db, batch_id).map_err(err)
 }

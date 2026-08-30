@@ -25,6 +25,14 @@ pub struct Batch {
 pub fn recent(db: &Db, limit: usize) -> Result<Vec<Batch>> {
     let limit = limit.clamp(1, 200);
     db.write(|c| {
+        // 닫히지 못한 묶음(도중에 멈춘 합치기 등) — 저널이 있으면 그 수로 닫아 되돌릴 수 있게
+        c.execute(
+            "UPDATE batches SET item_count = (SELECT COUNT(*) FROM journal j WHERE j.batch_id = batches.id AND j.ok = 1)
+             WHERE item_count = 0 AND undone_at IS NULL
+               AND EXISTS (SELECT 1 FROM journal j WHERE j.batch_id = batches.id AND j.ok = 1)
+               AND created_at < strftime('%s','now') - 60",
+            [],
+        )?;
         c.execute(
             "UPDATE batches SET undone_at = strftime('%s','now')
              WHERE undone_at IS NULL AND kind = 'trash' AND item_count > 0

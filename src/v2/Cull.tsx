@@ -746,10 +746,10 @@ export default function Cull({
                       {members.length === 2 && (
                         <button
                           onClick={() => pairAll(m)}
-                          title="같은 두 폴더 사이의 무리 전부를 이 방향으로"
+                          title={`이 사진의 폴더 «${m.folder || "/"}»를 남기고, 상대 폴더의 사본을 제외 — 같은 두 폴더 사이에서 겹치는 다른 무리들에도 한꺼번에(먼저 몇 쌍인지 보여 줍니다)`}
                           className="h-7 px-2.5 rounded-md text-[12px] text-fg-dim ring-1 ring-line-strong"
                         >
-                          이 폴더 쌍 전부 이렇게
+                          두 폴더 전체에 적용
                         </button>
                       )}
                     </div>

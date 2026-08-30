@@ -63,11 +63,9 @@ export type FolderHit = {
   file_count: number;
 };
 
-/** 두 뿌리가 서로를 품는가 — 같은 폴더가 양쪽에 들어 제 짝이 되는 길 */
+/** 같은 폴더인가 — 품는 관계(«2004» ⇔ «2004/주원이사진»)는 바깥에서 안쪽을 빼고 비교하니 된다 */
 export function overlaps(a: FolderHit, b: FolderHit): boolean {
-  if (a.volume_uuid !== b.volume_uuid) return false;
-  const under = (root: string, p: string) => root === "" || p === root || p.startsWith(root + "/");
-  return under(a.vol_rel, b.vol_rel) || under(b.vol_rel, a.vol_rel);
+  return a.volume_uuid === b.volume_uuid && a.vol_rel === b.vol_rel;
 }
 
 /** 같은 짝인데 한쪽이 이미 전부 지우기 표시됐다 — 다시 누르면 뒤집히니 단추를 감춘다 */

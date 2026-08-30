@@ -122,7 +122,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     (side: "a" | "b") => (hit: FolderHit) => {
       const other = side === "a" ? b : a;
       if (other && overlaps(hit, other)) {
-        toast("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더를 고르세요", "drop");
+        toast("같은 폴더끼리는 비교할 수 없습니다", "drop");
         return;
       }
       (side === "a" ? setA : setB)(hit);

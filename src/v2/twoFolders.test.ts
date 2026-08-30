@@ -53,9 +53,9 @@ test("한쪽이 다른 쪽에 다 들어 있으면 그쪽만 지울 수 있다 �
   assert.equal(verdict(pair({ b: null })).kind, "a_only");
 });
 
-test("한쪽이 다른 쪽의 위 폴더면 겹친다", () => {
-  assert.equal(overlaps(hit("v", "통합전후보"), hit("v", "통합전후보/후보1번")), true);
-  assert.equal(overlaps(hit("v", "통합전후보/후보1번"), hit("v", "통합전후보")), true);
+test("같은 폴더만 거절 — 품는 관계는 바깥에서 안쪽을 빼고 비교하니 된다", () => {
+  assert.equal(overlaps(hit("v", "통합전후보"), hit("v", "통합전후보/후보1번")), false);
+  assert.equal(overlaps(hit("v", "공용/2004/주원이사진"), hit("v", "공용/2004")), false);
   assert.equal(overlaps(hit("v", "a"), hit("v", "a")), true);
 });
 
@@ -64,9 +64,9 @@ test("이름 앞만 같은 것은 겹치지 않는다 — «후보1» 과 «후�
   assert.equal(overlaps(hit("v", "통합전후보/후보1번"), hit("v", "통합전후보/후보2번")), false);
 });
 
-test("볼륨이 다르면 경로가 같아도 겹치지 않고, 볼륨 뿌리는 전부를 품는다", () => {
+test("볼륨이 다르면 경로가 같아도 다른 폴더다", () => {
   assert.equal(overlaps(hit("v1", "사진"), hit("v2", "사진")), false);
-  assert.equal(overlaps(hit("v", ""), hit("v", "아무데나")), true);
+  assert.equal(overlaps(hit("v", ""), hit("v", "")), true);
 });
 
 test("한쪽이 전부 지우기 표시됐으면 그쪽이 처리됨", () => {

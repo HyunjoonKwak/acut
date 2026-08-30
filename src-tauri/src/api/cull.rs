@@ -405,8 +405,8 @@ pub async fn cull_compare_folders(
     b_volume: String,
     b_rel: String,
 ) -> Result<folders::Compared, String> {
-    if folders::roots_overlap((&a_volume, &a_rel), (&b_volume, &b_rel)) {
-        return Err("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더를 고르세요".into());
+    if a_volume == b_volume && a_rel == b_rel {
+        return Err("같은 폴더끼리는 비교할 수 없습니다".into());
     }
     state
         .db

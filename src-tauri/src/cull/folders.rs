@@ -520,6 +520,11 @@ struct Agg {
 /// 뿌리는 (볼륨, 볼륨 기준 경로)다 — «연도별»처럼 사진이 바로 아래 없는 폴더는 `folders`
 /// 행이 없어서 id 로는 가리킬 수 없다 (실측: 후보1번/연도별을 골랐는데 «없는 폴더»).
 fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<(Vec<Agg>, usize)> {
+    folders_under_except(c, vol, rel, None)
+}
+
+/// `except` 아래는 뺀다 — 한 뿌리가 다른 뿌리를 품을 때(«2004» ⇔ «2004/주원이사진») 바깥쪽에서 안쪽 나무를 뺀다
+fn folders_under_except(c: &Connection, vol: &str, rel: &str, except: Option<&str>) -> rusqlite::Result<(Vec<Agg>, usize)> {
     let esc = crate::db::query::escape_like(rel);
     let mut st = c.prepare(
         "SELECT fo.id, fo.rel_path, fo.area, l.id, l.name, l.rel_path, f.full_hash, f.size,
@@ -581,6 +586,12 @@ fn folders_under(c: &Connection, vol: &str, rel: &str) -> rusqlite::Result<(Vec<
                 None => cur.all_hashed = false,
             }
         }
+    }
+    if let Some(ex) = except {
+        out.retain(|a| {
+            let full = if a.sub.is_empty() { rel.to_string() } else if rel.is_empty() { a.sub.clone() } else { format!("{rel}/{}", a.sub) };
+            !(full == ex || full.starts_with(&format!("{ex}/")))
+        });
     }
     // 사진이 바로 아래 없는 폴더 행(휴지통 파일만 가리키거나 빈 것)은 견줄 것이 없다 — 먼저 뺀다.
     // 그다음 디스크에서 사라진 폴더(Finder 에서 지운 것)를 뺀다 — DB 행만 남아 «없는 폴더»를 읽지 않게.
@@ -754,11 +765,16 @@ pub fn compare_two(
     (a_vol, a_rel): (&str, &str),
     (b_vol, b_rel): (&str, &str),
 ) -> rusqlite::Result<Compared> {
-    if roots_overlap((a_vol, a_rel), (b_vol, b_rel)) {
+    if a_vol == b_vol && a_rel == b_rel {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    let (a, miss_a) = folders_under(c, a_vol, a_rel)?;
-    let (b, miss_b) = folders_under(c, b_vol, b_rel)?;
+    // 한쪽이 다른 쪽을 품으면 바깥쪽에서 안쪽 나무를 뺀다 — «공용/2004» ⇔ «공용/2004/주원이사진»처럼
+    // 같은 폴더 안에 사본 갈래가 있는 경우 (사용자 요청 2026-08-30)
+    let same_vol = a_vol == b_vol;
+    let b_in_a_root = same_vol && (a_rel.is_empty() || b_rel.starts_with(&format!("{a_rel}/")));
+    let a_in_b_root = same_vol && (b_rel.is_empty() || a_rel.starts_with(&format!("{b_rel}/")));
+    let (a, miss_a) = folders_under_except(c, a_vol, a_rel, b_in_a_root.then_some(b_rel))?;
+    let (b, miss_b) = folders_under_except(c, b_vol, b_rel, a_in_b_root.then_some(a_rel))?;
     let mut b_by_sub: HashMap<&str, usize> = HashMap::new();
     for (i, g) in b.iter().enumerate() {
         b_by_sub.entry(g.sub.as_str()).or_insert(i);
@@ -1048,6 +1064,34 @@ mod tests {
         assert_eq!(flagged, ["1.jpg", "one.jpg"]);
     }
 
+    /// «2004» ⇔ «2004/주원이사진» — 바깥 뿌리에서 안쪽 나무를 빼고 견준다
+    #[test]
+    fn a_root_inside_the_other_is_excluded_from_the_outer_side() {
+        let dir = tempfile::tempdir().unwrap();
+        for (d, body) in [("2004/2004-09-08", "AAAA"), ("2004/2004-09-09", "BBBB"), ("2004/주원이사진/2004-09-08", "AAAA"), ("2004/주원이사진/2004-09-09", "BBBB"), ("2004/주원이사진/2004-09-10", "CCCC")] {
+            let p = dir.path().join(d);
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(p.join("a.jpg"), body.as_bytes().repeat(200)).unwrap();
+        }
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 2, |_| {}).unwrap();
+        dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
+        let (vol, lib_rel): (String, String) = db
+            .read(|c| c.query_row("SELECT volume_uuid, rel_path FROM libraries", [], |r| Ok((r.get(0)?, r.get(1)?))))
+            .unwrap();
+        let j = |s: &str| if lib_rel.is_empty() { s.to_string() } else { format!("{lib_rel}/{s}") };
+        // A = 주원이사진(남길 쪽), B = 2004(바깥) — B 쪽에서 주원이사진 아래는 빠진다
+        let r = db.read(|c| compare_two(c, (&vol, &j("2004/주원이사진")), (&vol, &j("2004")))).unwrap();
+        let same: Vec<String> = r.rows.iter().filter(|x| x.same).map(|x| x.b.as_ref().unwrap().folder.clone()).collect();
+        assert_eq!(same.len(), 2, "09-08·09-09 짝: {:?}", r.rows);
+        assert!(same.iter().all(|f| !f.contains("주원이사진")), "B 쪽에 주원이사진 아래 폴더가 섞이면 안 된다: {same:?}");
+        // 09-10 은 A 에만 있다 — «A 에만 있음» 줄로, A 쪽이 B 에 다 있는 짝(똑같음 말고)은 없다
+        assert!(r.rows.iter().any(|x| x.a.is_some() && x.b.is_none()), "{:?}", r.rows);
+        assert!(r.rows.iter().all(|x| !(x.a_in_b && !x.same)), "{:?}", r.rows);
+        // 뿌리가 같으면 거절
+        assert!(db.read(|c| compare_two(c, (&vol, &j("2004")), (&vol, &j("2004")))).is_err());
+    }
+
     #[test]
     fn compare_two_rejects_overlapping_roots_and_lists_in_path_order() {
         let (dir, db) = setup();
@@ -1060,8 +1104,8 @@ mod tests {
             .read(|c| c.query_row("SELECT rel_path FROM folders WHERE rel_path LIKE '%a'", [], |r| r.get(0)))
             .unwrap();
         let root_rel = a_rel.rsplit_once('/').map(|(p, _)| p.to_string()).unwrap_or_default();
-        let e = db.read(|c| compare_two(c, (&vol, &root_rel), (&vol, &a_rel)));
-        assert!(e.is_err(), "겹치는 뿌리는 거절한다: {e:?}");
+        // 품는 관계는 이제 허용 — 바깥에서 안쪽을 빼고 견준다 (같은 뿌리만 거절)
+        assert!(db.read(|c| compare_two(c, (&vol, &root_rel), (&vol, &a_rel))).is_ok());
         // 경로 순: 두 뿌리 아래 폴더가 여럿일 때 sub 오름차순 — x/{1,2} 대 y/{2,1}
         for (d, names) in [("x/1", ["p.jpg"]), ("x/2", ["p.jpg"]), ("y/1", ["p.jpg"]), ("y/2", ["p.jpg"])] {
             let p = dir.path().join(d);

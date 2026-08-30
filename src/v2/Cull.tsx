@@ -621,8 +621,14 @@ export default function Cull({
         <>
       {/* 진행 */}
       <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[12.5px]">
-            <span className="tabular-nums text-fg-dim">
-              {groups.length === 0 ? "0 / 0" : `${idx + 1} / ${groups.length}`}
+            {/* 분모는 이 갈래의 미결 무리 전체 — 목록은 200개씩 읽어 두지만 그건 화면 사정이다 */}
+            <span
+              className="tabular-nums text-fg-dim"
+              title="지금 무리 번호 / 이 갈래에서 아직 안 한 무리 전체. 처리한 만큼 줄어듭니다 — 언제 닫아도 한 것은 저장돼 있습니다"
+            >
+              {groups.length === 0
+                ? "0 / 0"
+                : `${idx + 1} / ${Math.max(groups.length, summary.find((x) => x.kind === kind)?.groups ?? 0).toLocaleString()}`}
             </span>
             <div className="w-56 h-1.5 rounded bg-raised overflow-hidden">
               <i

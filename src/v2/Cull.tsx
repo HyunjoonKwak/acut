@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
-import { thumbUrlOf } from "./types";
 import CullTile from "./CullTile";
 import { listen } from "@tauri-apps/api/event";
 import Viewer from "./Viewer";
@@ -103,9 +102,6 @@ export default function Cull({
   );
   const [viewerFull, setViewerFull] = useState(false);
 
-  /// 캐시가 라이브러리마다 따로 있어 주소 앞에 라이브러리 id가 붙는다
-  const url = (rel: string | null, libraryId: number | null) =>
-    rel && libraryId !== null ? thumbUrlOf(libraryId, rel) : null;
 
   const loadSummary = useCallback(async () => {
     try {

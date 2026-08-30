@@ -15,7 +15,7 @@ export type CullMember = {
   area: number;
 };
 
-export default function CullTile({
+export default function CullTile<M extends CullMember>({
   m,
   i,
   kind,
@@ -23,12 +23,13 @@ export default function CullTile({
   onView,
   onKeep,
 }: {
-  m: CullMember;
+  m: M;
   i: number;
   kind: number;
   onPick: (fileId: number) => void;
   onView: (index: number) => void;
-  onKeep: (m: CullMember) => void;
+  /** 이 사진을 남기기로 — 부르는 쪽의 더 넓은 구성원 타입을 그대로 받는다 */
+  onKeep: (m: M) => void;
 }) {
   const u =
     m.thumb && m.library_id !== null ? thumbUrlOf(m.library_id, m.thumb) : null;

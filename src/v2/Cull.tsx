@@ -672,11 +672,13 @@ export default function Cull({
               {members.map((m, i) => {
                 const u = url(m.thumb, m.library_id);
                 return (
-                  <div key={m.file_id}>
+                  <div key={m.file_id} className="min-w-0">
+                  {/* block·w-full — 인라인 단추는 썸네일 원래 폭(512px)으로 커져 칸을 넘어 옆 사진과 겹친다
+                      (넷 이상 겹치는 무리에서 실측 2026-08-30) */}
                   <button
                     onClick={() => pick(m.file_id)}
                     onDoubleClick={() => setViewerAt(i)}
-                    className="text-left"
+                    className="block w-full min-w-0 text-left"
                   >
                     <div
                       className="relative rounded-lg overflow-hidden bg-canvas"
@@ -736,9 +738,10 @@ export default function Cull({
                     <div className="flex gap-1.5 mt-1.5">
                       <button
                         onClick={() => keepThis(m)}
+                        title="이 사진을 남기고 같은 무리의 나머지에 제외 표시"
                         className="h-7 px-2.5 rounded-md bg-keep text-keep-fg text-[12px] font-semibold"
                       >
-                        이쪽을 남김
+                        선택
                       </button>
                       {members.length === 2 && (
                         <button

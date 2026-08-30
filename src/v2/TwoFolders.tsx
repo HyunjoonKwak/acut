@@ -30,6 +30,23 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   const [rows, setRows] = useState<PairRow[] | null>(null);
   /// 디스크에 없어 뺀 폴더 수 — Finder 에서 지운 폴더의 행이 남은 것
   const [missing, setMissing] = useState(0);
+  /// 해시가 없어 견줄 수 없던 사진 수 — «다시 찾기» 뒤에 들어온 사진
+  const [unhashed, setUnhashed] = useState(0);
+  const [hashing, setHashing] = useState(false);
+  const hashNow = useCallback(async () => {
+    if (!rows) return;
+    const ids = [...new Set(rows.flatMap((r) => [...r.a_ids, ...r.b_ids]))];
+    setHashing(true);
+    try {
+      const n = await invoke<number>("cull_hash_folders", { folderIds: ids });
+      toast(`${n.toLocaleString()}장에 해시를 붙였습니다 — 다시 비교합니다`, "ok");
+      setTick((t) => t + 1);
+    } catch (e) {
+      toast(String(e), "drop");
+    } finally {
+      setHashing(false);
+    }
+  }, [rows]);
   const [busy, setBusy] = useState(false);
   /** 표시 진행 — n/총. null 이면 표시 중이 아니다 */
   const [marking, setMarking] = useState<{ total: number } | null>(null);
@@ -42,7 +59,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     let live = true;
     setBusy(true);
     setRows(null);
-    invoke<{ rows: PairRow[]; missing: number }>("cull_compare_folders", {
+    invoke<{ rows: PairRow[]; missing: number; unhashed: number }>("cull_compare_folders", {
       aVolume: a.volume_uuid,
       aRel: a.vol_rel,
       bVolume: b.volume_uuid,
@@ -52,6 +69,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         if (!live) return;
         setRows(r.rows);
         setMissing(r.missing);
+        setUnhashed(r.unhashed);
       })
       .catch((e) => live && toast(String(e), "drop"))
       .finally(() => live && setBusy(false));
@@ -283,7 +301,7 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
   /// 이 비교에 나온 폴더들 안에서 제외 표시된 장수 — 표시했으면 여기서 바로 치운다
   const flagged = useMemo(() => (rows ?? []).reduce((s, r) => s + r.flagged_a + r.flagged_b, 0), [rows]);
   const [sweeping, setSweeping] = useState(false);
-  const locked = busy || marking !== null || sweeping || merging;
+  const locked = busy || marking !== null || sweeping || merging || hashing;
 
   /// 표시한 것을 휴지통으로 — 세 화면을 건너다니지 않게 비교 화면 안에서 끝낸다.
   /// 라이브러리 전체가 아니라 이 비교의 폴더들만
@@ -527,6 +545,22 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
             className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12px] disabled:opacity-40"
           >
             남은 파일도 A 로 옮기고 폴더 지우기
+          </button>
+        </div>
+      )}
+      {unhashed > 0 && rows && (
+        <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 text-[12px] bg-keep/10 border-b border-line flex-wrap">
+          <span className="text-fg">
+            <b>해시가 없는 사진 {unhashed.toLocaleString()}장</b>
+            <span className="text-fg-dim"> — «다시 찾기» 뒤에 들어온 사진이라 아직 내용을 견줄 수 없습니다. 그 사진이 든 폴더는 «똑같음»이 되지 않습니다.</span>
+          </span>
+          <div className="flex-1" />
+          <button
+            onClick={hashNow}
+            disabled={locked}
+            className="h-7 px-3 rounded-md bg-keep text-keep-fg font-semibold text-[12px] disabled:opacity-40"
+          >
+            {hashing ? "해시 계산 중…" : "이 두 폴더 해시 계산 뒤 다시 비교"}
           </button>
         </div>
       )}

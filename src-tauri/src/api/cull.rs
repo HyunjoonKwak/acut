@@ -373,6 +373,25 @@ pub async fn cull_folder_pairs_apply(
     state.db.transaction(|tx| folders::apply_pairs(tx, &pairs)).map_err(err)
 }
 
+/// 두 나무의 해시 없는 사진에 해시를 붙인다 — 비교가 «똑같음»을 가릴 수 있게
+#[tauri::command]
+pub async fn cull_hash_folders(app: AppHandle, folder_ids: Vec<i64>) -> Result<usize, String> {
+    let state = app.state::<AppState>();
+    let Some(guard) = job::try_start(&state.running, "에이컷 해시 계산") else {
+        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+    };
+    let db = Arc::clone(&state.db);
+    let cancel = Arc::clone(&state.cancel);
+    cancel.store(false, Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        folders::hash_missing(&db, &folder_ids, &cancel)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(err)
+}
+
 /// 폴더 짝 «보기» — 두 나무의 사진을 나란히, 같은 내용끼리 이어서.
 #[tauri::command]
 pub async fn cull_folder_pair_photos(

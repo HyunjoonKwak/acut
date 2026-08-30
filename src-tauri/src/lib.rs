@@ -229,6 +229,7 @@ pub fn run() {
             api::cull::cull_folder_pairs_apply,
             api::cull::cull_folder_set_unapply,
             api::cull::cull_folder_pair_photos,
+            api::cull::cull_hash_folders,
             api::folder_merge,
             api::folder_leftovers,
             api::folder_merge_rest,

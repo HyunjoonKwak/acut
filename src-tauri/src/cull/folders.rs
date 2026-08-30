@@ -512,6 +512,8 @@ struct Agg {
     flagged: i64,
     /// culling_flag = 1 인 파일 수
     kept: i64,
+    /// 전체 해시가 없는 파일 수
+    unhashed: i64,
     hashes: Vec<String>,
     all_hashed: bool,
     has_children: bool,
@@ -570,6 +572,7 @@ fn folders_under_except(c: &Connection, vol: &str, rel: &str, except: Option<&st
                 bytes: 0,
                 flagged: 0,
                 kept: 0,
+                unhashed: 0,
                 hashes: Vec::new(),
                 all_hashed: true,
                 has_children: false,
@@ -583,7 +586,10 @@ fn folders_under_except(c: &Connection, vol: &str, rel: &str, except: Option<&st
             cur.kept += kept as i64;
             match hash {
                 Some(h) => cur.hashes.push(h),
-                None => cur.all_hashed = false,
+                None => {
+                    cur.all_hashed = false;
+                    cur.unhashed += 1;
+                }
             }
         }
     }
@@ -612,11 +618,64 @@ fn folders_under_except(c: &Connection, vol: &str, rel: &str, except: Option<&st
     Ok((out, missing))
 }
 
-/// 두 폴더 비교의 결과 — 줄들과, 디스크에 없어 뺀 폴더 수
+/// 두 폴더 비교의 결과 — 줄들과, 디스크에 없어 뺀 폴더 수, 해시가 없어 견줄 수 없던 사진 수
 #[derive(Debug, Clone, Serialize)]
 pub struct Compared {
     pub rows: Vec<PairRow>,
     pub missing: usize,
+    /// 두 나무 안에서 전체 해시가 아직 없는 사진 — «다시 찾기» 뒤에 들어온 사진. 이게 있으면
+    /// 그 폴더는 «똑같음»이 될 수 없다 (실측 2026-08-30: 주원이사진/2004-09-17 29장 전부)
+    pub unhashed: usize,
+}
+
+/// 두 나무의 해시 없는 사진에 전체 해시를 붙인다 — 비교 화면의 «이 두 폴더 해시 계산».
+/// 다시 찾기(전체)를 기다리지 않고 지금 견줄 수 있게. 붙인 수를 돌려준다
+pub fn hash_missing(db: &crate::db::conn::Db, folder_ids: &[i64], cancel: &std::sync::atomic::AtomicBool) -> crate::db::conn::Result<usize> {
+    if folder_ids.is_empty() {
+        return Ok(0);
+    }
+    let list = folder_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    let rows: Vec<(i64, String, String, String)> = db.read(|c| {
+        let mut st = c.prepare(&format!(
+            "SELECT fi.id, fo.volume_uuid, fo.rel_path, fi.name FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+             WHERE fi.folder_id IN ({list}) AND fi.trashed_at IS NULL AND fi.full_hash IS NULL"
+        ))?;
+        let it = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })?;
+    let mut mounts: HashMap<String, Option<std::path::PathBuf>> = HashMap::new();
+    let mut done: Vec<(i64, String, String)> = Vec::new();
+    let mut total = 0usize;
+    for (id, vol, rel, name) in rows {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+        let mount = mounts.entry(vol.clone()).or_insert_with(|| crate::db::volumes::find_mount(&vol)).clone();
+        let Some(mount) = mount else { continue };
+        let path = mount.join(&rel).join(&name);
+        let (Ok(q), Ok(f)) = (super::hash::quick(&path), super::hash::full(&path)) else { continue };
+        done.push((id, q, f));
+        total += 1;
+        if done.len() >= 200 {
+            flush_hashes(db, &done)?;
+            done.clear();
+        }
+    }
+    flush_hashes(db, &done)?;
+    Ok(total)
+}
+
+fn flush_hashes(db: &crate::db::conn::Db, rows: &[(i64, String, String)]) -> crate::db::conn::Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    db.transaction(|tx| {
+        let mut up = tx.prepare("UPDATE files SET quick_hash = ?1, full_hash = ?2 WHERE id = ?3")?;
+        for (id, q, f) in rows {
+            up.execute(params![q, f, id])?;
+        }
+        Ok(())
+    })
 }
 
 /// 두 뿌리가 서로를 품는가 — 같은 폴더가 양쪽 목록에 들어 제 짝이 되는 길을 막는다
@@ -916,7 +975,8 @@ pub fn compare_two(
     }
     // 경로 순 — Finder 를 나란히 놓은 것처럼 읽힌다 (사용자 지적: «오름차순도 내림차순도 아니다»)
     out.sort_by(|x, y| x.0.cmp(&y.0));
-    Ok(Compared { rows: out.into_iter().map(|(_, r)| r).collect(), missing: miss_a + miss_b })
+    let unhashed = a.iter().chain(b.iter()).map(|g| g.unhashed).sum::<i64>() as usize;
+    Ok(Compared { rows: out.into_iter().map(|(_, r)| r).collect(), missing: miss_a + miss_b, unhashed })
 }
 
 #[cfg(test)]

@@ -741,21 +741,17 @@ export default function Cull({
                     </div>
                   </button>
                   {kind === 0 && (
-                    <div className="flex gap-1.5 mt-1.5">
-                      <button
-                        onClick={() => keepThis(m)}
-                        title="이 사진을 남기고 같은 무리의 나머지에 제외 표시"
-                        className="h-7 px-2.5 rounded-md bg-keep text-keep-fg text-[12px] font-semibold"
-                      >
-                        선택
-                      </button>
-                      {members.length === 2 && (
+                    <div className="flex gap-1.5 mt-1.5 h-7 items-center">
+                      {m.is_best ? (
+                        // 이미 남길 사진 — 단추가 아니라 상태. 다른 쪽을 «선택»하면 이쪽이 제외로 바뀐다
+                        <span className="text-[12px] text-keep font-semibold">★ 남길 사진</span>
+                      ) : (
                         <button
-                          onClick={() => pairAll(m)}
-                          title={`이 사진의 폴더 «${m.folder || "/"}»를 남기고, 상대 폴더의 사본을 제외 — 같은 두 폴더 사이에서 겹치는 다른 무리들에도 한꺼번에(먼저 몇 쌍인지 보여 줍니다)`}
-                          className="h-7 px-2.5 rounded-md text-[12px] text-fg-dim ring-1 ring-line-strong"
+                          onClick={() => keepThis(m)}
+                          title="이 사진을 남기고, 지금 ★인 사진을 비롯한 나머지에 제외 표시 — 바로 확정됩니다"
+                          className="h-7 px-2.5 rounded-md bg-keep text-keep-fg text-[12px] font-semibold"
                         >
-                          두 폴더 전체에 적용
+                          선택
                         </button>
                       )}
                     </div>
@@ -805,13 +801,29 @@ export default function Cull({
             S
           </span>
         </button>
+        {kind === 0 && cur && members.length === 2 && members.some((m) => m.is_best) && (() => {
+          const best = members.find((m) => m.is_best)!;
+          const other = members.find((m) => !m.is_best)!;
+          return (
+            <button
+              onClick={() => pairAll(best)}
+              title={`«${best.folder || "/"}»를 남기고 «${other.folder || "/"}»의 사본을 제외 — 같은 두 폴더 사이에서 겹치는 다른 무리들에도 한꺼번에. 먼저 몇 쌍·몇 장인지 보여 주고 묻습니다`}
+              className="h-control px-3.5 rounded-lg bg-accent text-accent-fg font-semibold text-[13px] flex items-center gap-2"
+            >
+              두 폴더 전체에 적용
+              <span className="text-[11px] font-normal opacity-80 truncate max-w-[280px]">
+                {best.folder.split("/").pop() || "/"} 남김 · {other.folder.split("/").pop() || "/"} 제외
+              </span>
+            </button>
+          );
+        })()}
         <span className="text-[12px] text-fg-mute ml-2">
           숫자키 <span className="font-mono">1–9</span> 로 남길 것을 바꿉니다 ·
           두 번 누르면 크게 봅니다
         </span>
         <div className="flex-1" />
         <span className="text-[12px] text-fg-mute">
-          여기서는 판정만 합니다 — 닫으면 상태바에 «제외한 N장 휴지통으로»가 나옵니다
+          여기서는 판정만 합니다 — 닫으면 상태바에 «확정 (N)»이 나옵니다
         </span>
       </div>
         </>

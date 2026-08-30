@@ -146,7 +146,10 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
     () => reviewRows.filter((r) => !review?.unchecked.has(rowKey(r))),
     [reviewRows, review],
   );
-  const shownRows = review ? reviewRows : rows;
+  /// 한쪽에만 있는 폴더는 비교할 것이 없다 — 기본은 양쪽에 있는 폴더만 (사용자 요청 2026-08-30)
+  const [onlyBoth, setOnlyBoth] = useState(true);
+  const bothRows = useMemo(() => (rows ?? []).filter((r) => r.a && r.b), [rows]);
+  const shownRows = review ? reviewRows : onlyBoth ? bothRows : rows;
   /// 폴더 비교로 붙인 표시(남김·제외)를 되돌린다 — 휴지통에 가기 전이면 언제든
   const unmark = useCallback(
     async (targets: PairRow[]) => {
@@ -232,6 +235,18 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         {busy && (
           <span className="flex items-center gap-2 text-keep">
             <i className="w-2 h-2 rounded-full bg-keep animate-pulse" /> 비교하는 중…
+          </span>
+        )}
+        {rows && !busy && !review && (
+          <span className="flex items-center gap-3 text-[12px]" role="radiogroup" aria-label="보이는 줄">
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input type="radio" name="tf-rows" checked={onlyBoth} onChange={() => setOnlyBoth(true)} className="accent-accent" />
+              양쪽에 있는 폴더만 <span className="text-fg-mute tabular-nums">({bothRows.length.toLocaleString()})</span>
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input type="radio" name="tf-rows" checked={!onlyBoth} onChange={() => setOnlyBoth(false)} className="accent-accent" />
+              전부 <span className="text-fg-mute tabular-nums">({rows.length.toLocaleString()})</span>
+            </label>
           </span>
         )}
         {rows && !busy && (
@@ -371,6 +386,10 @@ export default function TwoFolders({ onChanged }: { onChanged: () => void }) {
         ) : rows.length === 0 ? (
           <div className="h-full flex items-center justify-center text-fg-mute">
             두 폴더 아래에 사진이 없습니다
+          </div>
+        ) : (shownRows ?? []).length === 0 ? (
+          <div className="h-full flex items-center justify-center text-fg-mute">
+            양쪽에 다 있는 폴더가 없습니다 — «전부»를 고르면 한쪽에만 있는 폴더도 보입니다
           </div>
         ) : (
           <table className="w-full text-[12.5px] tabular-nums">

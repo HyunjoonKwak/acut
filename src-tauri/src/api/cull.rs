@@ -114,6 +114,14 @@ pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 범위 — «제외될 사본이 이 라이브러리에 있는 무리»만. 목록·집계·한꺼번에 확정이 같은 잣대를
+/// 써야 «머리의 숫자와 넘겨 보는 무리가 다르다»가 안 생긴다 (2026-08-30).
+/// 잡동사니(kind 1)는 대표가 없어 구성원 아무나면 된다.
+const SCOPE: &str = "(?5 IS NULL OR EXISTS (
+         SELECT 1 FROM group_members m JOIN files fi ON fi.id = m.file_id
+         JOIN folders fo ON fo.id = fi.folder_id
+         WHERE m.group_id = g.id AND fo.library_id = ?5 AND (g.kind = 1 OR m.is_best = 0)))";
+
 /// 그룹 목록. 확보 용량이 큰 것부터 — 효과가 큰 것을 먼저 보게 한다.
 #[tauri::command]
 pub async fn cull_groups(
@@ -122,6 +130,7 @@ pub async fn cull_groups(
     limit: usize,
     offset: usize,
     settled: Option<bool>,
+    library_id: Option<i64>,
 ) -> Result<Vec<GroupRow>, String> {
     let limit = limit.clamp(1, 200);
     // 정착 구역(내사진·공용) 안에 제외될 사본이 있는 무리만 — 사람이 하나씩 보는 것
@@ -129,7 +138,7 @@ pub async fn cull_groups(
     state
         .db
         .read(|c| {
-            let mut st = c.prepare(
+            let mut st = c.prepare(&format!(
                 "SELECT g.id, g.kind, g.reason, g.size_bytes, g.state,
                         (SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id),
                         (SELECT fo.library_id || '/' || t.rel_path FROM group_members m
@@ -144,20 +153,24 @@ pub async fn cull_groups(
                          SELECT 1 FROM group_members m JOIN files fi ON fi.id = m.file_id
                          JOIN folders fo ON fo.id = fi.folder_id
                          WHERE m.group_id = g.id AND m.is_best = 0 AND fo.area IN (1, 2)))
+                   AND {SCOPE}
                  ORDER BY g.size_bytes DESC
-                 LIMIT ?2 OFFSET ?3",
+                 LIMIT ?2 OFFSET ?3"
+            ))?;
+            let it = st.query_map(
+                rusqlite::params![kind, limit as i64, offset as i64, settled as i32, library_id],
+                |r| {
+                    Ok(GroupRow {
+                        id: r.get(0)?,
+                        kind: r.get(1)?,
+                        reason: r.get(2)?,
+                        size_bytes: r.get(3)?,
+                        state: r.get(4)?,
+                        member_count: r.get(5)?,
+                        cover: r.get(6)?,
+                    })
+                },
             )?;
-            let it = st.query_map(rusqlite::params![kind, limit as i64, offset as i64, settled as i32], |r| {
-                Ok(GroupRow {
-                    id: r.get(0)?,
-                    kind: r.get(1)?,
-                    reason: r.get(2)?,
-                    size_bytes: r.get(3)?,
-                    state: r.get(4)?,
-                    member_count: r.get(5)?,
-                    cover: r.get(6)?,
-                })
-            })?;
             it.collect::<rusqlite::Result<Vec<_>>>()
         })
         .map_err(err)
@@ -422,19 +435,22 @@ pub struct CullSummary {
 
 /// 세 갈래의 현재 상태. 화면 상단에 "중복 1,956 · 같은순간 5,700" 식으로 쓴다.
 #[tauri::command]
-pub async fn cull_summary(state: State<'_, AppState>) -> Result<Vec<CullSummary>, String> {
+pub async fn cull_summary(
+    state: State<'_, AppState>,
+    library_id: Option<i64>,
+) -> Result<Vec<CullSummary>, String> {
     state
         .db
         .read(|c| {
-            let mut st = c.prepare(
+            // 범위를 걸면 장수도 그 무리들의 것이어야 한다 — 머리 숫자와 넘겨 보는 무리를 맞춘다
+            let scope = SCOPE.replace("?5", "?1");
+            let mut st = c.prepare(&format!(
                 "SELECT g.kind, COUNT(DISTINCT g.id),
-                        (SELECT COUNT(*) FROM group_members m
-                          JOIN groups g2 ON g2.id = m.group_id
-                          WHERE g2.kind = g.kind AND g2.state = 0),
+                        COALESCE(SUM((SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id)),0),
                         COALESCE(SUM(g.size_bytes),0)
-                 FROM groups g WHERE g.state = 0 GROUP BY g.kind ORDER BY g.kind",
-            )?;
-            let it = st.query_map([], |r| {
+                 FROM groups g WHERE g.state = 0 AND {scope} GROUP BY g.kind ORDER BY g.kind"
+            ))?;
+            let it = st.query_map([library_id], |r| {
                 Ok(CullSummary {
                     kind: r.get(0)?,
                     groups: r.get(1)?,
@@ -483,6 +499,42 @@ mod tests {
         })
         .unwrap();
         (d, db)
+    }
+
+    /// 범위 SQL 이 목록·집계에서 같은 무리를 고르는지 — 어긋나면 «머리 숫자와 넘겨 보는 무리가 다르다»
+    #[test]
+    fn scope_sql_matches_groups_whose_rejected_copy_is_in_that_library() {
+        let (_d, db) = seed(0);
+        // 파일 1(대표)은 라이브러리 1, 파일 2·3은 라이브러리 2 로 옮긴다
+        db.transaction(|tx| {
+            tx.execute("INSERT OR IGNORE INTO volumes(uuid,name,role) VALUES('V','v','library')", [])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO libraries(id,volume_uuid,rel_path,name) VALUES(1,'V','a','A'),(2,'V','b','B')",
+                [],
+            )?;
+            tx.execute("UPDATE folders SET library_id = 1", [])?;
+            tx.execute(
+                "INSERT OR REPLACE INTO folders(id,volume_uuid,rel_path,name,area,library_id)
+                 VALUES(2,'V','b','b',0,2)",
+                [],
+            )?;
+            tx.execute("UPDATE files SET folder_id = 2 WHERE id IN (2,3)", [])?;
+            Ok(())
+        })
+        .unwrap();
+        let count = |lib: Option<i64>| -> i64 {
+            db.read(|c| {
+                c.query_row(
+                    &format!("SELECT COUNT(*) FROM groups g WHERE {}", super::SCOPE.replace("?5", "?1")),
+                    [lib],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap()
+        };
+        assert_eq!(count(None), 1, "범위 없으면 전부");
+        assert_eq!(count(Some(2)), 1, "제외될 사본이 B 에 있다");
+        assert_eq!(count(Some(1)), 0, "A 엔 대표뿐이라 지울 것이 없다");
     }
 
     fn flags(db: &Db) -> Vec<i32> {

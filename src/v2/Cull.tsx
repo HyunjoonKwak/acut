@@ -107,9 +107,16 @@ export default function Cull({
   const [viewerFull, setViewerFull] = useState(false);
 
 
+  /// 범위 — «지워질 사본이 이 라이브러리에 있는 무리»만 본다. 목록·머리 숫자·모두 확정이
+  /// 모두 이 잣대를 쓴다 (2026-08-30: 모두 확정에만 걸려 있어 넘겨 보는 무리와 어긋났다)
+  const [scopeLib, setScopeLib] = useState<number | null>(null);
+  const scopeRef = useRef(scopeLib);
+  useEffect(() => {
+    scopeRef.current = scopeLib;
+  }, [scopeLib]);
   const loadSummary = useCallback(async () => {
     try {
-      setSummary(await invoke<Summary[]>("cull_summary"));
+      setSummary(await invoke<Summary[]>("cull_summary", { libraryId: scopeRef.current }));
     } catch (e) {
       toast(String(e), "drop");
     }
@@ -129,8 +136,6 @@ export default function Cull({
   /// 무리는 200개씩 — 끝에 가까워지면 다음 200개를 이어 붙인다 (처리한 무리는 목록에서 빠지니
   /// 다음 쪽의 offset 은 «지금 들고 있는 미결 수»다)
   const [groupsDone, setGroupsDone] = useState(false);
-  /// «모두 확정»의 범위 — null 이면 전체
-  const [scopeLib, setScopeLib] = useState<number | null>(null);
   const libs = useData((s) => s.libs);
   const loadingMore = useRef(false);
   const loadGroups = useCallback(async (k: number) => {
@@ -142,7 +147,12 @@ export default function Cull({
     }
     let g: Group[];
     try {
-      g = await invoke<Group[]>("cull_groups", { kind: k, limit: PAGE_GROUPS, offset: 0 });
+      g = await invoke<Group[]>("cull_groups", {
+        kind: k,
+        limit: PAGE_GROUPS,
+        offset: 0,
+        libraryId: scopeRef.current,
+      });
     } catch (e) {
       toast(String(e), "drop");
       return;
@@ -163,6 +173,7 @@ export default function Cull({
         kind: k,
         limit: PAGE_GROUPS,
         offset: groups.length,
+        libraryId: scopeRef.current,
       });
       if (gen !== groupsGen.current || k !== kindRef.current) return;
       setGroupsDone(more.length < PAGE_GROUPS);
@@ -247,20 +258,25 @@ export default function Cull({
     [kind, ask, loadSummary, loadGroups],
   );
 
-  // 갈래를 바꾸면 요약과 그룹을 새로 읽는다. 다른 데서 쓰는 loadSummary·
+  // 갈래나 범위를 바꾸면 요약과 그룹을 새로 읽는다. 다른 데서 쓰는 loadSummary·
   // loadGroups를 여기서 부르지 않는 이유: 컴파일러가 그 안의 setState를
   // «효과 안에서 바로»로 본다. 여기서는 then으로 풀어 쓴다.
   useEffect(() => {
     let live = true;
     const gen = ++groupsGen.current;
-    invoke<Summary[]>("cull_summary")
+    invoke<Summary[]>("cull_summary", { libraryId: scopeLib })
       .then((s) => live && setSummary(s))
       .catch((e) => live && toast(String(e), "drop"));
     // 폴더 탭은 무리를 안 쓴다 — 비우되, 효과 안에서 바로 setState 하지 않는다(컴파일러 규칙)
     const load =
       kind === -3 || kind === -4
         ? Promise.resolve([] as Group[])
-        : invoke<Group[]>("cull_groups", { kind, limit: PAGE_GROUPS, offset: 0 });
+        : invoke<Group[]>("cull_groups", {
+            kind,
+            limit: PAGE_GROUPS,
+            offset: 0,
+            libraryId: scopeLib,
+          });
     load.then(
       (g) => {
         if (!live || gen !== groupsGen.current) return;
@@ -272,7 +288,7 @@ export default function Cull({
     return () => {
       live = false;
     };
-  }, [kind]);
+  }, [kind, scopeLib]);
 
   // 현재 그룹의 구성원
   const current = groups[idx];
@@ -567,29 +583,37 @@ export default function Cull({
             </button>
           );
         })}
-        {!scanning && (kind === 0 || kind === 1) && groups.length > 0 && (
+        {!scanning && (kind === 0 || kind === 1) && (
           <span className="flex items-center gap-1.5">
-            {/* 범위 — 제외될 사본이 이 라이브러리에 있는 무리만. «연도별 안 사본만 먼저» 같은 흐름 */}
-            <select
-              value={scopeLib ?? ""}
-              onChange={(e) => setScopeLib(e.target.value === "" ? null : Number(e.target.value))}
-              title="모두 확정의 범위 — 제외될 사본이 이 라이브러리에 있는 무리만"
-              className="h-control rounded-md bg-raised text-fg text-[12px] px-1.5 ring-1 ring-line-strong"
-            >
-              <option value="">전체 라이브러리</option>
-              {libs.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}의 사본만
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "", scopeLib)}
-              title="미결 무리를 한꺼번에 확정 — 공용·내사진 안의 사본이 있는 무리는 건너뜁니다"
-              className="h-control px-3 rounded-md text-[12.5px] bg-keep text-keep-fg font-semibold"
-            >
-              모두 확정
-            </button>
+            {/* 범위 — 지워질 사본이 이 라이브러리에 있는 무리만 본다. 목록·숫자·모두 확정에 다 걸린다.
+                조작할 것으로 보이게 라벨을 붙이고 테두리를 진하게 (2026-08-30: «이 메뉴는 처음 봤어») */}
+            <label className="flex items-center gap-1.5 text-[12px] text-fg-dim">
+              범위
+              <select
+                value={scopeLib ?? ""}
+                onChange={(e) => setScopeLib(e.target.value === "" ? null : Number(e.target.value))}
+                title="지워질 사본이 이 라이브러리에 있는 무리만 봅니다 — 목록·숫자·모두 확정에 모두 걸립니다"
+                className="h-control rounded-md bg-raised text-fg text-[12px] px-2 ring-2 ring-accent/70 hover:ring-accent focus:ring-accent outline-none"
+              >
+                <option value="">전체 라이브러리</option>
+                {libs.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}의 사본만
+                  </option>
+                ))}
+              </select>
+            </label>
+            {groups.length > 0 && (
+              <button
+                onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "", scopeLib)}
+                title="지금 범위의 미결 무리를 한꺼번에 확정 — 공용·내사진 안의 사본이 있는 무리는 건너뜁니다"
+                className="h-control px-3 rounded-md text-[12.5px] bg-keep text-keep-fg font-semibold"
+              >
+                {scopeLib === null
+                  ? "모두 확정"
+                  : `${libs.find((l) => l.id === scopeLib)?.name ?? ""}의 사본 모두 확정`}
+              </button>
+            )}
           </span>
         )}
         {!scanning && (toCleanAll?.files ?? 0) > 0 && (

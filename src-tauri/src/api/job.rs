@@ -10,7 +10,7 @@ use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::rc::Retained;
 use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// 일이 도는 동안 들고 있는다. 떨어뜨리면 스위치가 꺼지고 활동이 끝난다.
 pub struct JobGuard {
@@ -29,19 +29,33 @@ pub fn try_start(running: &Arc<AtomicBool>, reason: &str) -> Option<JobGuard> {
     try_start_with(running, reason, false)
 }
 
-/// 사용자 명령용 — 스위치가 잠깐 잡혀 있으면(폴더 감시가 폴더 하나 훑는 중) 조금 기다렸다가 잡는다.
+/// «사용자가 기다리는 중» 깃발 — 감시(폴더 재스캔·썸네일)가 이걸 보면 하던 판을 멈추고 양보한다.
+/// 감시가 썸네일을 만드는 동안 스위치를 몇 분씩 쥐면 20초 대기로도 «다른 작업이 도는 중»으로
+/// 튕긴다 (2026-08-31 «영구히 비우기 실패»). 썸네일의 cancel 로도 그대로 쓴다.
+static WAITING: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+pub fn waiting() -> Arc<AtomicBool> {
+    Arc::clone(WAITING.get_or_init(|| Arc::new(AtomicBool::new(false))))
+}
+
+/// 사용자 명령용 — 스위치가 잡혀 있으면 기다렸다가 잡는다. 기다리는 동안 깃발을 올려
+/// 감시가 다음 폴더로 넘어가지 않고 양보하게 한다.
 /// 바로 «다른 작업이 도는 중»으로 튕기면 큰 이동 뒤 감시가 훑는 몇 분 동안 아무것도 못 한다 (실측 2026-08-30)
 pub fn try_start_wait(running: &Arc<AtomicBool>, reason: &str, wait: std::time::Duration) -> Option<JobGuard> {
+    let flag = waiting();
+    flag.store(true, Ordering::Release);
     let until = std::time::Instant::now() + wait;
-    loop {
+    let out = loop {
         if let Some(g) = try_start(running, reason) {
-            return Some(g);
+            break Some(g);
         }
         if std::time::Instant::now() >= until {
-            return None;
+            break None;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    };
+    flag.store(false, Ordering::Release);
+    out
 }
 
 /// 뒤에서 도는 일(폴더 감시)용 — 잠자기를 막지 않는다. 사용자가 시킨 일은 `UserInitiated`

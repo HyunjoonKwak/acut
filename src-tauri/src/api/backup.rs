@@ -248,7 +248,7 @@ pub async fn backup_run(app: AppHandle) -> Result<(), String> {
         .unwrap_or_else(|e| e.into_inner())
         .take()
         .ok_or("먼저 「살펴보기」를 누르세요")?;
-    let Some(guard) = job::try_start(&state.running, "에이컷 백업") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 백업", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let cancel = Arc::clone(&state.cancel);

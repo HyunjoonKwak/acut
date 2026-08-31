@@ -191,7 +191,18 @@ impl Watchers {
                 // **폴더 하나마다** 잡았다 놓는다 — 3만 장을 옮긴 뒤 수천 폴더를 훑는 동안 통째로
                 // 쥐고 있으면 그동안 휴지통으로·정리 같은 사용자 명령이 전부 튕긴다 (실측 2026-08-30)
                 let mut rest = due.into_iter();
+                let user_waiting = crate::api::job::waiting();
                 while let Some((library_id, dir)) = rest.next() {
+                    // 사용자 명령이 스위치를 기다리는 중이면 이번 판을 접고 양보한다 —
+                    // 감시는 다음 틱에 이어서 한다 (2026-08-31 «영구히 비우기 실패»)
+                    if user_waiting.load(Ordering::Acquire) {
+                        let mut p = pending.lock().unwrap_or_else(|e| e.into_inner());
+                        p.entry((library_id, dir)).or_insert_with(Instant::now);
+                        for k in rest {
+                            p.entry(k).or_insert_with(Instant::now);
+                        }
+                        break;
+                    }
                     let Some(_guard) = crate::api::job::try_start_with(&running, "에이컷 폴더 감시", true) else {
                         // 사용자 일이 도는 중 — 이것과 나머지를 되돌려 놓고 다음 틱에
                         let mut p = pending.lock().unwrap_or_else(|e| e.into_inner());
@@ -246,10 +257,11 @@ fn rescan_dir(
     };
     out.removed = crate::scan::prune_missing(db, &mount, library_id, &rel).unwrap_or(0);
 
-    if out.inserted > 0 {
-        // 앱의 멈춤 스위치를 같이 본다 — 제 것을 새로 만들면 «멈추기»가 이 썸네일 작업엔 안 닿는다
+    if out.inserted > 0 && !cancel.load(Ordering::Relaxed) {
+        // 멈춤 신호로 «사용자가 기다리는 중» 깃발을 준다 — 썸네일이 몇 분씩 스위치를 쥐고
+        // 사용자 명령을 굶기지 않게. 못 만든 썸네일은 다음 판에 이어서 만든다 (재개 가능)
         let cache_root = crate::media::cache::cache_root(cache_base, library_id);
-        let _ = crate::scan::thumbs::generate(db, library_id, &mount, &cache_root, Arc::clone(cancel), |_| {});
+        let _ = crate::scan::thumbs::generate(db, library_id, &mount, &cache_root, crate::api::job::waiting(), |_| {});
     }
     if out.inserted + out.updated + out.removed == 0 {
         return None;

@@ -759,7 +759,7 @@ pub async fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -
     let cache_root = state.cache_root(library_id);
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
-    let Some(guard) = job::try_start(&state.running, "에이컷 가져오기") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 가져오기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤 가져오세요".into());
     };
     cancel.store(false, Ordering::Relaxed);
@@ -1082,7 +1082,7 @@ pub async fn ai_embed_start(app: AppHandle) -> Result<(), String> {
     if !models::present(&state.cache_base, ModelId::ClipVision) {
         return Err("모델이 없습니다 — 설정 › AI에서 받으세요".into());
     }
-    let Some(guard) = job::try_start(&state.running, "에이컷 AI 벡터") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 AI 벡터", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1163,7 +1163,7 @@ pub async fn folder_size(state: State<'_, AppState>, folder_id: i64) -> Result<c
 #[tauri::command]
 pub async fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start(&state.running, "에이컷 옮기기") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 옮기기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1193,7 +1193,7 @@ pub async fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64
 #[tauri::command]
 pub async fn folder_merge(app: AppHandle, library_id: i64, src_rel: String, dst_rel: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start(&state.running, "에이컷 폴더 합치기") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 폴더 합치기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1261,7 +1261,7 @@ pub async fn folder_leftovers(state: State<'_, AppState>, library_id: i64, rel: 
 #[tauri::command]
 pub async fn folder_merge_rest(app: AppHandle, library_id: i64, src_rel: String, dst_rel: String) -> Result<crate::ops::trash::Outcome, String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start(&state.running, "에이컷 폴더 합치기") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 폴더 합치기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1351,7 +1351,7 @@ pub struct VideoDatesDone {
 #[tauri::command]
 pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start(&state.running, "에이컷 영상 촬영일") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 영상 촬영일", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1435,7 +1435,7 @@ pub async fn ai_faces_start(app: AppHandle) -> Result<(), String> {
     if !models::face_present(&state.cache_base) {
         return Err("얼굴 모델이 없습니다 — 설정 › AI에서 받으세요".into());
     }
-    let Some(guard) = job::try_start(&state.running, "에이컷 얼굴 찾기") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 얼굴 찾기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);

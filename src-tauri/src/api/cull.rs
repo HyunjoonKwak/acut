@@ -63,7 +63,7 @@ pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
     let cancel = Arc::clone(&state.cancel);
     // 스캔·벡터와 같은 스위치 — 같이 돌면 DB와 디스크를 다툰다. 상태바에 보이고
     // 창이 뒤로 가도 App Nap에 걸리지 않는다 (해시는 한 시간도 걸린다).
-    let Some(guard) = job::try_start(&state.running, "에이컷 고르기") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 고르기", std::time::Duration::from_secs(20)) else {
         return Err("다른 일이 도는 중입니다 — 끝난 뒤 «다시 찾기»를 눌러 주세요".into());
     };
     cancel.store(false, Ordering::Relaxed);
@@ -391,7 +391,7 @@ pub async fn cull_folder_pairs_apply(
 #[tauri::command]
 pub async fn cull_hash_folders(app: AppHandle, folder_ids: Vec<i64>) -> Result<usize, String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start(&state.running, "에이컷 해시 계산") else {
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 해시 계산", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);

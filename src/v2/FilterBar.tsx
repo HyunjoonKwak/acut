@@ -25,9 +25,12 @@ const FLAGS: { v: number; label: string; tone: "keep" | "drop" | undefined }[] =
 export default function FilterButton({
   value,
   onChange,
+  compact = false,
 }: {
   value: Picks;
   onChange: (p: Picks) => void;
+  /** 좁은 창 — 아이콘만 (풍선이 이름을 말한다) */
+  compact?: boolean;
 }) {
   const set = (patch: Partial<Picks>) => onChange({ ...value, ...patch });
 
@@ -51,7 +54,7 @@ export default function FilterButton({
       trigger={() => (
         <Btn active={on} title="찾기">
           <span className={on ? "text-accent" : undefined}>⌕</span>
-          찾기
+          {!compact && "찾기"}
           {on && <span className="w-1.5 h-1.5 rounded-full bg-accent" />}
         </Btn>
       )}

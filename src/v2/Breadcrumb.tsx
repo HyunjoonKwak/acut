@@ -10,6 +10,7 @@ export default function Breadcrumb({
   folder,
   viewTrash,
   matched,
+  compact = false,
 }: {
   libs: { id: number; name: string; online: boolean }[];
   libId: number | null;
@@ -18,12 +19,16 @@ export default function Breadcrumb({
   viewTrash: boolean;
   /** 지금 조건에 걸린 장수 */
   matched: number;
+  /** 좁은 창 — 앞 조각을 «…»로 접고 현재 폴더만 남긴다. 전체 경로는 풍선에 */
+  compact?: boolean;
 }) {
   const lib = libs.find((l) => l.id === libId);
 
-  const parts: string[] = viewTrash
+  const full: string[] = viewTrash
     ? ["휴지통"]
     : [lib ? lib.name : "전체", ...(folder ? folder.split("/") : [])];
+  const parts = compact && full.length > 1 ? ["…", full[full.length - 1]] : full;
+  const fullPath = full.join(" › ");
 
   return (
     <div className="flex items-baseline gap-2 min-w-0">
@@ -37,7 +42,7 @@ export default function Breadcrumb({
                   ? "text-fg text-[15px] font-semibold"
                   : "text-fg-mute text-[13.5px]"
               }`}
-              title={p}
+              title={p === "…" ? fullPath : p}
             >
               {p}
             </span>

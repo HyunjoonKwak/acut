@@ -48,12 +48,15 @@ function Cycle<T extends { v: string; label: string; Icon: IconOf }>({
   value,
   onChange,
   what,
+  compact = false,
 }: {
   items: T[];
   value: string;
   onChange: (v: T["v"]) => void;
   /** 이름표 앞에 붙는 말 — «보기» */
   what: string;
+  /** 좁은 창 — 아이콘만 (풍선이 상태를 말한다) */
+  compact?: boolean;
 }) {
   const [hover, setHover] = useState(false);
   const cur = items.find((x) => x.v === value) ?? items[0];
@@ -70,7 +73,7 @@ function Cycle<T extends { v: string; label: string; Icon: IconOf }>({
         bg-raised text-fg-dim hover:text-fg transition-colors"
     >
       <cur.Icon className="w-[17px] h-[17px]" />
-      <span className="text-[13px]">{cur.label}</span>
+      {!compact && <span className="text-[13px]">{cur.label}</span>}
       {hover && (
         <Tip>
           {what}: {cur.label} → 누르면 {nxt.label}
@@ -120,15 +123,17 @@ export default function ViewBar({
   onStyle,
   filmstrip,
   onFilmstrip,
+  compact = false,
 }: {
   style: GridStyle;
   onStyle: (s: GridStyle) => void;
   filmstrip: boolean;
   onFilmstrip: (v: boolean) => void;
+  compact?: boolean;
 }) {
   return (
     <div className="flex items-center gap-1">
-      <Cycle items={STYLES} value={style} onChange={onStyle} what="보기" />
+      <Cycle items={STYLES} value={style} onChange={onStyle} what="보기" compact={compact} />
       <ViewToggle
         label="필름스트립"
         on={filmstrip}

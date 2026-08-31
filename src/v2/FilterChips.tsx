@@ -12,14 +12,29 @@ export default function FilterChips({
   value,
   onChange,
   tagName,
+  collapsed = false,
 }: {
   value: Picks;
   onChange: (p: Picks) => void;
   /** 태그 id로 이름을 찾는다 */
   tagName: (id: number) => string | undefined;
+  /** 좁은 창 — 칩들을 «필터 N» 하나로 접는다. 내용은 풍선에, 누르면 전부 지움 */
+  collapsed?: boolean;
 }) {
   const items = chips(value, tagName);
   if (items.length === 0) return null;
+
+  if (collapsed) {
+    return (
+      <button
+        onClick={() => onChange(EMPTY)}
+        title={`걸린 조건: ${items.map((c) => c.label).join(" · ")} — 누르면 모두 지웁니다. 고치려면 찾기(⌕)`}
+        className="h-control px-2 rounded-md bg-raised text-[12.5px] text-accent shrink-0 whitespace-nowrap"
+      >
+        필터 {items.length} ✕
+      </button>
+    );
+  }
 
   return (
     <div className="flex items-center gap-1 min-w-0">

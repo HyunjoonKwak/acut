@@ -1,4 +1,5 @@
 import { fmtBytes } from "./format";
+import { useViewportW } from "./useViewportW";
 import { usePref } from "./prefs";
 import { useSelection } from "./selectionStore";
 import { Sep } from "./ui";
@@ -29,6 +30,9 @@ export default function SelectionPanel({
   onRestore?: (ids: number[]) => Promise<boolean>;
   onDelete?: (ids: number[]) => Promise<boolean>;
 }) {
+  // 좁은 창 — 별점·나란히 보기를 접어 핵심(남김·제외·정리·휴지통)이 밀려나지 않게.
+  // 훅이라 이른 반환(휴지통 모드)보다 먼저 부른다
+  const narrow = useViewportW() < 880;
   const picked = useSelection((s) => s.picked);
   const clearPicked = useSelection((s) => s.clearPicked);
   const viewTrash = useView((s) => s.viewTrash);
@@ -93,7 +97,7 @@ export default function SelectionPanel({
         </span>
       </div>
       <Sep />
-      {picked.size >= 2 && (
+      {picked.size >= 2 && !narrow && (
         <PanelBtn onClick={() => setUi({ comparing: compareIds })}>
           나란히 보기
         </PanelBtn>
@@ -107,6 +111,7 @@ export default function SelectionPanel({
       <PanelBtn onClick={() => markPicked({ favorite: true })} hint="F">
         즐겨찾기
       </PanelBtn>
+      {!narrow && (
       <div className="flex items-center gap-0.5 px-1">
         {[1, 2, 3, 4, 5].map((n) => (
           <button
@@ -119,6 +124,7 @@ export default function SelectionPanel({
           </button>
         ))}
       </div>
+      )}
       <Sep />
       <button
         onClick={() => setUi({ organizing: true })}

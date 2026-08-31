@@ -12,6 +12,7 @@ import { usePref } from "./prefs";
 import { Btn, Sep } from "./ui";
 import { useUi } from "./uiStore";
 import { useView } from "./viewStore";
+import { useViewportW } from "./useViewportW";
 import type { FileRow, Mark } from "./types";
 
 /**
@@ -49,6 +50,12 @@ export default function Toolbar({
   const [filmstrip, setFilmstrip] = usePref("filmstrip");
   const [infoPanel, setInfoPanel] = usePref("infoPanel");
   const [thumbSize, setThumbSize] = usePref("thumbSize");
+  // 접히는 순서 사다리(2026-08-31): 장식부터 접고 위치는 끝까지 남긴다.
+  // s1(<1280) 단추 라벨 → s2(<1080) 슬라이더·보기 라벨·브레드크럼 압축 → s3(<880) 필터 칩 접힘
+  const w = useViewportW();
+  const s1 = w < 1280;
+  const s2 = w < 1080;
+  const s3 = w < 880;
 
   return (
     <div className="h-12 shrink-0 flex items-center gap-2 px-3 bg-chrome border-b border-line">
@@ -61,12 +68,14 @@ export default function Toolbar({
           folder={sel?.path ?? null}
           viewTrash={viewTrash}
           matched={matched}
+          compact={s2}
         />
 
         <FilterChips
           value={picks}
           onChange={setPicks}
           tagName={(id) => tags.get(id)}
+          collapsed={s3}
         />
       </div>
 
@@ -76,23 +85,26 @@ export default function Toolbar({
         // 창이 좁아져도 조작부는 줄어들지 않는다 — 먼저 줄어들 것은
         // 왼쪽의 빵부스러기와 조건 칩이다
         <div className="flex items-center gap-2 shrink-0">
-          <FilterButton value={picks} onChange={setPicks} />
-          <SortMenu value={sort} onChange={setSort} />
-          <GroupMenu value={group} onChange={setGroup} />
-          <input
-            type="range"
-            min={100}
-            max={320}
-            value={thumbSize}
-            onChange={(e) => setThumbSize(+e.target.value)}
-            title="썸네일 크기"
-            className="w-20 accent-accent"
-          />
+          <FilterButton value={picks} onChange={setPicks} compact={s1} />
+          <SortMenu value={sort} onChange={setSort} compact={s1} />
+          <GroupMenu value={group} onChange={setGroup} compact={s1} />
+          {!s2 && (
+            <input
+              type="range"
+              min={100}
+              max={320}
+              value={thumbSize}
+              onChange={(e) => setThumbSize(+e.target.value)}
+              title="썸네일 크기"
+              className="w-20 accent-accent"
+            />
+          )}
           <ViewBar
             style={gridStyle}
             onStyle={setGridStyle}
             filmstrip={filmstrip}
             onFilmstrip={setFilmstrip}
+            compact={s2}
           />
           {/* 경계선 오른쪽은 «사진을 다루는 일» — 고르고, 골라내고, 들여다본다 (Lap의 배치) */}
           <Sep />

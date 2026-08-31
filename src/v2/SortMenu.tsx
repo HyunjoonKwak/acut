@@ -4,17 +4,20 @@ import { SORT_ITEMS as ITEMS, sortLabel, type Sort } from "./sortItems";
 export default function SortMenu({
   value,
   onChange,
+  compact = false,
 }: {
   value: Sort;
   onChange: (s: Sort) => void;
+  /** 좁은 창 — 방향 화살표만 */
+  compact?: boolean;
 }) {
   return (
     <Menu
       align="right"
       trigger={() => (
-        <Btn title="정렬 기준">
+        <Btn title={`정렬: ${sortLabel(value)}`}>
           <span className="text-fg-mute">{value.desc ? "↓" : "↑"}</span>
-          {sortLabel(value)}
+          {!compact && sortLabel(value)}
         </Btn>
       )}
     >

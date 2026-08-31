@@ -4,9 +4,12 @@ import { GROUP_ITEMS as ITEMS, type GroupBy } from "./groupItems";
 export default function GroupMenu({
   value,
   onChange,
+  compact = false,
 }: {
   value: GroupBy;
   onChange: (g: GroupBy) => void;
+  /** 좁은 창 — 아이콘만 */
+  compact?: boolean;
 }) {
   const cur = ITEMS.find((i) => i.by === value) ?? ITEMS[0];
   const on = value !== "none";
@@ -14,9 +17,9 @@ export default function GroupMenu({
     <Menu
       align="right"
       trigger={() => (
-        <Btn active={on} title="묶어 보기">
+        <Btn active={on} title={on ? `묶기: ${cur.label}` : "묶어 보기"}>
           <span className={on ? "text-accent" : undefined}>▤</span>
-          {on ? cur.label : "묶기"}
+          {!compact && (on ? cur.label : "묶기")}
         </Btn>
       )}
     >

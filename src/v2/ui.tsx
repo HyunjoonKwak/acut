@@ -115,11 +115,14 @@ export function Menu({
   children,
   align = "left",
   width,
+  up = false,
 }: {
   trigger: (open: boolean) => React.ReactNode;
   children: (close: () => void) => React.ReactNode;
   align?: "left" | "right";
   width?: number;
+  /** 상태바처럼 화면 아래 붙은 자리에선 위로 연다 */
+  up?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -143,7 +146,7 @@ export function Menu({
       <div onClick={() => setOpen((o) => !o)}>{trigger(open)}</div>
       {open && (
         <div
-          className={`absolute top-9 z-40 bg-raised rounded-lg ring-1 ring-line-strong
+          className={`absolute ${up ? "bottom-full mb-1.5" : "top-9"} z-40 bg-raised rounded-lg ring-1 ring-line-strong
             shadow-2xl shadow-black/50 py-1 ${align === "right" ? "right-0" : "left-0"}`}
           style={{ minWidth: width ?? 150 }}
         >

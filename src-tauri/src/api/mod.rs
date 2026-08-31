@@ -741,6 +741,13 @@ mod tests {
         assert_eq!(r, 5);
     }
 
+    /// 재로드 판별과 페이지 기준 계산 — 페이지가 늦게 떠도 음수가 되지 않는다
+    #[test]
+    fn reload_grid_time_is_measured_from_the_page_not_the_process() {
+        assert_eq!(ms_since_page(1_051_545, 1_050_500), 1_045);
+        assert_eq!(ms_since_page(100, 200), 0, "시계가 어긋나도 음수 대신 0");
+    }
+
     #[test]
     fn clearing_one_library_keeps_other_thumbnail_rows() {
         let dir = tempfile::tempdir().unwrap();
@@ -1373,20 +1380,39 @@ pub async fn frontend_log(app: AppHandle, level: String, msg: String) -> Result<
     writeln!(f, "{stamp} [{level}] {msg}").map_err(|e| e.to_string())
 }
 
+/// 이 프로세스에서 이미 한 번 보고했나 — 그 뒤의 보고는 감시견의 웹뷰 재로드다.
+/// 재로드를 프로세스 시작 기준으로 재면 «첫 그리드 1,051,545ms» 같은 값이 남는다 (2026-08-31)
+static STARTUP_REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 페이지(웹뷰 세션) 기준 경과 — 프로세스 기준 now 에서 페이지 시작 시각을 뺀다
+pub(crate) fn ms_since_page(now_ms: u64, page_started_ms: u64) -> u64 {
+    now_ms.saturating_sub(page_started_ms)
+}
+
 /// 첫 그리드가 그려진 순간 화면이 부른다 — 시작 시간을 재서 설정에 남긴다.
 /// 성능 목표 «앱 시작 1초»를 눈대중이 아니라 숫자로 본다.
+/// 최초 시작만 `startup.last` 에 남고, 웹뷰 재로드는 `startup.reload_last` 로 따로 남는다.
 #[tauri::command]
 pub async fn startup_report(state: State<'_, AppState>, marks: serde_json::Value) -> Result<StartupInfo, String> {
+    let now_ms = crate::started().elapsed().as_millis() as u64;
+    let page_started = crate::PAGE_MS[0].load(Ordering::Relaxed);
+    let reload = STARTUP_REPORTED.swap(true, Ordering::AcqRel);
     let info = StartupInfo {
         db_ms: state.db_ready_ms,
-        first_grid_ms: crate::started().elapsed().as_millis() as u64,
+        // 재로드면 프로세스 기준이 아니라 이 웹뷰 세션 기준으로 잰다
+        first_grid_ms: if reload { ms_since_page(now_ms, page_started) } else { now_ms },
         at: chrono::Utc::now().timestamp(),
         marks,
-        page_started_ms: crate::PAGE_MS[0].load(Ordering::Relaxed),
+        page_started_ms: page_started,
         page_finished_ms: crate::PAGE_MS[1].load(Ordering::Relaxed),
     };
-    log::info!("시작 — DB {}ms · 첫 화면 {}ms · {}", info.db_ms, info.first_grid_ms, info.marks);
-    crate::db::settings::set(&state.db, "startup.last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
+    if reload {
+        log::info!("웹뷰 다시 불러옴 — 페이지 기준 그리드 {}ms · {}", info.first_grid_ms, info.marks);
+        crate::db::settings::set(&state.db, "startup.reload_last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
+    } else {
+        log::info!("시작 — DB {}ms · 첫 화면 {}ms · {}", info.db_ms, info.first_grid_ms, info.marks);
+        crate::db::settings::set(&state.db, "startup.last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
+    }
     Ok(info)
 }
 

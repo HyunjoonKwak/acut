@@ -154,8 +154,35 @@ fn configure(c: &Connection, read_only: bool) -> rusqlite::Result<()> {
         // DB 파일 속성 — 한 번만 설정되면 유지되지만 매번 확인해도 무해하다.
         c.pragma_update(None, "journal_mode", "WAL")?;
         c.execute_batch("PRAGMA synchronous = NORMAL;")?;
+        // 체크포인트가 성공할 때 WAL 파일을 이 크기까지 되감는다 — 대량 해시 뒤
+        // 645MB 로 남던 것(실측 2026-08-31). 긴 읽기가 물고 있으면 못 줄이므로
+        // 유휴 때 checkpoint_truncate 가 마저 자른다.
+        c.execute_batch("PRAGMA journal_size_limit = 67108864;")?; // 64 MiB
     }
     Ok(())
+}
+
+impl Db {
+    /// WAL 을 본체에 옮겨 적고 파일을 0 으로 자른다. 성공하면 true, 읽기가 물고
+    /// 있어 못 잘랐으면 false — 다음 유휴 때 다시 하면 된다. 쓰기 연결을 잠그므로
+    /// 유휴(작업 스위치가 빈) 때만 부를 것.
+    pub fn checkpoint_truncate(&self) -> Result<bool> {
+        self.write(|c| {
+            let (busy, _log, _ckpt): (i64, i64, i64) = c.query_row(
+                "PRAGMA wal_checkpoint(TRUNCATE)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            Ok(busy == 0)
+        })
+    }
+
+    /// WAL 파일의 현재 크기 — 유지보수 스레드가 «자를 만큼 컸나»를 본다.
+    pub fn wal_size(&self) -> u64 {
+        let mut p = self.path.clone().into_os_string();
+        p.push("-wal");
+        std::fs::metadata(std::path::PathBuf::from(p)).map(|m| m.len()).unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
@@ -166,6 +193,35 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let db = Db::open(dir.path().join("test.db")).expect("open");
         (dir, db)
+    }
+
+    #[test]
+    fn wal_is_truncated_when_idle_and_size_limit_is_set() {
+        let (_d, db) = temp_db();
+        let limit: i64 = db
+            .write(|c| c.query_row("PRAGMA journal_size_limit", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(limit, 67_108_864, "쓰기 연결에 WAL 상한이 걸려 있어야 한다");
+
+        // 대량 쓰기로 WAL 을 키운다
+        db.transaction(|tx| {
+            tx.execute("CREATE TABLE IF NOT EXISTS blob_t(x BLOB)", [])?;
+            let big = vec![7u8; 1024 * 1024];
+            for _ in 0..8 {
+                tx.execute("INSERT INTO blob_t(x) VALUES(?1)", [&big])?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert!(db.wal_size() > 1024 * 1024, "WAL 이 자랐어야 한다: {}", db.wal_size());
+
+        assert!(db.checkpoint_truncate().unwrap(), "읽기가 없으니 잘려야 한다");
+        assert_eq!(db.wal_size(), 0, "TRUNCATE 뒤 WAL 은 0 바이트");
+
+        // 자른 뒤에도 읽기·쓰기가 멀쩡하다
+        let n: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM blob_t", [], |r| r.get(0))).unwrap();
+        assert_eq!(n, 8);
+        db.write(|c| c.execute("INSERT INTO blob_t(x) VALUES(x'00')", [])).unwrap();
     }
 
     #[test]

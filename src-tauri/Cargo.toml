@@ -1,6 +1,6 @@
 [package]
 name = "acut"
-version = "0.5.0"
+version = "0.5.1"
 description = "에이컷 - 사진을 고르고 정리해 NAS로 올리는 컬링 스테이션"
 authors = ["에이컷"]
 license = "MIT"
@@ -16,11 +16,9 @@ tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
 # Tauri
-tauri = { version = "2.10.3", features = ["protocol-asset"] }
+tauri = { version = "2.10.3", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
-tauri-plugin-shell = "2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

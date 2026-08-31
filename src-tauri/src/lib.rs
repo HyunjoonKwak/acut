@@ -30,8 +30,6 @@ pub fn run() {
     let _ = started();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
         .register_asynchronous_uri_scheme_protocol("thumb", |ctx, req, responder| {
             api::thumb_protocol::handle(ctx.app_handle(), req, responder);
         })
@@ -94,6 +92,35 @@ pub fn run() {
                         Err(e) => log::warn!("자동 백업 실패: {e}"),
                     }
                 });
+            }
+
+            // WAL 관리 — 대량 쓰기 뒤 수백 MB 로 남는 일지를 유휴 때 자른다.
+            // 작업 스위치가 잡혀 있거나 사용자가 기다리는 중이면 건드리지 않고,
+            // 64MB 아래면 할 일이 없다. 실패(읽기가 물고 있음)해도 다음 차례에 다시.
+            {
+                let state = app.state::<api::AppState>();
+                let db = std::sync::Arc::clone(&state.db);
+                let running = std::sync::Arc::clone(&state.running);
+                std::thread::Builder::new()
+                    .name("acut-db-maint".into())
+                    .spawn(move || loop {
+                        std::thread::sleep(std::time::Duration::from_secs(300));
+                        if running.load(std::sync::atomic::Ordering::Acquire)
+                            || api::job::waiting().load(std::sync::atomic::Ordering::Acquire)
+                            || db.wal_size() < 64 * 1024 * 1024
+                        {
+                            continue;
+                        }
+                        let Some(_guard) = api::job::try_start_with(&running, "에이컷 DB 정리", true) else {
+                            continue;
+                        };
+                        match db.checkpoint_truncate() {
+                            Ok(true) => log::info!("WAL 정리 — 일지를 본체에 옮기고 잘랐다"),
+                            Ok(false) => log::info!("WAL 정리 미룸 — 읽기가 물고 있다"),
+                            Err(e) => log::warn!("WAL 정리 실패: {e}"),
+                        }
+                    })
+                    .expect("DB 유지보수 스레드");
             }
 
             // 검은 창 감시 — 메모리가 모자라 macOS가 웹뷰 프로세스를 내리면 창이

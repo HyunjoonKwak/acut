@@ -39,11 +39,13 @@ export function useScanEvents(cb: {
       subs.push(listen<T>(name, (e) => alive && f(e.payload)));
     };
 
-    on<boolean>("watch-busy", (b) => {
-      const MSG = "변경된 폴더 훑는 중…";
+    // 폴더 감시의 밀린 일 — 큰 이동 뒤엔 수백 폴더가 쌓여 몇 분 걸린다.
+    // 수가 줄어드는 게 보여야 «멈췄나»가 아니라 «하나씩 처리 중»으로 읽힌다
+    on<number>("watch-busy", (n) => {
+      const HEAD = "바뀐 폴더 다시 스캔 중";
       const cur = useData.getState().busy;
-      if (b) useData.getState().setBusy(MSG);
-      else if (cur === MSG) useData.getState().setBusy("");
+      if (n > 0) useData.getState().setBusy(`${HEAD} — ${n.toLocaleString()}개 남음`);
+      else if (cur.startsWith(HEAD)) useData.getState().setBusy("");
     });
     on<{ found: number; inserted: number; skipped: number }>(
       "scan-progress",

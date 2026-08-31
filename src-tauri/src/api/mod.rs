@@ -955,8 +955,8 @@ pub async fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String
             move |c| {
                 let _ = handle.emit("library-changed", c);
             },
-            move |b| {
-                let _ = busy_handle.emit("watch-busy", b);
+            move |n: usize| {
+                let _ = busy_handle.emit("watch-busy", n);
             },
         );
     }

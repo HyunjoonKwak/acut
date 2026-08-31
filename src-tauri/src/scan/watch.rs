@@ -163,8 +163,9 @@ impl Watchers {
         running: Arc<AtomicBool>,
         cancel: Arc<AtomicBool>,
         on_changed: impl Fn(Changed) + Send + 'static,
-        // 훑기 시작/끝 — 조용히 돌면 «이미 스캔 중»이 왜 뜨는지 보이지 않는다 (2026-08-31)
-        on_busy: impl Fn(bool) + Send + 'static,
+        // 남은 폴더 수(0 = 끝) — 조용히 돌면 «이미 스캔 중»이 왜 뜨는지 보이지 않고,
+        // 수가 줄어드는 게 보여야 «오래 걸린다»가 «밀린 폴더를 하나씩 처리 중»으로 읽힌다 (2026-08-31)
+        on_busy: impl Fn(usize) + Send + 'static,
     ) {
         if self.started.swap(true, Ordering::AcqRel) {
             return;
@@ -181,7 +182,10 @@ impl Watchers {
                 if due.is_empty() {
                     continue;
                 }
-                on_busy(true);
+                // 이번 판 + 아직 잠잠해지지 않은 것까지가 «남은 일»이다
+                let backlog = pending.lock().unwrap_or_else(|e| e.into_inner()).len();
+                let mut remaining = due.len() + backlog;
+                on_busy(remaining);
                 // 스위치는 JobGuard 로 잡는다 — 직접 켜고 끄면 스캔 중 패닉 한 번에 꺼지지
                 // 않아 모든 작업이 «다른 일이 도는 중»으로 영영 막힌다 (리뷰 H12).
                 // **폴더 하나마다** 잡았다 놓는다 — 3만 장을 옮긴 뒤 수천 폴더를 훑는 동안 통째로
@@ -200,8 +204,10 @@ impl Watchers {
                     if let Some(c) = rescan_dir(&db, &cache_base, library_id, &dir, &cancel) {
                         on_changed(c);
                     }
+                    remaining = remaining.saturating_sub(1);
+                    on_busy(remaining);
                 }
-                on_busy(false);
+                on_busy(0);
             })
             .expect("감시 스레드");
     }

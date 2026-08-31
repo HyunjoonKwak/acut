@@ -208,9 +208,11 @@ pub async fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     let cache_root = state.cache_root(lib.id);
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
-    // 이미 도는 중이면 새로 시작하지 않는다 — 두 벌이 같은 캐시에 쓴다
-    let Some(guard) = job::try_start(&state.running, "에이컷 스캔") else {
-        return Err("이미 스캔 중입니다".into());
+    // 이미 도는 중이면 새로 시작하지 않는다 — 두 벌이 같은 캐시에 쓴다.
+    // 폴더 감시가 잠깐 쥔 것이면 기다렸다 잡는다 — 조용한 감시 탓에 «이미 스캔 중»이
+    // 아무것도 안 보이는데 뜨던 문제 (2026-08-31)
+    let Some(guard) = job::try_start_wait(&state.running, "에이컷 스캔", std::time::Duration::from_secs(20)) else {
+        return Err("다른 작업이 아직 도는 중입니다 — 툴바의 작업 표시가 사라진 뒤 다시 눌러 주세요".into());
     };
     cancel.store(false, Ordering::Relaxed);
 
@@ -944,6 +946,7 @@ pub async fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String
     // 처리 스레드 — 한 번만 뜬다. 달라진 것을 프론트에 알린다.
     {
         let handle = app.clone();
+        let busy_handle = app.clone();
         w.run(
             Arc::clone(&state.db),
             state.cache_base.clone(),
@@ -951,6 +954,9 @@ pub async fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String
             Arc::clone(&state.cancel),
             move |c| {
                 let _ = handle.emit("library-changed", c);
+            },
+            move |b| {
+                let _ = busy_handle.emit("watch-busy", b);
             },
         );
     }

@@ -163,6 +163,8 @@ impl Watchers {
         running: Arc<AtomicBool>,
         cancel: Arc<AtomicBool>,
         on_changed: impl Fn(Changed) + Send + 'static,
+        // 훑기 시작/끝 — 조용히 돌면 «이미 스캔 중»이 왜 뜨는지 보이지 않는다 (2026-08-31)
+        on_busy: impl Fn(bool) + Send + 'static,
     ) {
         if self.started.swap(true, Ordering::AcqRel) {
             return;
@@ -179,6 +181,7 @@ impl Watchers {
                 if due.is_empty() {
                     continue;
                 }
+                on_busy(true);
                 // 스위치는 JobGuard 로 잡는다 — 직접 켜고 끄면 스캔 중 패닉 한 번에 꺼지지
                 // 않아 모든 작업이 «다른 일이 도는 중»으로 영영 막힌다 (리뷰 H12).
                 // **폴더 하나마다** 잡았다 놓는다 — 3만 장을 옮긴 뒤 수천 폴더를 훑는 동안 통째로
@@ -198,6 +201,7 @@ impl Watchers {
                         on_changed(c);
                     }
                 }
+                on_busy(false);
             })
             .expect("감시 스레드");
     }

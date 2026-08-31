@@ -39,6 +39,12 @@ export function useScanEvents(cb: {
       subs.push(listen<T>(name, (e) => alive && f(e.payload)));
     };
 
+    on<boolean>("watch-busy", (b) => {
+      const MSG = "변경된 폴더 훑는 중…";
+      const cur = useData.getState().busy;
+      if (b) useData.getState().setBusy(MSG);
+      else if (cur === MSG) useData.getState().setBusy("");
+    });
     on<{ found: number; inserted: number; skipped: number }>(
       "scan-progress",
       (p) => {

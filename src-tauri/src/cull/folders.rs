@@ -217,13 +217,13 @@ pub fn identical_sets(c: &Connection, limit: usize) -> rusqlite::Result<Vec<Fold
             Tree { counts, files: r.n, bytes: r.bytes, pend: r.pend, flagged: r.flagged, nohash: r.nohash, ids: if r.n > 0 { vec![r.info.folder_id] } else { Vec::new() } }
         })
         .collect();
-    for i in 0..rows.len() {
-        if rows[i].n == 0 {
+    for row in &rows {
+        if row.n == 0 {
             continue; // 가상 마디는 더할 것이 없다
         }
-        for anc in ancestors(&rows[i].rel) {
-            if let Some(&j) = index.get(&(rows[i].vol.clone(), anc)) {
-                let (own_counts, own) = (rows[i].hashes.clone(), (rows[i].n, rows[i].bytes, rows[i].pend, rows[i].flagged, rows[i].nohash, rows[i].info.folder_id));
+        for anc in ancestors(&row.rel) {
+            if let Some(&j) = index.get(&(row.vol.clone(), anc)) {
+                let (own_counts, own) = (row.hashes.clone(), (row.n, row.bytes, row.pend, row.flagged, row.nohash, row.info.folder_id));
                 let t = &mut trees[j];
                 for h in own_counts {
                     *t.counts.entry(h).or_default() += 1;
@@ -1147,7 +1147,7 @@ mod tests {
         assert!(same.iter().all(|f| !f.contains("주원이사진")), "B 쪽에 주원이사진 아래 폴더가 섞이면 안 된다: {same:?}");
         // 09-10 은 A 에만 있다 — «A 에만 있음» 줄로, A 쪽이 B 에 다 있는 짝(똑같음 말고)은 없다
         assert!(r.rows.iter().any(|x| x.a.is_some() && x.b.is_none()), "{:?}", r.rows);
-        assert!(r.rows.iter().all(|x| !(x.a_in_b && !x.same)), "{:?}", r.rows);
+        assert!(r.rows.iter().all(|x| !x.a_in_b || x.same), "{:?}", r.rows);
         // 뿌리가 같으면 거절
         assert!(db.read(|c| compare_two(c, (&vol, &j("2004")), (&vol, &j("2004")))).is_err());
     }

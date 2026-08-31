@@ -91,6 +91,20 @@ pub fn batch_hash(paths: &[String]) -> Vec<HashResult> {
         .collect()
 }
 
+pub fn generate_thumbnail(path: &Path, max_size: u32) -> Option<String> {
+    let img = image::open(path).ok()?;
+    let thumbnail = img.thumbnail(max_size, max_size);
+
+    let mut buffer = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut buffer);
+    thumbnail
+        .write_to(&mut cursor, image::ImageFormat::Jpeg)
+        .ok()?;
+
+    use base64::Engine;
+    Some(base64::engine::general_purpose::STANDARD.encode(&buffer))
+}
+
 #[cfg(test)]
 mod tests {
     use super::hamming_distance;
@@ -116,18 +130,4 @@ mod tests {
         let b = vec![0xFFu8; 8];
         assert_eq!(hamming_distance(&a, &b), 64);
     }
-}
-
-pub fn generate_thumbnail(path: &Path, max_size: u32) -> Option<String> {
-    let img = image::open(path).ok()?;
-    let thumbnail = img.thumbnail(max_size, max_size);
-
-    let mut buffer = Vec::new();
-    let mut cursor = std::io::Cursor::new(&mut buffer);
-    thumbnail
-        .write_to(&mut cursor, image::ImageFormat::Jpeg)
-        .ok()?;
-
-    use base64::Engine;
-    Some(base64::engine::general_purpose::STANDARD.encode(&buffer))
 }

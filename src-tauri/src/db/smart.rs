@@ -18,7 +18,7 @@ pub struct SmartAlbum {
 }
 
 pub fn list(db: &Db) -> Result<Vec<SmartAlbum>> {
-    Ok(db.read(|c| {
+    db.read(|c| {
         let mut st = c.prepare("SELECT id, name, filter, sort FROM smart_albums ORDER BY name")?;
         let it = st.query_map([], |r| {
             let f: String = r.get(2)?;
@@ -33,7 +33,7 @@ pub fn list(db: &Db) -> Result<Vec<SmartAlbum>> {
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
-    })?)
+    })
 }
 
 /// 지금 걸린 조건을 이름 붙여 저장한다. 같은 이름이면 덮어쓴다.
@@ -49,7 +49,7 @@ pub fn save(
     }
     let f = filter.to_string();
     let s = sort.map(|x| x.to_string());
-    Ok(db.transaction(|tx| {
+    db.transaction(|tx| {
         tx.execute(
             "INSERT INTO smart_albums(name, filter, sort) VALUES(?1,?2,?3)
              ON CONFLICT(name) DO UPDATE SET filter=excluded.filter, sort=excluded.sort",
@@ -58,7 +58,7 @@ pub fn save(
         tx.query_row("SELECT id FROM smart_albums WHERE name = ?1", [&name], |r| {
             r.get(0)
         })
-    })?)
+    })
 }
 
 pub fn delete(db: &Db, id: i64) -> Result<()> {

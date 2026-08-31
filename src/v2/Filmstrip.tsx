@@ -49,6 +49,9 @@ export default function Filmstrip<T extends StripFile>({
 }) {
   const box = useRef<HTMLDivElement>(null);
 
+  // TanStack Virtual exposes imperative callbacks; React Compiler safely leaves
+  // this component un-memoized rather than risking stale virtualizer state.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virt = useVirtualizer({
     horizontal: true,
     count: files.length,

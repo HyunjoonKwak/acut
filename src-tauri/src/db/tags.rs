@@ -32,7 +32,7 @@ fn read_tags(c: &rusqlite::Connection, sql: &str, p: &[&dyn rusqlite::ToSql]) ->
 
 /// 태그 목록. 많이 쓴 것부터.
 pub fn list(db: &Db) -> Result<Vec<Tag>> {
-    Ok(db.read(|c| {
+    db.read(|c| {
         read_tags(
             c,
             "SELECT t.id, t.name, t.color,
@@ -42,12 +42,12 @@ pub fn list(db: &Db) -> Result<Vec<Tag>> {
              FROM tags t ORDER BY 4 DESC, t.name",
             &[],
         )
-    })?)
+    })
 }
 
 /// 한 장에 붙은 태그.
 pub fn of_file(db: &Db, file_id: i64) -> Result<Vec<Tag>> {
-    Ok(db.read(|c| {
+    db.read(|c| {
         read_tags(
             c,
             "SELECT t.id, t.name, t.color, 0
@@ -55,7 +55,7 @@ pub fn of_file(db: &Db, file_id: i64) -> Result<Vec<Tag>> {
              WHERE ft.file_id = ?1 ORDER BY t.name",
             &[&file_id],
         )
-    })?)
+    })
 }
 
 /// 고른 사진들에 태그를 붙인다. 없는 태그면 만든다.
@@ -66,7 +66,7 @@ pub fn add(db: &Db, ids: &[i64], name: &str) -> Result<i64> {
     if name.is_empty() {
         return Err(DbError::Invalid("태그 이름이 비어 있습니다".into()));
     }
-    Ok(db.transaction(|tx| {
+    db.transaction(|tx| {
         tx.execute(
             "INSERT INTO tags(name) VALUES(?1) ON CONFLICT(name) DO NOTHING",
             [&name],
@@ -79,7 +79,7 @@ pub fn add(db: &Db, ids: &[i64], name: &str) -> Result<i64> {
             ins.execute(rusqlite::params![f, id])?;
         }
         Ok(id)
-    })?)
+    })
 }
 
 /// 고른 사진들에서 태그를 뗀다. 태그 자체는 남는다.

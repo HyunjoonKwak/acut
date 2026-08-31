@@ -201,13 +201,14 @@ pub fn similarity(from: &[[f32; 2]; 5], to: &[[f32; 2]; 5]) -> [f32; 4] {
         if d.abs() < 1e-12 {
             return [1.0, 0.0, 0.0, 0.0];
         }
+        let pivot_row = m[c];
         for r in 0..4 {
             if r == c {
                 continue;
             }
             let f = m[r][c] / d;
-            for j in 0..4 {
-                m[r][j] -= f * m[c][j];
+            for (value, pivot_value) in m[r].iter_mut().zip(pivot_row) {
+                *value -= f * pivot_value;
             }
             v[r] -= f * v[c];
         }

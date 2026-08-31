@@ -319,7 +319,6 @@ fn parse_stats(text: &str) -> (usize, u64) {
         line.split(':')
             .nth(1)
             .unwrap_or("")
-            .trim()
             .split_whitespace()
             .next()
             .unwrap_or("0")
@@ -609,7 +608,7 @@ mod tests {
         // 원장에 있는 것은 로컬에서 지워도 다시 받지 않는다
         let first = present_files(d.path())[0].0.clone();
         std::fs::remove_file(d.path().join(&first)).unwrap();
-        let (n, _) = count_new(&cfg, d.path(), &[first.clone()]).unwrap();
+        let (n, _) = count_new(&cfg, d.path(), std::slice::from_ref(&first)).unwrap();
         assert_eq!(n, 0, "원장에 있는 {first}는 새것이 아니다");
         let (n2, _) = count_new(&cfg, d.path(), &[]).unwrap();
         assert_eq!(n2, 1);

@@ -52,9 +52,9 @@ pub async fn nas_config_set(state: State<'_, AppState>, config: Config) -> Resul
 #[tauri::command]
 pub async fn nas_check(app: AppHandle) -> Result<ssh::Status, String> {
     let cfg = load(&app.state::<AppState>())?;
-    Ok(tauri::async_runtime::spawn_blocking(move || ssh::check(&cfg))
+    tauri::async_runtime::spawn_blocking(move || ssh::check(&cfg))
         .await
-        .map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
 }
 
 /// 원장 — 받은 적 있는 것들의 상대경로

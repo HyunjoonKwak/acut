@@ -15,7 +15,51 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_done_at(c)?;
     add_nas_pulls(c)?;
     rename_old_labels(c)?;
+    migrate_taken_at_to_utc(c)?;
     Ok(())
+}
+
+/// 초기 버전이 UTC처럼 저장했던 시간대 없는 EXIF/파일명 시각을 실제 Unix
+/// 시각으로 한 번만 바꾼다. 파일명은 재파싱해 13자리 epoch 값은 이동하지 않는다.
+fn migrate_taken_at_to_utc(c: &Connection) -> rusqlite::Result<()> {
+    const KEY: &str = "internal.taken_at_utc_v1";
+    let done: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+        [KEY],
+        |r| r.get(0),
+    )?;
+    if done {
+        return Ok(());
+    }
+
+    let rows: Vec<(i64, String, i32, i32, i64, String)> = {
+        let mut st = c.prepare(
+            "SELECT fi.id, fi.name, fi.kind, fi.taken_at_source, fi.taken_at, fo.rel_path
+             FROM files fi JOIN folders fo ON fo.id = fi.folder_id",
+        )?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+
+    let tx = c.unchecked_transaction()?;
+    {
+        let mut update = tx.prepare("UPDATE files SET taken_at = ?2 WHERE id = ?1")?;
+        for (id, name, kind, source, old, folder) in rows {
+            let migrated = match source {
+                0 if kind != 1 => crate::media::taken_at::floating_civil_to_unix(old),
+                1 => crate::media::taken_at::from_filename(&name)
+                    .or_else(|| folder.rsplit('/').next().and_then(crate::media::taken_at::from_filename))
+                    .unwrap_or(old),
+                _ => old,
+            };
+            if migrated != old {
+                update.execute(rusqlite::params![id, migrated])?;
+            }
+        }
+    }
+    tx.execute("INSERT INTO settings(key,value) VALUES(?1,'1')", [KEY])?;
+    tx.commit()
 }
 
 /// 되돌리기 목록의 옛 낱말 — «치우기»를 없애고 «휴지통으로»로 부르기로 했다(2026-08-29).
@@ -320,6 +364,31 @@ mod tests {
         };
         assert_eq!(count(&Db::open(&path).unwrap()), 1);
         assert_eq!(count(&Db::open(&path).unwrap()), 1, "두 번 열어도 하나");
+    }
+
+    #[test]
+    fn old_floating_photo_dates_are_migrated_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        let old = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+            .and_hms_opt(18, 0, 0).unwrap().and_utc().timestamp();
+        db.write(|c| {
+            c.execute_batch("DELETE FROM settings WHERE key='internal.taken_at_utc_v1';")?;
+            c.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','v','library')", [])?;
+            c.execute("INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','p','p',1)", [])?;
+            c.execute(
+                "INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at)
+                 VALUES(1,1,'photo.jpg',1,0,?1,0,0)",
+                [old],
+            )?;
+            migrate_taken_at_to_utc(c)
+        }).unwrap();
+
+        let migrated: i64 = db.read(|c| c.query_row("SELECT taken_at FROM files", [], |r| r.get(0))).unwrap();
+        assert_eq!(migrated, crate::media::taken_at::civil_to_unix(2024, 1, 1, 18, 0, 0));
+        db.write(migrate_taken_at_to_utc).unwrap();
+        let again: i64 = db.read(|c| c.query_row("SELECT taken_at FROM files", [], |r| r.get(0))).unwrap();
+        assert_eq!(again, migrated, "두 번 열어도 다시 시간대를 적용하면 안 된다");
     }
 
     #[test]

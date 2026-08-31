@@ -13,7 +13,11 @@
 
 use crate::db::conn::{Db, Result};
 use crate::db::libraries;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+type LibrariesById = HashMap<i64, libraries::Library>;
+type MountsByVolume = HashMap<String, Option<PathBuf>>;
 
 /// 휴지통 폴더. 라이브러리마다 따로 있다.
 pub fn trash_root(library_dir: &Path) -> PathBuf {
@@ -93,13 +97,7 @@ fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
 }
 
 /// 이 파일들이 속한 라이브러리와 볼륨 마운트를 한 번에 찾아 둔다.
-fn lookups(
-    db: &Db,
-    items: &[Item],
-) -> Result<(
-    std::collections::HashMap<i64, libraries::Library>,
-    std::collections::HashMap<String, Option<PathBuf>>,
-)> {
+fn lookups(db: &Db, items: &[Item]) -> Result<(LibrariesById, MountsByVolume)> {
     let libs = libraries::list(db)?.into_iter().map(|l| (l.id, l)).collect();
     let mounts = items
         .iter()

@@ -39,7 +39,7 @@ pub struct Target {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Last {
     pub at: i64,
     pub copied: usize,
@@ -322,12 +322,6 @@ pub async fn backup_run(app: AppHandle) -> Result<(), String> {
         let _ = app.emit("backup-done", &last);
     });
     Ok(())
-}
-
-impl Default for Last {
-    fn default() -> Self {
-        Last { at: 0, copied: 0, updated: 0, bytes: 0, errors: 0, cancelled: false }
-    }
 }
 
 #[cfg(test)]

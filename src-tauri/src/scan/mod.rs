@@ -220,8 +220,27 @@ pub fn scan_folder(
                     AND files.modified_at IS excluded.modified_at THEN files.image_hash END,
                 size=excluded.size, taken_at=excluded.taken_at,
                 taken_at_source=excluded.taken_at_source,
+                ext=excluded.ext, kind=excluded.kind,
+                created_at=excluded.created_at,
                 modified_at=excluded.modified_at, width=excluded.width,
-                height=excluded.height, duration_ms=excluded.duration_ms,
+                height=excluded.height, orientation=excluded.orientation,
+                duration_ms=excluded.duration_ms,
+                cam_make=excluded.cam_make, cam_model=excluded.cam_model,
+                lens=excluded.lens, iso=excluded.iso,
+                aperture=excluded.aperture, shutter=excluded.shutter,
+                focal_mm=excluded.focal_mm,
+                geo_name=CASE WHEN files.gps_lat IS excluded.gps_lat
+                    AND files.gps_lon IS excluded.gps_lon THEN files.geo_name END,
+                gps_lat=excluded.gps_lat, gps_lon=excluded.gps_lon,
+                gps_alt=excluded.gps_alt, inode=excluded.inode,
+                sharpness=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.sharpness END,
+                exposure=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.exposure END,
+                embedding=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.embedding END,
+                faces_at=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.faces_at END,
                 scanned_at=excluded.scanned_at",
         )?;
 
@@ -616,6 +635,32 @@ mod tests {
         let again = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         assert_eq!(again.skipped, 0);
         assert!(again.inserted + again.updated >= 1);
+    }
+
+    #[test]
+    fn changed_file_replaces_source_metadata_and_invalidates_derived_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("20260101_120000.jpg");
+        std::fs::write(&f, b"first body").unwrap();
+        let db = Db::open(dir.path().join("db.sqlite")).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        db.write(|c| c.execute(
+            "UPDATE files SET cam_model='old camera', orientation=6,
+                gps_lat=37.5, gps_lon=127.0, geo_name='old place',
+                sharpness=1.0, exposure=2.0, embedding=X'01', faces_at=123",
+            [],
+        )).unwrap();
+
+        std::fs::write(&f, b"second body is longer").unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        let stale: i64 = db.read(|c| c.query_row(
+            "SELECT COUNT(*) FROM files WHERE cam_model IS NOT NULL OR orientation IS NOT NULL
+                OR gps_lat IS NOT NULL OR geo_name IS NOT NULL OR sharpness IS NOT NULL
+                OR exposure IS NOT NULL OR embedding IS NOT NULL OR faces_at IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )).unwrap();
+        assert_eq!(stale, 0);
     }
 
     #[test]

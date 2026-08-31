@@ -8,7 +8,7 @@ use crate::db::conn::{Db, Result};
 use crate::db::libraries;
 use crate::ops::trash::{free_path, move_with_sidecars, prune_empty_dirs, Outcome};
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -33,6 +33,38 @@ fn under(root: &str, p: &str) -> bool {
     root.is_empty() || p == root || p.starts_with(&format!("{root}/"))
 }
 
+/// 프론트에서 받은 볼륨 상대경로를 실제 라이브러리 안의 경로로 제한한다.
+fn validate_library_rel(lib_rel: &str, rel: &str, allow_root: bool) -> Result<()> {
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute()
+        || rel_path.components().any(|c| !matches!(c, Component::Normal(_)))
+        || !under(lib_rel, rel)
+        || (!allow_root && rel == lib_rel)
+    {
+        return Err(bad("같은 라이브러리 안의 정상적인 상대경로만 사용할 수 있습니다"));
+    }
+    Ok(())
+}
+
+/// lexical 검사에 더해 canonical path를 비교한다. 대상이 심볼릭 링크여도
+/// 라이브러리 밖으로 빠져나갈 수 없다.
+fn checked_library_dir(
+    lib_dir: &Path,
+    mount: &Path,
+    lib_rel: &str,
+    rel: &str,
+    allow_root: bool,
+) -> Result<PathBuf> {
+    validate_library_rel(lib_rel, rel, allow_root)?;
+    let root = lib_dir.canonicalize().map_err(|e| bad(format!("라이브러리 경로를 확인할 수 없습니다: {e}")))?;
+    let candidate = mount.join(rel);
+    let actual = candidate.canonicalize().map_err(|e| bad(format!("폴더 경로를 확인할 수 없습니다: {}: {e}", candidate.display())))?;
+    if !actual.starts_with(&root) {
+        return Err(bad("라이브러리 밖의 폴더는 사용할 수 없습니다"));
+    }
+    Ok(actual)
+}
+
 /// `src_rel` 나무를 `dst_rel` 안으로 합친다 — 둘 다 볼륨 기준 경로, 같은 라이브러리 안.
 pub fn merge_tree(
     db: &Db,
@@ -48,10 +80,9 @@ pub fn merge_tree(
     if src_rel == dst_rel || under(src_rel, dst_rel) || under(dst_rel, src_rel) {
         return Err(bad("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더여야 합니다"));
     }
-    if !under(&lib.rel_path, src_rel) || !under(&lib.rel_path, dst_rel) || src_rel == lib.rel_path {
-        return Err(bad("같은 라이브러리 안의 폴더끼리만 합칠 수 있습니다"));
-    }
-    if !mount.join(dst_rel).is_dir() {
+    let _src = checked_library_dir(&lib_dir, &mount, &lib.rel_path, src_rel, false)?;
+    let dst = checked_library_dir(&lib_dir, &mount, &lib.rel_path, dst_rel, true)?;
+    if !dst.is_dir() {
         return Err(bad(format!("합쳐 넣을 폴더가 디스크에 없습니다: {dst_rel}")));
     }
 
@@ -224,12 +255,15 @@ fn is_junk_file(name: &str) -> bool {
 
 pub fn leftovers(db: &Db, library_id: i64, rel: &str) -> Result<Leftovers> {
     let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let lib_dir = lib.dir.clone().ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
     let mount = crate::db::volumes::find_mount(&lib.volume_uuid).ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
-    let root = mount.join(rel);
     let mut out = Leftovers::default();
-    if !root.is_dir() {
+    validate_library_rel(&lib.rel_path, rel, false)?;
+    let candidate = mount.join(rel);
+    if !candidate.is_dir() {
         return Ok(out);
     }
+    let root = checked_library_dir(&lib_dir, &mount, &lib.rel_path, rel, false)?;
     let mut kinds: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for e in walkdir::WalkDir::new(&root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
         if !e.file_type().is_file() {
@@ -257,14 +291,17 @@ pub fn merge_rest(db: &Db, library_id: i64, src_rel: &str, dst_rel: &str) -> Res
     let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
     let lib_dir = lib.dir.clone().ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
     let mount = crate::db::volumes::find_mount(&lib.volume_uuid).ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
-    if src_rel == dst_rel || under(src_rel, dst_rel) || under(dst_rel, src_rel) || src_rel == lib.rel_path {
+    if src_rel == dst_rel || under(src_rel, dst_rel) || under(dst_rel, src_rel) {
         return Err(bad("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더여야 합니다"));
     }
-    let src = mount.join(src_rel);
-    let dst = mount.join(dst_rel);
-    if !src.is_dir() {
+    validate_library_rel(&lib.rel_path, src_rel, false)?;
+    validate_library_rel(&lib.rel_path, dst_rel, true)?;
+    if !mount.join(src_rel).is_dir() {
         return Ok(Outcome { first_error: Some("남은 폴더가 없습니다".into()), ..Default::default() });
     }
+    let src = checked_library_dir(&lib_dir, &mount, &lib.rel_path, src_rel, false)?;
+    let dst = checked_library_dir(&lib_dir, &mount, &lib.rel_path, dst_rel, true)?;
+    let prune_stop = lib_dir.canonicalize().map_err(|e| bad(format!("라이브러리 경로를 확인할 수 없습니다: {e}")))?;
     let mut out = Outcome::default();
     let mut dirs: Vec<PathBuf> = Vec::new();
     for e in walkdir::WalkDir::new(&src).follow_links(false).into_iter().filter_map(|e| e.ok()) {
@@ -295,7 +332,7 @@ pub fn merge_rest(db: &Db, library_id: i64, src_rel: &str, dst_rel: &str) -> Res
     }
     dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
     for d in dirs {
-        out.folders_removed += prune_empty_dirs(&d, &lib_dir);
+        out.folders_removed += prune_empty_dirs(&d, &prune_stop);
     }
     Ok(out)
 }
@@ -397,10 +434,13 @@ mod tests {
 
     #[test]
     fn overlapping_or_foreign_roots_are_refused() {
-        let (_d, db, lib, b, a, lib_rel) = setup();
+        let (d, db, lib, b, a, lib_rel) = setup();
         assert!(merge_tree(&db, lib, &b, &b, &AtomicBool::new(false), |_| {}).is_err());
         let inner = format!("{b}/2016");
         assert!(merge_tree(&db, lib, &b, &inner, &AtomicBool::new(false), |_| {}).is_err(), "품는 관계");
         assert!(merge_tree(&db, lib, &lib_rel, &a, &AtomicBool::new(false), |_| {}).is_err(), "라이브러리 뿌리째는 안 된다");
+        let outside = d.path().parent().unwrap().to_string_lossy();
+        assert!(leftovers(&db, lib, &outside).is_err(), "절대경로는 거부한다");
+        assert!(merge_rest(&db, lib, "../", &a).is_err(), "부모 경로로 빠져나갈 수 없다");
     }
 }

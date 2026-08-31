@@ -64,11 +64,11 @@ pub fn build(leaves: Vec<Leaf>, library_rel: &str, library_id: i64) -> Vec<Node>
         // 조상 마디를 만들어 둔다 (아직 장수는 0)
         let mut acc = String::new();
         let segs: Vec<&str> = l.path.split('/').collect();
-        for i in 0..segs.len().saturating_sub(1) {
+        for (i, seg) in segs.iter().enumerate().take(segs.len().saturating_sub(1)) {
             if i > 0 {
                 acc.push('/');
             }
-            acc.push_str(segs[i]);
+            acc.push_str(seg);
             own.entry(acc.clone()).or_insert((None, 0));
         }
     }

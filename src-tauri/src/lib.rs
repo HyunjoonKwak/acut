@@ -216,6 +216,7 @@ pub fn run() {
             api::tags::tag_remove,
             api::tags::tag_delete,
             api::files_timeline,
+            api::files_summary,
             api::files_cursor_at,
             api::files_mark,
             api::file_detail,

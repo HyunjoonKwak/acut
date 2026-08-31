@@ -434,7 +434,7 @@ mod tests {
         let out = dir.path().join("j.jpg");
         let s = make(&src, &out, 640, 0.8).expect("썸네일");
         // 원본이 640보다 크다면 결과도 640에 가까워야 한다
-        let full = make(&src, &dir.path().join("full.jpg"), 100_000, 0.8).expect("원본 크기");
+        let full = make(&src, dir.path().join("full.jpg"), 100_000, 0.8).expect("원본 크기");
         if full.width.max(full.height) >= 640 {
             assert_eq!(
                 s.width.max(s.height),

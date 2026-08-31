@@ -32,6 +32,8 @@ pub const WINDOW_SECS: i64 = 3600;
 /// 시간순 이웃 최대 — 한 시간에 천 장을 찍어도 셈이 터지지 않게
 pub const MAX_NEIGHBORS: usize = 200;
 const MIN_GROUP: usize = 2;
+type Pair = (usize, usize, f32);
+type PairBatch = (Vec<Pair>, usize);
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct SceneProgress {
@@ -137,9 +139,9 @@ fn pairs(
     threshold: f32,
     taken: &HashMap<i64, Vec<i64>>,
     cancel: &AtomicBool,
-) -> (Vec<(usize, usize, f32)>, usize) {
+) -> (Vec<Pair>, usize) {
     let rows = &loaded.rows;
-    let out: Vec<(Vec<(usize, usize, f32)>, usize)> = rows
+    let out: Vec<PairBatch> = rows
         .par_iter()
         .enumerate()
         .map(|(i, a)| {
@@ -280,7 +282,9 @@ mod tests {
     }
 
     /// (id, taken_at, size, sharpness, 벡터). 폴더 하나.
-    fn seed(db: &Db, items: &[(i64, i64, i64, Option<f64>, Vec<f32>)]) {
+    type SeedItem = (i64, i64, i64, Option<f64>, Vec<f32>);
+
+    fn seed(db: &Db, items: &[SeedItem]) {
         db.transaction(|tx| {
             tx.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')", [])?;
             tx.execute(

@@ -58,8 +58,8 @@ pub struct Meta {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub orientation: Option<u32>,
-    /// EXIF DateTimeOriginal을 유닉스 시각으로. 시간대는 적용하지 않는다
-    /// (촬영 기기의 지역 시각을 그대로 쓴다 — 날짜 폴더 분류가 어긋나지 않게).
+    /// EXIF DateTimeOriginal을 유닉스 시각으로. offset이 없으므로 현재 기기의
+    /// 지역 시각으로 해석한다.
     pub taken_at: Option<i64>,
     pub cam_make: Option<String>,
     pub cam_model: Option<String>,
@@ -156,7 +156,7 @@ fn is_kind(v: *const c_void, want: unsafe extern "C" fn() -> usize) -> bool {
 }
 
 /// 문자열 키로 raw 값을 꺼낸다. CFString은 변수로 살아 있는 동안만 유효하다.
-fn raw<'a>(d: &'a CFDictionary, key: &str) -> Option<*const c_void> {
+fn raw(d: &CFDictionary, key: &str) -> Option<*const c_void> {
     let k = CFString::new(key); // 이 변수가 살아 있어야 한다
     let found = d.find(k.as_concrete_TypeRef() as *const c_void).map(|v| *v);
     found

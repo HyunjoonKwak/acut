@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use walkdir::WalkDir;
 
 use crate::core::hasher;
@@ -12,6 +12,7 @@ pub static SYNC_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// Chunk size for file copy operations (1 MB).
 const COPY_CHUNK_SIZE: usize = 1024 * 1024;
+static COPY_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,8 +125,8 @@ fn is_excluded(relative_path: &str, patterns: &[String]) -> bool {
     false
 }
 
-/// Copy `source` to `target` in 1 MB chunks, calling `progress` with the
-/// cumulative number of bytes written after each chunk.
+/// Copy to a temporary sibling, verify it, and atomically replace `target`
+/// only after the complete copy is durable.
 ///
 /// Returns the total number of bytes copied.
 fn copy_file_chunked(
@@ -135,8 +136,29 @@ fn copy_file_chunked(
 ) -> Result<u64, String> {
     let src_file = fs::File::open(source)
         .map_err(|e| format!("Failed to open source {}: {}", source.display(), e))?;
-    let dst_file = fs::File::create(target)
-        .map_err(|e| format!("Failed to create target {}: {}", target.display(), e))?;
+    let parent = target.parent().ok_or_else(|| format!("Target has no parent: {}", target.display()))?;
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("copy");
+    let (temp_path, dst_file) = (0..100)
+        .find_map(|_| {
+            let seq = COPY_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!(".{name}.acut-copy-{}-{seq}.tmp", std::process::id()));
+            match fs::File::options().write(true).create_new(true).open(&path) {
+                Ok(file) => Some(Ok((path, file))),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(e) => Some(Err(format!("Failed to create temporary target {}: {e}", path.display()))),
+            }
+        })
+        .ok_or_else(|| format!("Could not allocate a temporary target beside {}", target.display()))??;
+
+    struct RemoveOnDrop(Option<PathBuf>);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            if let Some(path) = self.0.take() {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+    let mut cleanup = RemoveOnDrop(Some(temp_path.clone()));
 
     let mut reader = BufReader::with_capacity(COPY_CHUNK_SIZE, src_file);
     let mut writer = BufWriter::with_capacity(COPY_CHUNK_SIZE, dst_file);
@@ -153,21 +175,31 @@ fn copy_file_chunked(
         }
         writer
             .write_all(&buf[..bytes_read])
-            .map_err(|e| format!("Write error on {}: {}", target.display(), e))?;
+            .map_err(|e| format!("Write error on {}: {}", temp_path.display(), e))?;
         total_written += bytes_read as u64;
         progress(total_written);
     }
 
     writer
         .flush()
-        .map_err(|e| format!("Flush error on {}: {}", target.display(), e))?;
+        .map_err(|e| format!("Flush error on {}: {}", temp_path.display(), e))?;
+    writer.get_ref().sync_all().map_err(|e| format!("Sync error on {}: {}", temp_path.display(), e))?;
 
     // Preserve the original modification time.
     if let Ok(src_meta) = fs::metadata(source) {
         if let Ok(mtime) = src_meta.modified() {
-            let _ = filetime_set(target, mtime);
+            let _ = filetime_set(&temp_path, mtime);
         }
     }
+
+    let source_hash = hasher::xxhash_file(source).ok_or_else(|| format!("Failed to hash source {}", source.display()))?;
+    let copied_hash = hasher::xxhash_file(&temp_path).ok_or_else(|| format!("Failed to hash temporary copy {}", temp_path.display()))?;
+    if source_hash != copied_hash {
+        return Err(format!("Checksum mismatch while copying {}", source.display()));
+    }
+
+    fs::rename(&temp_path, target).map_err(|e| format!("Failed to atomically replace {} with {}: {e}", target.display(), temp_path.display()))?;
+    cleanup.0.take();
 
     Ok(total_written)
 }
@@ -568,5 +600,34 @@ mod tests {
     fn test_is_excluded_empty_patterns() {
         let patterns: Vec<String> = vec![];
         assert!(!is_excluded("anything.txt", &patterns));
+    }
+
+    #[test]
+    fn chunked_copy_replaces_an_existing_target_only_after_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.bin");
+        let target = dir.path().join("target.bin");
+        fs::write(&source, vec![7u8; COPY_CHUNK_SIZE + 17]).unwrap();
+        fs::write(&target, b"old backup").unwrap();
+
+        let copied = copy_file_chunked(&source, &target, &mut |_| {}).unwrap();
+        assert_eq!(copied, COPY_CHUNK_SIZE as u64 + 17);
+        assert_eq!(fs::read(&target).unwrap(), fs::read(&source).unwrap());
+        assert_eq!(
+            fs::read_dir(dir.path()).unwrap().flatten()
+                .filter(|e| e.file_name().to_string_lossy().contains("acut-copy"))
+                .count(),
+            0,
+            "임시 파일이 남으면 안 된다"
+        );
+    }
+
+    #[test]
+    fn a_failed_copy_keeps_the_existing_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.bin");
+        fs::write(&target, b"known good backup").unwrap();
+        assert!(copy_file_chunked(&dir.path().join("missing.bin"), &target, &mut |_| {}).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"known good backup");
     }
 }

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -11,7 +19,6 @@ import AreaPickDialog from "./AreaPickDialog";
 import OffloadDialog from "./OffloadDialog";
 import HuskDialog from "./HuskDialog";
 import Organize from "./Organize";
-import MapView from "./MapView";
 import PhotoGrid from "./PhotoGrid";
 import Preview from "./Preview";
 import SettingsView from "./SettingsView";
@@ -44,6 +51,9 @@ import { useOps } from "./useOps";
 import { usePhotoList } from "./usePhotoList";
 import { useScanEvents } from "./useScanEvents";
 import { facetOf, useFilter } from "./viewStore";
+
+// Leaflet은 위치 갈래에서만 필요하다. 시작 번들에서 떼어 내 첫 화면을 가볍게 한다.
+const MapView = lazy(() => import("./MapView"));
 
 /**
  * 화면의 뼈대 — 툴바 / 레일·사이드바 / 그리드 / 선택 패널 / 상태바.
@@ -80,7 +90,7 @@ export default function App() {
 
   const libs = useData((s) => s.libs);
   const buckets = useData((s) => s.buckets);
-  const stats = useData((s) => s.stats);
+  const summary = useData((s) => s.summary);
   const refreshMetaRaw = useData((s) => s.refreshMeta);
   const refreshMeta = useCallback(
     () => refreshMetaRaw(filter, libId),
@@ -302,11 +312,8 @@ export default function App() {
     [rows, selected],
   );
   const focusExif = useFocusExif(selected);
-  /// 찾기 결과 개수 — 눈금 합이 곧 필터에 걸린 장수라 따로 세지 않는다
-  const matched = useMemo(
-    () => buckets.reduce((a, b) => a + b.count, 0),
-    [buckets],
-  );
+  /// 현재 필터 전체의 장수 — 화면에 아직 내려받지 않은 행까지 포함한다.
+  const matched = summary?.files ?? 0;
 
   const openViewer = useCallback(
     (i: number) => useUi.getState().set({ viewerAt: i }),
@@ -391,7 +398,17 @@ export default function App() {
           ) : (
             <>
               {/* 위치 갈래 — 지도 위, 그리드 아래. 칸을 누르면 그 자리의 사진만 남는다 */}
-              {source === "location" && <MapView filter={filter} />}
+              {source === "location" && (
+                <Suspense
+                  fallback={
+                    <div className="h-72 shrink-0 grid place-items-center bg-canvas text-xs text-fg-mute">
+                      지도 불러오는 중…
+                    </div>
+                  }
+                >
+                  <MapView filter={filter} />
+                </Suspense>
+              )}
               {/* 격자 오른쪽에 정보 패널 — 고른 한 장의 상세 */}
               <div className="flex-1 flex min-h-0 min-w-0">
                 <PhotoGrid
@@ -552,8 +569,8 @@ export default function App() {
       {statusBar && (
         <StatusBar
           index={focusAt >= 0 ? list.baseIndex + focusAt : -1}
-          total={matched || (stats?.files ?? 0)}
-          totalBytes={stats?.bytes ?? 0}
+          total={summary?.files ?? 0}
+          totalBytes={summary?.bytes ?? 0}
           file={focusAt >= 0 ? rows[focusAt] : null}
           exif={focusExif}
         >

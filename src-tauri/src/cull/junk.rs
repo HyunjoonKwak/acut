@@ -8,6 +8,8 @@
 
 use crate::db::conn::{Db, Result};
 
+type JunkRow = (i64, String, String, i64, Option<i64>, Option<String>);
+
 /// 잡동사니로 볼 이유.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
@@ -57,7 +59,7 @@ pub fn classify(name: &str, rel_dir: &str, size: i64, width: Option<i64>) -> Opt
     }
     // 작은 파일 — 해상도가 알려져 있고 사진 크기(400px 초과)면 옛 카메라 원본일 수 있어 넘긴다.
     // 잡동사니는 대표 없이 전부 제외되므로 애매하면 잡지 않는다.
-    if size > 0 && size < TINY_BYTES && width.is_none_or(|w| w <= 400) {
+    if size > 0 && size < TINY_BYTES && width.map_or(true, |w| w <= 400) {
         return Some(Reason::TooSmall);
     }
     None
@@ -74,7 +76,7 @@ pub struct JunkProgress {
 
 /// 잡동사니를 찾아 `groups`(kind=1)에 사유별로 묶는다.
 pub fn scan(db: &Db) -> Result<JunkProgress> {
-    let rows: Vec<(i64, String, String, i64, Option<i64>, Option<String>)> = db.read(|c| {
+    let rows: Vec<JunkRow> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fi.name, fo.rel_path, fi.size, fi.width, l.rel_path
              FROM files fi

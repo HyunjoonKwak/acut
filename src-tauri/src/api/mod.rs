@@ -283,6 +283,22 @@ pub async fn files_timeline(
     query::timeline(&state.db, &filter).map_err(err)
 }
 
+#[derive(Debug, Serialize)]
+pub struct FileSummary {
+    pub files: i64,
+    pub bytes: i64,
+}
+
+/// 현재 필터에 걸린 파일 수와 용량 — 상태바와 툴바가 같은 대상을 가리키게 한다.
+#[tauri::command]
+pub async fn files_summary(
+    state: State<'_, AppState>,
+    filter: Filter,
+) -> Result<FileSummary, String> {
+    let (files, bytes) = query::summary(&state.db, &filter).map_err(err)?;
+    Ok(FileSummary { files, bytes })
+}
+
 /// 스크롤바 손잡이가 멈춘 자리를 커서로 바꾼다. 그 뒤는 다시 keyset이다.
 #[tauri::command]
 pub async fn files_cursor_at(
@@ -344,7 +360,7 @@ pub async fn folder_by_path(state: State<'_, AppState>, path: String) -> Result<
             want.strip_prefix(&format!("{root}/")).map(str::to_string)
         };
         if let Some(sub) = sub {
-            if best.as_ref().is_none_or(|(b, _)| b.dir.as_ref().map_or(0, |d| d.as_os_str().len()) < root.len()) {
+            if best.as_ref().map_or(true, |(b, _)| b.dir.as_ref().map_or(0, |d| d.as_os_str().len()) < root.len()) {
                 best = Some((l, sub));
             }
         }
@@ -399,7 +415,7 @@ pub async fn folders_list(
     // 4,476줄이 한꺼번에 쏟아지지 않는 건 접혀 있기 때문이다. 프론트는
     // 펼친 마디의 자식만 그린다.
     let mut out = Vec::new();
-    for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
+    for l in libs.iter().filter(|l| library_id.map_or(true, |id| l.id == id)) {
         let nodes = tree::build(leaves_of(state.inner(), l.id, &l.rel_path)?, &l.rel_path, l.id);
         if library_id.is_some() {
             out.extend(nodes);
@@ -516,7 +532,7 @@ pub async fn cache_usage(
     let libs = crate::db::libraries::list(&state.db).map_err(err)?;
     let (bytes, files) = libs
         .iter()
-        .filter(|l| library_id.is_none_or(|id| l.id == id))
+        .filter(|l| library_id.map_or(true, |id| l.id == id))
         .flat_map(|l| {
             [
                 cache::cache_root(&state.cache_base, l.id),
@@ -535,7 +551,7 @@ pub async fn cache_usage(
 #[tauri::command]
 pub async fn cache_clear(state: State<'_, AppState>, library_id: Option<i64>) -> Result<(), String> {
     let libs = crate::db::libraries::list(&state.db).map_err(err)?;
-    for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
+    for l in libs.iter().filter(|l| library_id.map_or(true, |id| l.id == id)) {
         for root in [
             cache::cache_root(&state.cache_base, l.id),
             cache::preview_root(&state.cache_base, l.id),
@@ -550,10 +566,21 @@ pub async fn cache_clear(state: State<'_, AppState>, library_id: Option<i64>) ->
     }
     // 디스크에서 지웠으니 "만들어 뒀다"는 기록도 함께 지운다. 안 지우면
     // 다음 스캔이 이미 있는 줄 알고 건너뛰어 빈 자리만 남는다.
-    state
-        .db
-        .write(|c| c.execute("DELETE FROM thumbs", []))
-        .map_err(err)?;
+    clear_thumb_rows(&state.db, library_id).map_err(err)?;
+    Ok(())
+}
+
+fn clear_thumb_rows(db: &Db, library_id: Option<i64>) -> crate::db::conn::Result<()> {
+    db.write(|c| match library_id {
+        Some(id) => c.execute(
+            "DELETE FROM thumbs WHERE file_id IN (
+                SELECT fi.id FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+                WHERE fo.library_id = ?1
+            )",
+            [id],
+        ),
+        None => c.execute("DELETE FROM thumbs", []),
+    })?;
     Ok(())
 }
 
@@ -712,6 +739,29 @@ mod tests {
             .read(|c| c.query_row("SELECT rating FROM files WHERE id=1", [], |x| x.get(0)))
             .unwrap();
         assert_eq!(r, 5);
+    }
+
+    #[test]
+    fn clearing_one_library_keeps_other_thumbnail_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        db.write(|c| c.execute_batch(
+            "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
+             INSERT INTO libraries(id,volume_uuid,rel_path,name) VALUES (1,'V','a','a'), (2,'V','b','b');
+             INSERT INTO folders(id,volume_uuid,library_id,rel_path,name,area) VALUES
+                (1,'V',1,'a','a',1), (2,'V',2,'b','b',1);
+             INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at) VALUES
+                (1,1,'a.jpg',1,0,1,0,0), (2,2,'b.jpg',1,0,1,0,0);
+             INSERT INTO thumbs(file_id,src_size,src_mtime) VALUES (1,1,1), (2,1,1);"
+        )).unwrap();
+
+        clear_thumb_rows(&db, Some(1)).unwrap();
+        let ids: Vec<i64> = db.read(|c| {
+            let mut st = c.prepare("SELECT file_id FROM thumbs ORDER BY file_id")?;
+            let ids = st.query_map([], |r| r.get(0))?.collect();
+            ids
+        }).unwrap();
+        assert_eq!(ids, vec![2]);
     }
 }
 

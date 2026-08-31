@@ -58,15 +58,32 @@ export default function Sidebar({
   const showAll = useView((s) => s.showAll);
   const picked = useSelection((s) => s.picked);
 
+  // `source`는 재실행 뒤에도 남지만 `viewTrash`는 세션 상태다. 마지막에
+  // 휴지통을 보다가 앱을 닫은 경우 제목만 휴지통이고 일반 사진을 조회하지
+  // 않도록, 저장된 갈래와 실제 필터를 처음부터 맞춘다.
+  useEffect(() => {
+    setViewTrash(source === "trash");
+  }, [source, setViewTrash]);
+
   /// 달력이 쓸 눈금 — **날짜 조건을 뺀** 필터로 읽는다. 그리드용 buckets를
   /// 그대로 쓰면 2024년을 고른 순간 목록에 2024년만 남아 다른 해로 갈 수 없다.
-  const [calBuckets, setCalBuckets] = useState<Bucket[]>([]);
+  const [calendar, setCalendar] = useState<{
+    forFilter: Filter | null;
+    buckets: Bucket[];
+  }>({ forFilter: null, buckets: [] });
+  const calLoading = calendar.forFilter !== facetFilter;
   useEffect(() => {
     if (source !== "calendar") return;
     let live = true;
     invoke<Bucket[]>("files_timeline", { filter: facetFilter })
-      .then((b) => live && setCalBuckets(b))
-      .catch(() => live && setCalBuckets([]));
+      .then((b) => {
+        if (!live) return;
+        setCalendar({ forFilter: facetFilter, buckets: b });
+      })
+      .catch(() => {
+        if (!live) return;
+        setCalendar({ forFilter: facetFilter, buckets: [] });
+      });
     return () => {
       live = false;
     };
@@ -149,7 +166,8 @@ export default function Sidebar({
 
           {source === "calendar" && (
             <Calendar
-              buckets={calBuckets}
+              buckets={calendar.buckets}
+              loading={calLoading}
               year={picks.year}
               month={picks.month}
               day={picks.day}

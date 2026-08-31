@@ -73,7 +73,7 @@ fn dsm_error_message(api: &str, code: i64) -> String {
             403 => "2단계 인증 코드가 필요합니다. OTP 코드를 입력해주세요",
             404 => "2단계 인증 코드가 올바르지 않습니다",
             407 => "이 IP가 DSM 자동 차단 목록에 있습니다. DSM 보안 설정을 확인해주세요",
-            408 | 409 | 410 => "비밀번호가 만료되었습니다. DSM에서 비밀번호를 변경해주세요",
+            408..=410 => "비밀번호가 만료되었습니다. DSM에서 비밀번호를 변경해주세요",
             _ => "인증에 실패했습니다",
         }
     } else {
@@ -150,7 +150,7 @@ impl DsmClient {
             .clone();
 
         // Login with the user's own DSM account; password is used once and dropped
-        let version = auth.max_version.min(6).max(3);
+        let version = auth.max_version.clamp(3, 6);
         let mut form: Vec<(&str, String)> = vec![
             ("api", "SYNO.API.Auth".to_string()),
             ("version", version.to_string()),
@@ -350,24 +350,6 @@ impl DsmClient {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{error_code, normalize_base_url};
-
-    #[test]
-    fn normalizes_bare_host() {
-        assert_eq!(normalize_base_url("192.168.0.10:5000"), "http://192.168.0.10:5000");
-        assert_eq!(normalize_base_url(" https://nas.local:5001/ "), "https://nas.local:5001");
-    }
-
-    #[test]
-    fn extracts_dsm_error_code() {
-        assert_eq!(error_code("[1805] 같은 이름의 파일 (SYNO.FileStation.Upload)"), Some(1805));
-        assert_eq!(error_code("[403] OTP 필요"), Some(403));
-        assert_eq!(error_code("일반 오류"), None);
-    }
-}
-
 fn parse_entries(value: Option<&Value>) -> Vec<NasEntry> {
     value
         .and_then(|v| v.as_array())
@@ -384,4 +366,22 @@ fn parse_entries(value: Option<&Value>) -> Vec<NasEntry> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{error_code, normalize_base_url};
+
+    #[test]
+    fn normalizes_bare_host() {
+        assert_eq!(normalize_base_url("192.168.0.10:5000"), "http://192.168.0.10:5000");
+        assert_eq!(normalize_base_url(" https://nas.local:5001/ "), "https://nas.local:5001");
+    }
+
+    #[test]
+    fn extracts_dsm_error_code() {
+        assert_eq!(error_code("[1805] 같은 이름의 파일 (SYNO.FileStation.Upload)"), Some(1805));
+        assert_eq!(error_code("[403] OTP 필요"), Some(403));
+        assert_eq!(error_code("일반 오류"), None);
+    }
 }

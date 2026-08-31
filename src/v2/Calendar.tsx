@@ -12,6 +12,7 @@ import type { Facet } from "./FacetList";
  */
 export default function Calendar({
   buckets,
+  loading,
   year,
   month,
   day,
@@ -19,6 +20,7 @@ export default function Calendar({
   onPick,
 }: {
   buckets: Bucket[];
+  loading: boolean;
   /** 고른 연도 (`2024`). null이면 전체 */
   year: string | null;
   /** 고른 월 (`2024-08`). null이면 그 해 전체 */
@@ -66,6 +68,14 @@ export default function Calendar({
     }
     return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [buckets]);
+
+  if (loading) {
+    return (
+      <div className="px-3 py-2 text-[13px] text-fg-mute">
+        불러오는 중…
+      </div>
+    );
+  }
 
   if (years.length === 0) {
     return <div className="px-3 py-2 text-[13px] text-fg-mute">없음</div>;

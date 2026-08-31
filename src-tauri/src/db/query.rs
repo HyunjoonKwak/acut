@@ -95,7 +95,7 @@ impl Default for Sort {
 ///
 /// 정렬 기준 값과 id를 함께 들고 다닌다. id가 없으면 같은 값이 여럿일 때
 /// 경계에서 사진이 빠지거나 겹친다.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Cursor {
     /// 숫자 기준일 때의 값
@@ -103,12 +103,6 @@ pub struct Cursor {
     /// 이름 기준일 때의 값
     pub text: Option<String>,
     pub id: i64,
-}
-
-impl Default for Cursor {
-    fn default() -> Self {
-        Self { num: None, text: None, id: 0 }
-    }
 }
 
 /// `#[serde(default)]`가 중요하다. 프론트는 필요한 필드만 보낸다 —
@@ -486,7 +480,7 @@ pub fn timeline(db: &Db, f: &Filter) -> Result<Vec<Bucket>> {
         ""
     };
     let sql = format!(
-        "SELECT strftime('%Y-%m', fi.taken_at, 'unixepoch') ym,
+        "SELECT strftime('%Y-%m', fi.taken_at, 'unixepoch', 'localtime') ym,
                 COUNT(*), MAX(fi.taken_at)
          FROM files fi
          {join}

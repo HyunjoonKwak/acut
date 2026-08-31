@@ -16,7 +16,7 @@ use crate::db::conn::{Db, Result};
 use crate::db::libraries;
 use crate::ops::trash::free_path;
 use crate::scan::kinds::{classify, is_skipped_dir};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// 가져올 후보 한 장.
@@ -72,45 +72,38 @@ pub fn day_dir(day: &str) -> String {
     }
 }
 
-/// 유닉스 시각을 그 기기의 지역 날짜로.
-///
-/// EXIF의 시각에는 시간대가 없다. 스캐너가 그렇게 넣어 두었으니 여기서도
-/// 같은 규칙으로 읽어야 날짜 폴더가 어긋나지 않는다.
+/// 유닉스 시각을 이 기기의 지역 날짜로. 스캐너·UI·SQLite 필터가 모두 같은
+/// 시간대 규칙을 써야 자정 근처 사진이 다른 날 폴더로 가지 않는다.
 fn to_day(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02}")
+    chrono::DateTime::from_timestamp(secs, 0)
+        .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
 }
 
-/// 1970-01-01부터의 날수를 (연, 월, 일)로. Howard Hinnant의 civil_from_days.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
+type KnownMap = HashMap<(String, i64), Vec<(String, Option<String>)>>;
 
 /// 가져올 것들을 훑는다. 폴더는 하위까지, 파일은 그것만.
 ///
 /// 파인더에서 끌어다 놓으면 파일 몇 개나 폴더가 섞여 온다 — 둘 다 받는다.
-/// 라이브러리에 이미 있는 것은 (이름, 크기)로 가려낸다. 같은 카드를 두 번
-/// 꽂아도 같은 사진이 두 벌 들어가지 않게 하려는 것이다. 다른 사진인데
-/// 이름과 크기가 우연히 같을 확률은 실질적으로 없다.
+/// 같은 이름·크기의 후보가 있으면 전체 내용 해시까지 비교한다. 카메라는
+/// `IMG_0001` 같은 이름을 되풀이하므로 이름·크기만으로 건너뛰면 사진을 잃는다.
 pub fn look(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Vec<Candidate>> {
-    let known: HashSet<(String, i64)> = db.read(|c| {
+    let mount = libraries::get(db, library_id)?.and_then(|l| crate::db::volumes::find_mount(&l.volume_uuid));
+    let known: KnownMap = db.read(|c| {
         let mut st = c.prepare(
-            "SELECT fi.name, fi.size FROM files fi
+            "SELECT fi.name, fi.size, fo.rel_path, fi.full_hash FROM files fi
                JOIN folders fo ON fo.id = fi.folder_id
-              WHERE fo.library_id = ?1",
+              WHERE fo.library_id = ?1 AND fi.trashed_at IS NULL",
         )?;
-        let it = st.query_map([library_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
-        it.collect::<rusqlite::Result<HashSet<_>>>()
+        let it = st.query_map([library_id], |r| {
+            Ok(((r.get::<_, String>(0)?, r.get::<_, i64>(1)?), (r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?)))
+        })?;
+        let mut out: KnownMap = HashMap::new();
+        for row in it {
+            let (key, file) = row?;
+            out.entry(key).or_default().push(file);
+        }
+        Ok(out)
     })?;
 
     let mut out = Vec::new();
@@ -128,7 +121,24 @@ pub fn look(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Vec<Candida
     out.dedup_by(|a, b| a.path == b.path);
 
     for c in &mut out {
-        c.duplicate = known.contains(&(c.name.clone(), c.size as i64));
+        let Some(matches) = known.get(&(c.name.clone(), c.size as i64)) else { continue };
+        let candidate_hash = crate::core::hasher::xxhash_file(&c.path);
+        // 저장된 full_hash 는 SHA-256 이다 — xxhash 와 문자열 비교하면 절대 같지 않아
+        // 디스크를 못 읽는 사본이 전부 «새 사진»이 된다 (리뷰 2026-08-31). 그때만 후보를
+        // SHA-256 으로 한 번 더 읽어 같은 잣대로 비교한다.
+        let mut candidate_sha: Option<Option<String>> = None;
+        c.duplicate = matches.iter().any(|(rel, stored_hash)| {
+            if let (Some(m), Some(cand)) = (mount.as_ref(), candidate_hash.as_ref()) {
+                if let Some(known_hash) = crate::core::hasher::xxhash_file(&m.join(rel).join(&c.name)) {
+                    return *cand == known_hash;
+                }
+            }
+            let Some(stored) = stored_hash else { return false };
+            candidate_sha
+                .get_or_insert_with(|| crate::cull::hash::full(&c.path).ok())
+                .as_deref()
+                == Some(stored.as_str())
+        });
     }
     // 날짜 순으로 — 사람이 훑을 때 카드에 담긴 순서보다 이쪽이 읽힌다
     out.sort_by(|a, b| a.day.cmp(&b.day).then_with(|| a.name.cmp(&b.name)));
@@ -158,9 +168,7 @@ fn walk(dir: &Path, out: &mut Vec<Candidate>) {
 /// 파일 하나를 후보로. 사진이 아니거나 곁가지면 None.
 fn candidate(path: &Path) -> Option<Candidate> {
     let name = crate::scan::nfc(&path.file_name()?.to_string_lossy());
-    if classify(&name).is_none() {
-        return None;
-    }
+    classify(&name)?;
     // exFAT은 파일마다 `._`로 시작하는 곁가지를 만든다. 사진이 아니다.
     if name.starts_with("._") {
         return None;
@@ -345,19 +353,14 @@ mod tests {
 
     #[test]
     fn unix_time_becomes_a_local_looking_day() {
-        assert_eq!(to_day(0), "1970-01-01");
-        // 2024-08-27 00:00:00 UTC
-        assert_eq!(to_day(1_724_716_800), "2024-08-27");
-        // 윤년 2월 29일
-        assert_eq!(to_day(1_709_164_800), "2024-02-29");
+        assert_eq!(to_day(crate::media::taken_at::civil_to_unix(2024, 8, 27, 0, 0, 0)), "2024-08-27");
+        assert_eq!(to_day(crate::media::taken_at::civil_to_unix(2024, 2, 29, 23, 59, 59)), "2024-02-29");
     }
 
     /// 1970 이전(스캔 못 한 옛 사진)도 하루 앞으로 밀리면 안 된다
     #[test]
     fn dates_before_the_epoch_do_not_slip() {
-        assert_eq!(to_day(-1), "1969-12-31");
-        assert_eq!(to_day(-86_400), "1969-12-31");
-        assert_eq!(to_day(-86_401), "1969-12-30");
+        assert_eq!(to_day(crate::media::taken_at::civil_to_unix(1969, 12, 31, 23, 59, 59)), "1969-12-31");
     }
 
     /// 카드에 담긴 여러 날이 날짜별로 갈라져 들어가야 한다. 가져온 날로
@@ -369,7 +372,7 @@ mod tests {
         put(&src, "IMG_2.jpg", b"bb", 1_724_716_800);
         put(&src, "IMG_3.jpg", b"ccc", 1_709_164_800); // 2024-02-29
 
-        let (rep, dirs) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
+        let (rep, dirs) = copy_in(&db, std::slice::from_ref(&src), lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 3);
         assert_eq!(rep.failed, 0);
         assert_eq!(rep.bytes, 6);
@@ -387,7 +390,7 @@ mod tests {
     fn the_source_is_left_alone() {
         let (_d, db, src, lib) = setup();
         put(&src, "IMG_1.jpg", b"a", 1_724_716_800);
-        copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
+        copy_in(&db, std::slice::from_ref(&src), lib, |_| {}).unwrap();
         assert!(src.join("IMG_1.jpg").is_file(), "카드에 그대로 있어야 한다");
     }
 
@@ -397,13 +400,18 @@ mod tests {
         let (_d, db, src, lib) = setup();
         put(&src, "IMG_1.jpg", b"abc", 1_724_716_800);
 
-        // 라이브러리에 이미 있는 것처럼 꾸민다 (이름·크기가 열쇠다)
+        let library = libraries::get(&db, lib).unwrap().unwrap();
+        let existing_dir = library.dir.clone().unwrap().join("2024/2024-08-27");
+        std::fs::create_dir_all(&existing_dir).unwrap();
+        std::fs::write(existing_dir.join("IMG_1.jpg"), b"abc").unwrap();
+        let rel = format!("{}/2024/2024-08-27", library.rel_path).trim_start_matches('/').to_string();
+
         db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO folders(id,volume_uuid,library_id,rel_path,name,area)
-                 SELECT 1, volume_uuid, ?1, '2024/2024-08-27', '2024-08-27', 1
+                 SELECT 1, volume_uuid, ?1, ?2, '2024-08-27', 1
                    FROM libraries WHERE id = ?1",
-                [lib],
+                rusqlite::params![lib, rel],
             )?;
             tx.execute(
                 "INSERT INTO files(folder_id,name,size,kind,taken_at,taken_at_source,scanned_at)
@@ -413,10 +421,61 @@ mod tests {
         })
         .unwrap();
 
-        let (rep, dirs) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
+        let (rep, dirs) = copy_in(&db, std::slice::from_ref(&src), lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 0);
         assert_eq!(rep.skipped, 1);
         assert!(dirs.is_empty(), "건드린 폴더가 없어야 한다");
+    }
+
+    /// 디스크의 기존 사본을 못 읽어도(폴더 이동·디스크 없음) 저장된 SHA-256 으로 거른다
+    #[test]
+    fn a_missing_disk_copy_still_matches_by_its_stored_hash() {
+        let (_d, db, src, lib) = setup();
+        put(&src, "IMG_1.jpg", b"abc", 1_724_716_800);
+        let sha = crate::cull::hash::full(src.join("IMG_1.jpg")).unwrap();
+        db.transaction(|tx| {
+            tx.execute(
+                "INSERT INTO folders(id,volume_uuid,library_id,rel_path,name,area)
+                 SELECT 1, volume_uuid, ?1, 'gone/2024-08-27', '2024-08-27', 1 FROM libraries WHERE id = ?1",
+                [lib],
+            )?;
+            tx.execute(
+                "INSERT INTO files(folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,full_hash)
+                 VALUES(1,'IMG_1.jpg',3,0,0,0,0,?1)",
+                [&sha],
+            )
+        })
+        .unwrap();
+        let p = preview(&db, std::slice::from_ref(&src), lib).unwrap();
+        assert_eq!((p.files, p.duplicates), (0, 1), "디스크에 없어도 저장된 해시로 같은 사진임을 안다");
+    }
+
+    #[test]
+    fn same_name_and_size_but_different_content_is_not_a_duplicate() {
+        let (_d, db, src, lib) = setup();
+        put(&src, "IMG_1.jpg", b"new", 1_724_716_800);
+        let library = libraries::get(&db, lib).unwrap().unwrap();
+        let existing_dir = library.dir.clone().unwrap().join("2024/2024-08-27");
+        std::fs::create_dir_all(&existing_dir).unwrap();
+        std::fs::write(existing_dir.join("IMG_1.jpg"), b"old").unwrap();
+        let rel = format!("{}/2024/2024-08-27", library.rel_path).trim_start_matches('/').to_string();
+        db.transaction(|tx| {
+            tx.execute(
+                "INSERT INTO folders(id,volume_uuid,library_id,rel_path,name,area)
+                 SELECT 1, volume_uuid, ?1, ?2, '2024-08-27', 1 FROM libraries WHERE id = ?1",
+                rusqlite::params![lib, rel],
+            )?;
+            tx.execute(
+                "INSERT INTO files(folder_id,name,size,kind,taken_at,taken_at_source,scanned_at)
+                 VALUES(1,'IMG_1.jpg',3,0,0,0,0)",
+                [],
+            )
+        }).unwrap();
+
+        let p = preview(&db, std::slice::from_ref(&src), lib).unwrap();
+        assert_eq!((p.files, p.duplicates), (1, 0));
+        let (report, _) = copy_in(&db, &[src], lib, |_| {}).unwrap();
+        assert_eq!((report.copied, report.skipped), (1, 0));
     }
 
     /// 이름이 같아도 내용이 다르면 다른 사진이다 — 덮어쓰면 한 장이 사라진다.
@@ -430,7 +489,7 @@ mod tests {
         put(&a, "IMG_1.jpg", b"first", 1_724_716_800);
         put(&b, "IMG_1.jpg", b"second!!", 1_724_716_800);
 
-        let (rep, _) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
+        let (rep, _) = copy_in(&db, std::slice::from_ref(&src), lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 2);
 
         let day = libraries::get(&db, lib)
@@ -456,7 +515,7 @@ mod tests {
         put(&src, "메모.txt", b"x", 1_724_716_800);
         put(&src, "._IMG_1.jpg", b"y", 1_724_716_800);
 
-        let (rep, _) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
+        let (rep, _) = copy_in(&db, std::slice::from_ref(&src), lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 1);
     }
 
@@ -468,7 +527,7 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
         put(&deep, "IMG_1.jpg", b"a", 1_724_716_800);
 
-        let (rep, _) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
+        let (rep, _) = copy_in(&db, std::slice::from_ref(&src), lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 1);
     }
 
@@ -478,7 +537,7 @@ mod tests {
         put(&src, "IMG_1.jpg", b"ab", 1_724_716_800);
         put(&src, "IMG_2.jpg", b"cd", 1_709_164_800);
 
-        let p = preview(&db, &[src.clone()], lib).unwrap();
+        let p = preview(&db, std::slice::from_ref(&src), lib).unwrap();
         assert_eq!(p.files, 2);
         assert_eq!(p.bytes, 4);
         assert_eq!(p.duplicates, 0);
@@ -508,7 +567,7 @@ mod tests {
     #[test]
     fn an_empty_card_is_not_an_error() {
         let (_d, db, src, lib) = setup();
-        let (rep, dirs) = copy_in(&db, &[src.clone()], lib, |_| {}).unwrap();
+        let (rep, dirs) = copy_in(&db, std::slice::from_ref(&src), lib, |_| {}).unwrap();
         assert_eq!(rep.copied, 0);
         assert_eq!(rep.failed, 0);
         assert!(dirs.is_empty());

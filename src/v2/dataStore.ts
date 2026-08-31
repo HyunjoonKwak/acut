@@ -22,6 +22,8 @@ import type { Filter } from "./viewStore";
 type Store = {
   libs: Library[];
   stats: Stats | null;
+  /** 현재 필터에 실제로 걸린 파일 수와 용량. 라이브러리 전체 통계와 분리한다. */
+  summary: Counted | null;
   cache: CacheUsage | null;
   /** 휴지통에 든 것 / 제외 판정만 하고 아직 안 치운 것 */
   trash: Counted | null;
@@ -60,7 +62,7 @@ type Store = {
   refreshTags: () => Promise<void>;
   /** 휴지통과 「치울 것」 개수. 판정을 바꿀 때마다 달라진다. */
   refreshTrash: (libId: number | null) => Promise<void>;
-  /** 통계와 타임라인 눈금. 둘을 한꺼번에 던진다 — 줄줄이 await하면 시간이 더해진다. */
+  /** 전체 통계·현재 필터 요약·타임라인. 한꺼번에 던져 대기 시간을 겹친다. */
   refreshMeta: (filter: Filter, libId: number | null) => Promise<void>;
   /** 폴더 트리 — 등록된 라이브러리 전부를 한 번에. 라이브러리 마디는 펴 둔다. */
   loadFolders: () => Promise<void>;
@@ -81,11 +83,14 @@ type Store = {
   setScanMsg: (s: string) => void;
 };
 
+let refreshMetaGeneration = 0;
+
 export const useData = create<Store>()((set, get) => ({
   libs: [],
   nasStatus: null,
   nasNew: null,
   stats: null,
+  summary: null,
   cache: null,
   trash: null,
   toClean: null,
@@ -142,14 +147,19 @@ export const useData = create<Store>()((set, get) => ({
     }
   },
   refreshMeta: async (filter, libId) => {
+    const generation = ++refreshMetaGeneration;
+    // 이전 숫자·연표는 새 결과가 올 때까지 그대로 둔다 — 비우면 이동할 때마다
+    // 상태바·장수·타임라인이 0 으로 깜빡인다. 늦은 응답은 세대 가드가 버린다.
     try {
-      const [stats, buckets] = await Promise.all([
+      const [stats, summary, buckets] = await Promise.all([
         invoke<Stats>("library_stats", { libraryId: libId }),
+        invoke<Counted>("files_summary", { filter }),
         invoke<Bucket[]>("files_timeline", { filter }),
       ]);
-      set({ stats, buckets });
-      get().refreshTrash(libId);
-      get().refreshBatches();
+      if (generation !== refreshMetaGeneration) return;
+      set({ stats, summary, buckets });
+      void get().refreshTrash(libId);
+      void get().refreshBatches();
     } catch {
       /* 아직 등록된 라이브러리가 없을 수 있다 */
     }

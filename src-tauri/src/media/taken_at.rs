@@ -21,6 +21,8 @@
 //! "이 날짜는 추정입니다"를 보여줄 수 있고, 나중에 정확한 값이 생기면
 //! 추정치만 골라 갱신할 수 있다.
 
+use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
+
 /// 촬영일의 출처. DB의 `files.taken_at_source`에 그대로 들어간다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -35,8 +37,8 @@ pub enum Source {
     Unknown = 3,
 }
 
-/// 2000-01-01 00:00:00 UTC. 이보다 이른 값은 기기 시계 오류로 본다.
-pub const PLAUSIBLE_FROM: i64 = 946_684_800;
+/// 2000-01-01 지역 자정을 모든 시간대에서 포함하도록 UTC 기준 하루 여유를 둔다.
+pub const PLAUSIBLE_FROM: i64 = 946_598_400;
 
 /// 그럴듯한 시각인가. 2000년 이후이고 미래가 아니어야 한다.
 pub fn is_plausible(ts: i64, now: i64) -> bool {
@@ -61,7 +63,7 @@ pub fn resolve_video(
     let mut best: Option<(i64, Source)> = None;
     let mut offer = |t: Option<i64>, src: Source| {
         if let Some(t) = t.filter(|&t| is_plausible(t, now)) {
-            if best.is_none_or(|(b, _)| t < b) {
+            if best.map_or(true, |(b, _)| t < b) {
                 best = Some((t, src));
             }
         }
@@ -230,21 +232,30 @@ fn valid_date(y: i64, mo: i64, da: i64) -> bool {
     (1990..=2100).contains(&y) && (1..=12).contains(&mo) && (1..=31).contains(&da)
 }
 
-/// 그레고리력 → 유닉스 시각 (UTC 기준).
+/// 시간대 없는 촬영 기기의 지역 시각 → 실제 유닉스 시각.
 ///
-/// 시간대를 적용하지 않는 이유: 파일명의 시각은 촬영 기기의 지역 시각이고,
-/// 우리는 그 값을 날짜 폴더로 쓸 뿐이다. 여기서 UTC 변환을 하면 자정 근처
-/// 사진이 하루 밀린다. 지역 시각을 그대로 두는 편이 폴더 분류에 맞다.
+/// EXIF와 파일명에는 대개 offset이 없다. 앱이 실행 중인 기기의 지역 시각으로
+/// 해석해 저장하면 파일시각·영상 컨테이너처럼 이미 UTC인 값과 같은 의미가 된다.
 pub fn civil_to_unix(y: i64, mo: i64, da: i64, h: i64, mi: i64, s: i64) -> i64 {
-    // days_from_civil (Howard Hinnant 알고리즘)
-    let y2 = if mo <= 2 { y - 1 } else { y };
-    let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
-    let yoe = y2 - era * 400;
-    let mp = (mo + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + da - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    days * 86_400 + h * 3_600 + mi * 60 + s
+    let Some(date) = chrono::NaiveDate::from_ymd_opt(y as i32, mo as u32, da as u32) else { return 0 };
+    let Some(naive) = date.and_hms_opt(h as u32, mi as u32, s as u32) else { return 0 };
+    Local.from_local_datetime(&naive)
+        .earliest()
+        .map(|t| t.timestamp())
+        .unwrap_or_else(|| naive.and_utc().timestamp())
+}
+
+/// 구버전 DB가 UTC처럼 저장했던 floating civil 초를 실제 Unix 시각으로 바꾼다.
+pub fn floating_civil_to_unix(ts: i64) -> i64 {
+    let Some(old) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) else { return ts };
+    civil_to_unix(
+        old.year() as i64,
+        old.month() as i64,
+        old.day() as i64,
+        old.hour() as i64,
+        old.minute() as i64,
+        old.second() as i64,
+    )
 }
 
 #[cfg(test)]
@@ -431,8 +442,19 @@ mod tests {
     // ── 날짜 변환 ──────────────────────────────────────────────────────
     #[test]
     fn unix_epoch_conversion_is_correct() {
-        assert_eq!(t(1970, 1, 1, 0, 0, 0), 0);
-        assert_eq!(t(2000, 1, 1, 0, 0, 0), PLAUSIBLE_FROM);
-        assert_eq!(t(2024, 2, 29, 12, 0, 0), 1_709_208_000); // 윤년
+        for (y, mo, d, h, mi, s) in [(1970, 1, 1, 0, 0, 0), (2000, 1, 1, 0, 0, 0), (2024, 2, 29, 12, 0, 0)] {
+            let actual = Local.timestamp_opt(t(y, mo, d, h, mi, s), 0).single().unwrap();
+            assert_eq!(
+                (actual.year(), actual.month(), actual.day(), actual.hour(), actual.minute(), actual.second()),
+                (y as i32, mo as u32, d as u32, h as u32, mi as u32, s as u32)
+            );
+        }
+    }
+
+    #[test]
+    fn old_floating_timestamp_is_migrated_to_the_same_wall_clock() {
+        let old = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+            .and_hms_opt(18, 0, 0).unwrap().and_utc().timestamp();
+        assert_eq!(floating_civil_to_unix(old), t(2024, 1, 1, 18, 0, 0));
     }
 }

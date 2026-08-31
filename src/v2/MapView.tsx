@@ -66,7 +66,9 @@ export default function MapView({ filter }: { filter: Filter }) {
       maxZoom: 19,
     })
       .on("tileerror", () => setOffline(true))
-      .on("load", () => setOffline(false))
+      // Leaflet의 `load`는 모든 타일이 실패해도 끝났다는 뜻으로 온다.
+      // 실제 타일 하나를 받은 경우에만 오프라인 표시를 푼다.
+      .on("tileload", () => setOffline(false))
       .addTo(m);
     layer.current = L.layerGroup().addTo(m);
     m.on("moveend", () =>
@@ -146,7 +148,7 @@ export default function MapView({ filter }: { filter: Filter }) {
 
   return (
     <div className="relative h-[42%] min-h-[180px] shrink-0 border-b border-line">
-      <div ref={box} className="absolute inset-0 bg-canvas" />
+      <div ref={box} className="absolute inset-0 !bg-canvas" />
       <div className="absolute top-2 right-2 z-[500] flex items-center gap-1.5 text-[12.5px]">
         {count !== null && (
           <span className="px-2 h-7 rounded-md bg-raised/90 text-fg-dim flex items-center tabular-nums">

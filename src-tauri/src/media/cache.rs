@@ -42,6 +42,8 @@ pub const FAST_ACCEPT_PX: u32 = 160;
 ///   - **RAW는 웹뷰가 못 읽는다.** ImageIO로 미리보기를 만들어야만 보인다
 pub const PREVIEW_PX: u32 = 2560;
 pub const PREVIEW_QUALITY: f64 = 0.85;
+const _: () = assert!(PREVIEW_PX > THUMB_PX);
+const _: () = assert!(PREVIEW_QUALITY > THUMB_QUALITY);
 
 /// 뷰어 미리보기 캐시 폴더. 썸네일과 나눠 둔다 — 지울 때 따로 지우기 위해서다.
 pub fn preview_root(base: &Path, library_id: i64) -> PathBuf {
@@ -242,12 +244,6 @@ mod tests {
             thumb_path(&preview_root(base, 1), &key),
             thumb_path(&cache_root(base, 1), &key),
         );
-    }
-
-    #[test]
-    fn preview_is_larger_than_the_grid_thumbnail() {
-        assert!(PREVIEW_PX > THUMB_PX, "뷰어가 썸네일을 확대해 보여주면 안 된다");
-        assert!(PREVIEW_QUALITY > THUMB_QUALITY);
     }
 
     #[test]

@@ -6,14 +6,14 @@
 use crate::db::conn::{Db, Result};
 
 pub fn get(db: &Db, key: &str) -> Result<Option<String>> {
-    Ok(db.read(|c| {
+    db.read(|c| {
         c.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
             .map(Some)
             .or_else(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => Ok(None),
                 e => Err(e),
             })
-    })?)
+    })
 }
 
 pub fn set(db: &Db, key: &str, value: &str) -> Result<()> {

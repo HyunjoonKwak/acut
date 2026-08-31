@@ -158,7 +158,8 @@ CREATE INDEX IF NOT EXISTS idx_files_culling   ON files(culling_flag) WHERE cull
 CREATE INDEX IF NOT EXISTS idx_files_rating    ON files(rating) WHERE rating > 0;
 CREATE INDEX IF NOT EXISTS idx_files_kind      ON files(kind, taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_files_gps       ON files(gps_lat, gps_lon) WHERE gps_lat IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_files_geo ON files(geo_country, geo_admin1, geo_admin2);
+-- idx_files_geo 는 db/upgrade.rs 가 만든다. 여기 두면 구버전 DB(칸이 아직 없다)에서
+-- 이 배치가 통째로 실패해 앱이 아예 뜨지 않는다 — idx_files_trashed·image_hash 와 같은 이유
 
 -- ---------------------------------------------------------------------------
 -- 지명 캐시 — 좌표 격자(0.01도 ≈ 1.1km) 하나에 한 줄. 한 번 물어보면 영원히 쓴다.
@@ -170,6 +171,9 @@ CREATE TABLE IF NOT EXISTS places (
     admin1  TEXT,
     admin2  TEXT,
     name    TEXT,                              -- 표시용 — 가장 좁은 단계
+    -- 'ok' 이름을 받았다 · 'none' 그 자리엔 이름이 없다(다시 묻지 않는다).
+    -- 둘을 섞으면 이름 없는 자리를 영영 다시 묻는다 (2026-09-01 리뷰)
+    status  TEXT NOT NULL DEFAULT 'ok',
     at      INTEGER NOT NULL                   -- 물어본 시각
 );
 CREATE INDEX IF NOT EXISTS idx_files_camera    ON files(cam_model) WHERE cam_model IS NOT NULL;

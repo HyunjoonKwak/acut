@@ -89,6 +89,7 @@ export function Browse() {
   return (
     <Section id="browse" title="탐색">
       <GeoRow />
+      <GeoEndpointRow />
       <Row label="보기 방식" hint="툴바 버튼과 같은 것입니다">
         <Select
           k="gridStyle"
@@ -217,6 +218,35 @@ export function ViewerSection() {
 }
 
 
+/** 지명 서버 — 정책상 앱 갱신 없이 바꿀 수 있어야 한다(자체 Nominatim·유료 서비스) */
+function GeoEndpointRow() {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    invoke<string | null>("settings_get", { key: "geo.endpoint" })
+      .then((v) => setUrl(v ?? ""))
+      .catch(() => {});
+  }, []);
+  return (
+    <Row
+      label="지명 서버"
+      hint="비워 두면 OpenStreetMap 공개 서버를 씁니다. 자체 Nominatim 이나 다른 서비스 주소를 넣으면 그쪽에 묻습니다 — 많은 사진을 한꺼번에 채울 때는 공개 서버 대신 이쪽을 권합니다."
+    >
+      <input
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        onBlur={() => {
+          invoke("settings_set", { key: "geo.endpoint", value: url.trim() })
+            .then(() => toast(url.trim() ? "지명 서버를 바꿨습니다" : "공개 서버로 되돌렸습니다"))
+            .catch((e) => toast(String(e), "drop"));
+        }}
+        placeholder="https://nominatim.openstreetmap.org/reverse"
+        spellCheck={false}
+        className="h-control w-[320px] px-2 rounded-md bg-raised text-[13px] ring-1 ring-line focus:ring-accent outline-none"
+      />
+    </Row>
+  );
+}
+
 /** 지명 채우기 — 좌표를 국가·시도·시군구 이름으로. 격자마다 한 번만 묻는다 */
 function GeoRow() {
   const [st, setSt] = useState<{ with_gps: number; named: number; cells_left: number } | null>(null);
@@ -248,16 +278,28 @@ function GeoRow() {
           : "좌표를 국가·시도·시군구 이름으로 바꿔 위치 갈래에서 이름으로 찾습니다."
       }
     >
-      <Btn
-        disabled={hasJob || left === 0}
-        onClick={() => {
-          invoke("geo_fill_start")
-            .then(() => toast("지명을 채웁니다 — 진행은 위 작업 표시에서 볼 수 있습니다"))
-            .catch((e) => toast(String(e), "drop"));
-        }}
-      >
-        {left > 0 ? `${left.toLocaleString()}군데 채우기` : "다 채웠습니다"}
-      </Btn>
+      <>
+        <Btn
+          disabled={hasJob || left === 0}
+          onClick={() => {
+            invoke("geo_fill_start", { limit: 100 })
+              .then(() => toast("가까운 100군데부터 채웁니다 — 진행은 위 작업 표시에서"))
+              .catch((e) => toast(String(e), "drop"));
+          }}
+        >
+          {left > 0 ? `${Math.min(100, left)}군데 채우기` : "다 채웠습니다"}
+        </Btn>
+        <Btn
+          disabled={hasJob || left === 0}
+          onClick={() => {
+            invoke("geo_fill_start", { limit: null })
+              .then(() => toast("남은 곳을 모두 채웁니다 — 멈추면 채운 것은 남습니다"))
+              .catch((e) => toast(String(e), "drop"));
+          }}
+        >
+          전부
+        </Btn>
+      </>
     </Row>
   );
 }

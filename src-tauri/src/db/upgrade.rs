@@ -124,10 +124,14 @@ fn add_geo_levels(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(
         "CREATE TABLE IF NOT EXISTS places (
             cell TEXT PRIMARY KEY, country TEXT, admin1 TEXT, admin2 TEXT, name TEXT,
-            at INTEGER NOT NULL
+            status TEXT NOT NULL DEFAULT 'ok', at INTEGER NOT NULL
          );
          CREATE INDEX IF NOT EXISTS idx_files_geo ON files(geo_country, geo_admin1, geo_admin2);",
-    )
+    )?;
+    if !has_column(c, "places", "status")? {
+        c.execute_batch("ALTER TABLE places ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'")?;
+    }
+    Ok(())
 }
 
 fn add_faces_at(c: &Connection) -> rusqlite::Result<()> {
@@ -370,6 +374,52 @@ mod tests {
         }
         let db = Db::open(&path).expect("done_at 전 DB도 열려야 한다");
         db.write(|c| c.execute("UPDATE groups SET done_at = 1", [])).unwrap();
+    }
+
+    /// 업그레이드가 나중에 더하는 칸을 schema.sql 이 먼저 참조하면 구버전 DB 가 안 열린다.
+    /// v0.5.4 DB 에서 실제로 «no such column: geo_country» 로 죽었다 (2026-09-01).
+    /// 새 칸을 넣을 때마다 이 목록에 더한다 — 사람이 기억하지 않아도 시험이 잡게.
+    #[test]
+    fn schema_never_mentions_a_column_that_upgrade_adds_later() {
+        let schema = include_str!("schema.sql");
+        for col in ["trashed_at", "trash_path", "trash_batch", "faces_at", "image_hash",
+                    "done_at", "geo_country", "geo_admin1", "geo_admin2"] {
+            for line in schema.lines() {
+                let l = line.trim();
+                if l.starts_with("CREATE INDEX") && l.contains(col) {
+                    panic!("schema.sql 의 인덱스가 upgrade 전용 칸 «{col}»을 참조한다 — 구버전 DB 가 안 열린다:\n{l}");
+                }
+            }
+        }
+    }
+
+    /// 지명 칸이 없던 DB(v0.5.4)도 그대로 열려야 한다
+    #[test]
+    fn a_database_from_before_place_names_still_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(include_str!("schema.sql")).unwrap();
+            c.execute_batch(
+                "DROP INDEX IF EXISTS idx_files_geo;
+                 ALTER TABLE files DROP COLUMN geo_country;
+                 ALTER TABLE files DROP COLUMN geo_admin1;
+                 ALTER TABLE files DROP COLUMN geo_admin2;
+                 DROP TABLE IF EXISTS places;",
+            )
+            .unwrap();
+            assert!(!has_column(&c, "files", "geo_country").unwrap());
+        }
+        let db = Db::open(&path).expect("지명 칸이 없던 DB 도 열려야 한다");
+        db.read(|c| {
+            assert!(has_column(c, "files", "geo_country")?);
+            assert!(has_column(c, "files", "geo_admin2")?);
+            Ok(())
+        })
+        .unwrap();
+        db.write(|c| c.execute("INSERT INTO places(cell,at) VALUES('0.00,0.00',0)", []))
+            .unwrap();
     }
 
     #[test]

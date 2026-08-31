@@ -15,7 +15,7 @@ pub async fn geo_stats(state: State<'_, AppState>) -> Result<geo::Stats, String>
 /// 이름 채우기를 시작한다. 진행은 `geo-progress`, 끝나면 `geo-done`.
 /// 초당 한 건씩 물으므로 오래 걸린다 — 멈추기는 다른 긴 일과 같은 스위치를 쓴다.
 #[tauri::command]
-pub async fn geo_fill_start(app: AppHandle) -> Result<(), String> {
+pub async fn geo_fill_start(app: AppHandle, limit: Option<usize>) -> Result<(), String> {
     let state = app.state::<AppState>();
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
@@ -27,12 +27,16 @@ pub async fn geo_fill_start(app: AppHandle) -> Result<(), String> {
     std::thread::spawn(move || {
         let _guard = guard;
         let handle = app.clone();
-        let r = geo::fill(&db, &cancel, |p| {
+        let r = geo::fill(&db, &cancel, limit, |p| {
             let _ = handle.emit("geo-progress", p);
         });
         match r {
             Ok(p) => {
-                log::info!("지명 — 격자 {}칸 · 물어본 {}건 · 사진 {}장", p.done, p.asked, p.files);
+                log::info!(
+                    "지명 — 자리 {}곳 · 물어본 {}건 · 사진 {}장 · 이름 없음 {}곳{}",
+                    p.done, p.asked, p.files, p.empty,
+                    p.stopped.as_deref().map(|s| format!(" · 멈춤: {s}")).unwrap_or_default()
+                );
                 let _ = app.emit("geo-done", p);
             }
             Err(e) => {

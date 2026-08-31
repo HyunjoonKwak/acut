@@ -35,6 +35,9 @@ type Store = {
   /** 지금 스위치를 쥔 작업 이름 — 진행 숫자가 없어도 칩에 «~ 중»으로 보인다 */
   holder: string | null;
   setHolder: (h: string | null) => void;
+  /** 지명이 바뀐 횟수 — 위치 갈래가 이 값을 보고 다시 센다 (2026-09-01 리뷰) */
+  geoRev: number;
+  bumpGeo: () => void;
   batches: Batch[];
   buckets: Bucket[];
   folders: FolderRow[];
@@ -98,6 +101,8 @@ export const useData = create<Store>()((set, get) => ({
   toCleanAll: null,
   holder: null,
   setHolder: (holder) => set({ holder }),
+  geoRev: 0,
+  bumpGeo: () => set((s) => ({ geoRev: s.geoRev + 1 })),
   batches: [],
   buckets: [],
   folders: [],

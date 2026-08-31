@@ -67,6 +67,7 @@ export default function Sidebar({
   }, [source, setViewTrash]);
 
   /// 아직 지명이 없는 사진 수 — 위치 갈래가 안내를 보인다
+  const geoRev = useData((s) => s.geoRev);
   const [geoLeft, setGeoLeft] = useState(0);
   useEffect(() => {
     if (source !== "location") return;
@@ -77,7 +78,7 @@ export default function Sidebar({
     return () => {
       live = false;
     };
-  }, [source]);
+  }, [source, geoRev]);
 
   /// 달력이 쓸 눈금 — **날짜 조건을 뺀** 필터로 읽는다. 그리드용 buckets를
   /// 그대로 쓰면 2024년을 고른 순간 목록에 2024년만 남아 다른 해로 갈 수 없다.

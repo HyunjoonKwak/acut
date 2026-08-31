@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useData } from "./dataStore";
 import type { Facet } from "./FacetList";
 import type { Picks } from "./picks";
 
@@ -32,7 +33,9 @@ export default function PlaceTree({
   const [regions, setRegions] = useState<{ of: string; items: Facet[] } | null>(null);
   const [cities, setCities] = useState<{ of: string; items: Facet[] } | null>(null);
 
-  const key = useMemo(() => JSON.stringify(facetFilter), [facetFilter]);
+  // 지명이 채워지면 개정 번호가 올라 세 단계가 모두 다시 센다
+  const geoRev = useData((s) => s.geoRev);
+  const key = useMemo(() => JSON.stringify([facetFilter, geoRev]), [facetFilter, geoRev]);
 
   useEffect(() => {
     let live = true;

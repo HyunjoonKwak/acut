@@ -42,13 +42,28 @@ export function useScanEvents(cb: {
     on<{ total: number; done: number; asked: number; files: number }>("geo-progress", (p) =>
       job().progress({ label: "지명", done: p.done, total: p.total }),
     );
-    on<{ files: number; asked: number; failed: number }>("geo-done", (p) => {
-      job().clear();
-      toast(
-        `지명 ${p.files.toLocaleString()}장에 붙였습니다${p.failed > 0 ? ` · ${p.failed}군데 실패` : ""}`,
-        "ok",
-      );
-    });
+    on<{ files: number; asked: number; failed: number; empty: number; stopped: string | null }>(
+      "geo-done",
+      (p) => {
+        job().clear();
+        // 화면을 열어 둔 채로 끝나도 트리와 «이름 없는 N장»이 바로 새로 센다
+        data().bumpGeo();
+        if (p.stopped) {
+          toast(`${p.stopped} — ${p.files.toLocaleString()}장까지 붙였습니다`, "drop");
+          return;
+        }
+        const tail = [
+          p.empty > 0 ? `이름 없는 곳 ${p.empty}` : "",
+          p.failed > 0 ? `실패 ${p.failed}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        toast(
+          `지명 ${p.files.toLocaleString()}장에 붙였습니다${tail ? ` (${tail})` : ""}`,
+          "ok",
+        );
+      },
+    );
     on<string>("geo-error", (e) => {
       job().clear();
       toast(e, "drop");

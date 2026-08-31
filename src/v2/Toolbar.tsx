@@ -13,7 +13,49 @@ import { Btn, Sep } from "./ui";
 import { useUi } from "./uiStore";
 import { useView } from "./viewStore";
 import { useViewportW } from "./useViewportW";
+import { useJob } from "./jobStore";
 import type { FileRow, Mark } from "./types";
+
+/**
+ * 배경 작업 칩 — 스캔·해시·썸네일·받기가 돌 때 툴바에 보인다.
+ *
+ * 진행 표시가 아래 상태바(12.5px)에만 있어 «뭔가 도는지» 모르고 지나쳤다
+ * (2026-08-31 «백그라운드로 뭔가 작업이 돌고 있으면 상황을 알 수 있게»).
+ * 숫자 없는 상태(busy 문장)도 함께 보인다. 진행 색은 accent(규격: 진행·주 행동).
+ */
+function JobChip({ narrow }: { narrow: boolean }) {
+  const job = useJob((st) => st.job);
+  const busy = useData((st) => st.busy);
+  if (!job && !busy) return null;
+  const pct =
+    job && job.total > 0 ? Math.min(100, (job.done / job.total) * 100) : null;
+  const label = job?.label ?? busy;
+  return (
+    <div
+      title={`${label}${job ? ` — ${job.done.toLocaleString()} / ${job.total.toLocaleString()}` : ""} · 아래 상태바에서 멈출 수 있습니다`}
+      className="shrink-0 flex items-center gap-2 h-control px-2.5 rounded-md bg-raised ring-1 ring-accent/40"
+    >
+      <i className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0" />
+      {!narrow && (
+        <span className="text-[12.5px] text-fg-dim whitespace-nowrap max-w-[220px] overflow-hidden text-ellipsis">
+          {label}
+        </span>
+      )}
+      {job && job.total > 0 && (
+        <>
+          <span className="text-[12px] text-fg-mute tabular-nums whitespace-nowrap">
+            {narrow
+              ? `${Math.round(pct ?? 0)}%`
+              : `${job.done.toLocaleString()} / ${job.total.toLocaleString()}`}
+          </span>
+          <span className="w-16 h-1 rounded bg-canvas overflow-hidden shrink-0">
+            <i className="block h-full bg-accent" style={{ width: `${pct}%` }} />
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
 
 /**
  * 툴바 — 한 줄로 모은다.
@@ -78,6 +120,8 @@ export default function Toolbar({
           collapsed={s3}
         />
       </div>
+
+      <JobChip narrow={s2} />
 
       <NasBadge />
 

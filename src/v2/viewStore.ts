@@ -105,4 +105,7 @@ export const facetOf = (f: Filter): Filter => ({
   min_rating: null,
   tag_id: null,
   place: null,
+  country: null,
+  admin1: null,
+  admin2: null,
 });

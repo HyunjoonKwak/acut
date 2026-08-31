@@ -6,6 +6,7 @@
 //! 6만 장 그리드에서는 문자열 복사 비용이 그대로 렉이 된다. 프론트는 받은 경로를
 //! `convertFileSrc`로 바꿔 `<img src>`에 넣으면 된다 — 웹뷰가 파일을 직접 읽는다.
 
+pub mod geo;
 pub mod cull;
 pub mod backup;
 pub mod job;

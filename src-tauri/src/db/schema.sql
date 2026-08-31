@@ -120,6 +120,11 @@ CREATE TABLE IF NOT EXISTS files (
     gps_lon     REAL,
     gps_alt     REAL,
     geo_name    TEXT,                          -- 역지오코딩 캐시 ('거제시')
+    -- 지명 3단계 — 격자(0.01도)마다 한 번 물어 places 에 캐시한 값을 복사해 둔다.
+    -- 파일에 두는 이유: 사이드바 묶음·필터가 조인 없이 곧바로 센다
+    geo_country TEXT,                          -- '대한민국'
+    geo_admin1  TEXT,                          -- 시도 — '경기도', '서울특별시'
+    geo_admin2  TEXT,                          -- 시군구 — '수원시', '서초구'
 
     -- 품질 점수 (고르기용) ------------------------------------------------
     sharpness   REAL,
@@ -153,6 +158,20 @@ CREATE INDEX IF NOT EXISTS idx_files_culling   ON files(culling_flag) WHERE cull
 CREATE INDEX IF NOT EXISTS idx_files_rating    ON files(rating) WHERE rating > 0;
 CREATE INDEX IF NOT EXISTS idx_files_kind      ON files(kind, taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_files_gps       ON files(gps_lat, gps_lon) WHERE gps_lat IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_files_geo ON files(geo_country, geo_admin1, geo_admin2);
+
+-- ---------------------------------------------------------------------------
+-- 지명 캐시 — 좌표 격자(0.01도 ≈ 1.1km) 하나에 한 줄. 한 번 물어보면 영원히 쓴다.
+-- 사진 5만 장이라도 서로 다른 격자는 천 개 남짓이다 (실측 2026-09-01: 1,143칸)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS places (
+    cell    TEXT PRIMARY KEY,                  -- '37.28,127.05'
+    country TEXT,
+    admin1  TEXT,
+    admin2  TEXT,
+    name    TEXT,                              -- 표시용 — 가장 좁은 단계
+    at      INTEGER NOT NULL                   -- 물어본 시각
+);
 CREATE INDEX IF NOT EXISTS idx_files_camera    ON files(cam_model) WHERE cam_model IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_inode     ON files(inode);
 -- 정렬 기준마다 인덱스가 있어야 페이지마다 14만 행을 다시 줄 세우지 않는다.

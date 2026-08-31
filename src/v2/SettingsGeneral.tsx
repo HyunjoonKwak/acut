@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import { useData } from "./dataStore";
 import { STYLES } from "./gridStyle";
 import { useJob } from "./jobStore";
@@ -87,6 +88,7 @@ export function Browse() {
   const [style] = usePref("gridStyle");
   return (
     <Section id="browse" title="탐색">
+      <GeoRow />
       <Row label="보기 방식" hint="툴바 버튼과 같은 것입니다">
         <Select
           k="gridStyle"
@@ -214,3 +216,48 @@ export function ViewerSection() {
   );
 }
 
+
+/** 지명 채우기 — 좌표를 국가·시도·시군구 이름으로. 격자마다 한 번만 묻는다 */
+function GeoRow() {
+  const [st, setSt] = useState<{ with_gps: number; named: number; cells_left: number } | null>(null);
+  const hasJob = useJob((s) => s.job !== null);
+  const load = () =>
+    invoke<{ with_gps: number; named: number; cells_left: number }>("geo_stats")
+      .then(setSt)
+      .catch(() => {});
+  useEffect(() => {
+    void load();
+  }, []);
+  // 일이 끝나면 숫자를 다시 읽는다
+  useEffect(() => {
+    if (!hasJob) void load();
+  }, [hasJob]);
+
+  const left = st?.cells_left ?? 0;
+  const mins = Math.ceil((left * 1.1) / 60);
+  return (
+    <Row
+      label="지명 채우기"
+      hint={
+        st
+          ? `좌표가 있는 사진 ${st.with_gps.toLocaleString()}장 중 ${st.named.toLocaleString()}장에 지명이 붙어 있습니다.${
+              left > 0
+                ? ` 남은 곳 ${left.toLocaleString()}군데 — 약 ${mins}분 걸립니다(OpenStreetMap 에 초당 한 번만 묻습니다).`
+                : " 다 붙었습니다."
+            }`
+          : "좌표를 국가·시도·시군구 이름으로 바꿔 위치 갈래에서 이름으로 찾습니다."
+      }
+    >
+      <Btn
+        disabled={hasJob || left === 0}
+        onClick={() => {
+          invoke("geo_fill_start")
+            .then(() => toast("지명을 채웁니다 — 진행은 위 작업 표시에서 볼 수 있습니다"))
+            .catch((e) => toast(String(e), "drop"));
+        }}
+      >
+        {left > 0 ? `${left.toLocaleString()}군데 채우기` : "다 채웠습니다"}
+      </Btn>
+    </Row>
+  );
+}

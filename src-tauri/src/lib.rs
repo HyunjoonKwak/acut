@@ -7,6 +7,7 @@ mod api;
 mod core;
 mod cull;
 mod db;
+mod geo;
 mod media;
 mod nas;
 pub mod ops;
@@ -235,6 +236,8 @@ pub fn run() {
             api::scan_cancel,
             api::files_page,
             api::files_facets,
+            api::geo::geo_stats,
+            api::geo::geo_fill_start,
             api::smart::smart_list,
             api::smart::smart_save,
             api::smart::smart_delete,

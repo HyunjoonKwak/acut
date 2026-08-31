@@ -9,6 +9,7 @@ import PeoplePanel from "./PeoplePanel";
 import SettingsNav from "./SettingsNav";
 import SmartPanel from "./SmartPanel";
 import TagPanel from "./TagPanel";
+import PlaceTree from "./PlaceTree";
 import TrashPanel from "./TrashPanel";
 import { useData } from "./dataStore";
 import { EMPTY, isEmpty } from "./picks";
@@ -64,6 +65,19 @@ export default function Sidebar({
   useEffect(() => {
     setViewTrash(source === "trash");
   }, [source, setViewTrash]);
+
+  /// 아직 지명이 없는 사진 수 — 위치 갈래가 안내를 보인다
+  const [geoLeft, setGeoLeft] = useState(0);
+  useEffect(() => {
+    if (source !== "location") return;
+    let live = true;
+    invoke<{ with_gps: number; named: number }>("geo_stats")
+      .then((s) => live && setGeoLeft(Math.max(0, s.with_gps - s.named)))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [source]);
 
   /// 달력이 쓸 눈금 — **날짜 조건을 뺀** 필터로 읽는다. 그리드용 buckets를
   /// 그대로 쓰면 2024년을 고른 순간 목록에 2024년만 남아 다른 해로 갈 수 없다.
@@ -195,11 +209,11 @@ export default function Sidebar({
             </>
           )}
           {source === "location" && (
-            <FacetList
-              kind="place"
-              filter={facetFilter}
-              selected={picks.place}
-              onPick={(v) => patchPicks({ place: v })}
+            <PlaceTree
+              picks={picks}
+              facetFilter={facetFilter}
+              unnamed={geoLeft}
+              onPick={(p) => patchPicks({ ...p, place: null })}
             />
           )}
           {source === "tag" && (

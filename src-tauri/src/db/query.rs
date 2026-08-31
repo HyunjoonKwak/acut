@@ -140,6 +140,10 @@ pub struct Filter {
     pub month: Option<String>,
     /// 사이드바에서 고른 날 (`2024-08-27`)
     pub day: Option<String>,
+    /// 지명 3단계 — 국가 / 시도 / 시군구. 빈 문자열이면 «이름 없음»
+    pub country: Option<String>,
+    pub admin1: Option<String>,
+    pub admin2: Option<String>,
     /// 사이드바에서 고른 카메라 모델
     pub camera: Option<String>,
     /// 사이드바에서 고른 렌즈. 빈 문자열이면 "렌즈 정보 없음".
@@ -302,6 +306,20 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     if let Some(d) = f.day.as_deref().filter(|s| !s.is_empty()) {
         w.push("strftime('%Y-%m-%d', fi.taken_at,'unixepoch','localtime') = ?".into());
         p.push(Box::new(d.to_string()));
+    }
+    for (col, val) in [
+        ("fi.geo_country", f.country.as_ref()),
+        ("fi.geo_admin1", f.admin1.as_ref()),
+        ("fi.geo_admin2", f.admin2.as_ref()),
+    ] {
+        if let Some(v) = val {
+            if v.is_empty() {
+                w.push(format!("{col} IS NULL"));
+            } else {
+                w.push(format!("{col} = ?"));
+                p.push(Box::new(v.clone()));
+            }
+        }
     }
     if let Some(cam) = f.camera.as_ref() {
         // 빈 문자열은 "카메라 정보 없음"을 뜻한다
@@ -651,6 +669,10 @@ pub enum FacetKind {
     Rating,
     Kind,
     Place,
+    /// 지명 — 국가 / 시도 / 시군구. 위쪽 단계를 필터에 걸고 다음 단계를 센다
+    Country,
+    Admin1,
+    Admin2,
 }
 
 /// 지금 필터 안에서 각 값이 몇 장인지 센다.
@@ -675,6 +697,9 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
         // "이 근처에서 찍은 것"을 모아 보는 데는 충분하다. ROUND(x-.5)는
         // 정확한 0을 -0.1로 보내므로 쓰지 않는다. 좌표를 10배해 소수 오차를
         // 먼저 자르고 양수로 옮긴 뒤 CAST하면 음수·경계값도 같은 칸으로 간다.
+        FacetKind::Country => "COALESCE(fi.geo_country,'')".into(),
+        FacetKind::Admin1 => "COALESCE(fi.geo_admin1,'')".into(),
+        FacetKind::Admin2 => "COALESCE(fi.geo_admin2,'')".into(),
         FacetKind::Place => format!(
             "CASE WHEN NOT ({VALID_GPS_SQL}) THEN ''
                   ELSE printf('%.1f,%.1f',
@@ -721,6 +746,13 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
                     "1" => "영상".into(),
                     _ => "RAW".into(),
                 },
+                FacetKind::Country | FacetKind::Admin1 | FacetKind::Admin2 => {
+                    if value.is_empty() {
+                        "(지명 없음)".into()
+                    } else {
+                        value.clone()
+                    }
+                }
                 FacetKind::Camera => {
                     if value.is_empty() {
                         "(카메라 정보 없음)".into()

@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Facet = { value: string; label: string; count: number };
 export type FacetKind =
-  "year" | "day" | "camera" | "lens" | "rating" | "kind" | "place";
+  | "year" | "day" | "camera" | "lens" | "rating" | "kind" | "place"
+  | "country" | "admin1" | "admin2";
 
 /**
  * 사이드바의 갈래 목록 — 연도·카메라·평점.

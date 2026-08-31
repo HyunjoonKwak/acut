@@ -13,6 +13,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_faces_at(c)?;
     add_image_hash(c)?;
     add_done_at(c)?;
+    add_geo_levels(c)?;
     add_nas_pulls(c)?;
     rename_old_labels(c)?;
     migrate_taken_at_to_utc(c)?;
@@ -110,6 +111,23 @@ fn add_done_at(c: &Connection) -> rusqlite::Result<()> {
         c.execute_batch("ALTER TABLE groups ADD COLUMN done_at INTEGER")?;
     }
     Ok(())
+}
+
+/// 지명 3단계(2026-09-01) — 국가·시도·시군구와 격자 캐시. 좌표만 보이던 위치 갈래를
+/// 사람이 읽는 이름으로 묶기 위한 것. 값은 «지명 채우기»가 나중에 채운다.
+fn add_geo_levels(c: &Connection) -> rusqlite::Result<()> {
+    for col in ["geo_country", "geo_admin1", "geo_admin2"] {
+        if !has_column(c, "files", col)? {
+            c.execute_batch(&format!("ALTER TABLE files ADD COLUMN {col} TEXT"))?;
+        }
+    }
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS places (
+            cell TEXT PRIMARY KEY, country TEXT, admin1 TEXT, admin2 TEXT, name TEXT,
+            at INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_files_geo ON files(geo_country, geo_admin1, geo_admin2);",
+    )
 }
 
 fn add_faces_at(c: &Connection) -> rusqlite::Result<()> {

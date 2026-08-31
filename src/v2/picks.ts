@@ -30,6 +30,10 @@ export type Picks = {
   tag_id: number | null;
   /** 사이드바에서 고른 자리 (`37.5,126.9`). 빈 문자열이면 위치 없는 것만 */
   place: string | null;
+  /** 지명 3단계 — 국가 / 시도 / 시군구. 빈 문자열이면 «지명 없음» */
+  country: string | null;
+  admin1: string | null;
+  admin2: string | null;
   /** 썸네일이 없는 것만 — 못 만들었거나 아직 안 만든 것 */
   no_thumb: boolean;
   /** 사이드바에서 고른 사람 (faces.person_id) */
@@ -53,6 +57,9 @@ export const EMPTY: Picks = {
   lens: null,
   tag_id: null,
   place: null,
+  country: null,
+  admin1: null,
+  admin2: null,
   no_thumb: false,
   person_id: null,
   bbox: null,
@@ -78,6 +85,9 @@ const TYPES: Record<keyof Picks, "number" | "string" | "boolean"> = {
   lens: "string",
   tag_id: "number",
   place: "string",
+  country: "string",
+  admin1: "string",
+  admin2: "string",
   no_thumb: "boolean",
   person_id: "number",
   bbox: "string",

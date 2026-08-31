@@ -231,6 +231,12 @@ pub fn scan_folder(
                 focal_mm=excluded.focal_mm,
                 geo_name=CASE WHEN files.gps_lat IS excluded.gps_lat
                     AND files.gps_lon IS excluded.gps_lon THEN files.geo_name END,
+                geo_country=CASE WHEN files.gps_lat IS excluded.gps_lat
+                    AND files.gps_lon IS excluded.gps_lon THEN files.geo_country END,
+                geo_admin1=CASE WHEN files.gps_lat IS excluded.gps_lat
+                    AND files.gps_lon IS excluded.gps_lon THEN files.geo_admin1 END,
+                geo_admin2=CASE WHEN files.gps_lat IS excluded.gps_lat
+                    AND files.gps_lon IS excluded.gps_lon THEN files.geo_admin2 END,
                 gps_lat=excluded.gps_lat, gps_lon=excluded.gps_lon,
                 gps_alt=excluded.gps_alt, inode=excluded.inode,
                 sharpness=CASE WHEN files.size=excluded.size

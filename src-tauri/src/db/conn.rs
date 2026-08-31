@@ -240,7 +240,7 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(n, 17, "테이블 17개가 만들어져야 한다 (schema.sql 16 + upgrade의 nas_pulls)");
+        assert_eq!(n, 18, "테이블 18개가 만들어져야 한다 (schema.sql 17 + upgrade의 nas_pulls)");
     }
 
     /// 실제 DB 사본을 여는 데 얼마나 걸리나 — 시작 시간의 첫 구간.

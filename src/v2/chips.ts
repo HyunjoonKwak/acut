@@ -49,6 +49,11 @@ export function chips(
   if (p.name_like) add("name_like", `"${p.name_like}"`);
   if (p.tag_id !== null) add("tag_id", tagName(p.tag_id) ?? `태그 ${p.tag_id}`);
   if (p.place !== null) add("place", formatPlace(p.place));
+  // 지명은 가장 좁은 단계 하나만 — 셋 다 띄우면 «대한민국 · 경기도 · 수원시»로 겹친다.
+  // 떼면 아래 단계까지 같이 떨어진다 (without)
+  if (p.admin2 !== null) add("admin2", p.admin2 || "지명 없음");
+  else if (p.admin1 !== null) add("admin1", p.admin1 || "지명 없음");
+  else if (p.country !== null) add("country", p.country || "지명 없음");
   // 날을 고르면 달·연도는 그 안에 이미 들어 있다 — 셋 다 띄우면 겹쳐 보인다
   // `2024-08` → `2024년 8월`. 사이드바 달력이 「8월」로 쓰니 여기도 맞춘다.
   if (p.day) {
@@ -86,5 +91,15 @@ export function chips(
 export function without(p: Picks, key: keyof Picks): Picks {
   const next = { ...p, [key]: EMPTY[key] } as Picks;
   if (key === "month") next.year = null;
+  // 지명은 위 단계를 떼면 아래 단계가 갈 곳이 없다 — 같이 뗀다
+  if (key === "country") {
+    next.admin1 = null;
+    next.admin2 = null;
+  }
+  if (key === "admin1") next.admin2 = null;
+  if (key === "admin2") {
+    next.country = null;
+    next.admin1 = null;
+  }
   return next;
 }

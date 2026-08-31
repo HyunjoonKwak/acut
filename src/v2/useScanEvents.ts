@@ -39,6 +39,20 @@ export function useScanEvents(cb: {
       subs.push(listen<T>(name, (e) => alive && f(e.payload)));
     };
 
+    on<{ total: number; done: number; asked: number; files: number }>("geo-progress", (p) =>
+      job().progress({ label: "지명", done: p.done, total: p.total }),
+    );
+    on<{ files: number; asked: number; failed: number }>("geo-done", (p) => {
+      job().clear();
+      toast(
+        `지명 ${p.files.toLocaleString()}장에 붙였습니다${p.failed > 0 ? ` · ${p.failed}군데 실패` : ""}`,
+        "ok",
+      );
+    });
+    on<string>("geo-error", (e) => {
+      job().clear();
+      toast(e, "drop");
+    });
     // 스위치를 쥔 작업 — 진행 이벤트가 따로 없어도 «~ 중»은 보인다
     on<string | null>("switch-busy", (r) => useData.getState().setHolder(r));
     // 폴더 감시의 밀린 일 — 큰 이동 뒤엔 수백 폴더가 쌓여 몇 분 걸린다.

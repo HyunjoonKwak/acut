@@ -75,6 +75,7 @@ pub fn run() {
             let v2 = db::conn::Db::open(app_data_dir.join("acut-v2.db"))
                 .expect("데이터베이스를 열 수 없습니다");
             app.manage(api::AppState::new(v2, app_data_dir.clone()));
+            api::job::set_emitter(app.handle().clone());
 
             // 하루에 한 벌 — 판정·평점·태그가 든 파일이 하나뿐이라 잃으면 끝이다.
             // 별도 스레드에서. 8만 장 DB라도 몇 초지만 첫 화면을 막을 이유가 없다.

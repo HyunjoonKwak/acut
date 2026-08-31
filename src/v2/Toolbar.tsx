@@ -26,10 +26,13 @@ import type { FileRow, Mark } from "./types";
 function JobChip({ narrow }: { narrow: boolean }) {
   const job = useJob((st) => st.job);
   const busy = useData((st) => st.busy);
-  if (!job && !busy) return null;
+  // 진행 숫자도 문장도 없는 작업(감시·백업 등)이 스위치를 쥐면 이름이라도 보인다
+  const holder = useData((st) => st.holder);
+  if (!job && !busy && !holder) return null;
   const pct =
     job && job.total > 0 ? Math.min(100, (job.done / job.total) * 100) : null;
-  const label = job?.label ?? busy;
+  const label =
+    job?.label ?? (busy || (holder ? `${holder.replace(/^에이컷 /, "")} 중…` : ""));
   return (
     <div
       title={`${label}${job ? ` — ${job.done.toLocaleString()} / ${job.total.toLocaleString()}` : ""} · 아래 상태바에서 멈출 수 있습니다`}

@@ -30,6 +30,9 @@ type Store = {
   trashByLib: TrashByLib[];
   /** 모든 라이브러리에서 제외 표시만 하고 아직 휴지통에 안 보낸 것 — 고르기 머리에 보인다 */
   toCleanAll: Counted | null;
+  /** 지금 스위치를 쥔 작업 이름 — 진행 숫자가 없어도 칩에 «~ 중»으로 보인다 */
+  holder: string | null;
+  setHolder: (h: string | null) => void;
   batches: Batch[];
   buckets: Bucket[];
   folders: FolderRow[];
@@ -88,6 +91,8 @@ export const useData = create<Store>()((set, get) => ({
   toClean: null,
   trashByLib: [],
   toCleanAll: null,
+  holder: null,
+  setHolder: (holder) => set({ holder }),
   batches: [],
   buckets: [],
   folders: [],

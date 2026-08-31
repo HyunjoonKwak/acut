@@ -39,6 +39,8 @@ export function useScanEvents(cb: {
       subs.push(listen<T>(name, (e) => alive && f(e.payload)));
     };
 
+    // 스위치를 쥔 작업 — 진행 이벤트가 따로 없어도 «~ 중»은 보인다
+    on<string | null>("switch-busy", (r) => useData.getState().setHolder(r));
     // 폴더 감시의 밀린 일 — 큰 이동 뒤엔 수백 폴더가 쌓여 몇 분 걸린다.
     // 수가 줄어드는 게 보여야 «멈췄나»가 아니라 «하나씩 처리 중»으로 읽힌다
     on<number>("watch-busy", (n) => {

@@ -21,6 +21,7 @@ pub struct JobGuard {
 impl Drop for JobGuard {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Release);
+        emit_holder(None);
     }
 }
 
@@ -33,6 +34,20 @@ pub fn try_start(running: &Arc<AtomicBool>, reason: &str) -> Option<JobGuard> {
 /// 감시가 썸네일을 만드는 동안 스위치를 몇 분씩 쥐면 20초 대기로도 «다른 작업이 도는 중»으로
 /// 튕긴다 (2026-08-31 «영구히 비우기 실패»). 썸네일의 cancel 로도 그대로 쓴다.
 static WAITING: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+/// 스위치 상태를 프론트로 — «표시 없이 도는 작업»이 다시 생기지 않게, 잡는 쪽이 아니라
+/// 스위치 자체가 알린다 (2026-08-31 «감시가 돈다는데 상단 바엔 아무 표시도 없었어»)
+static EMITTER: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+pub fn set_emitter(h: tauri::AppHandle) {
+    let _ = EMITTER.set(h);
+}
+
+fn emit_holder(reason: Option<&str>) {
+    if let Some(h) = EMITTER.get() {
+        let _ = tauri::Emitter::emit(h, "switch-busy", reason);
+    }
+}
 
 pub fn waiting() -> Arc<AtomicBool> {
     Arc::clone(WAITING.get_or_init(|| Arc::new(AtomicBool::new(false))))
@@ -64,6 +79,7 @@ pub fn try_start_with(running: &Arc<AtomicBool>, reason: &str, background: bool)
     if running.swap(true, Ordering::AcqRel) {
         return None;
     }
+    emit_holder(Some(reason));
     Some(JobGuard { running: Arc::clone(running), _activity: Activity::begin(reason, background) })
 }
 

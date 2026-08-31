@@ -10,6 +10,7 @@ import { useJob } from "./jobStore";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 import { usePrefs } from "./prefs";
+import { useViewportW } from "./useViewportW";
 import FolderSets from "./FolderSets";
 import TwoFolders from "./TwoFolders";
 
@@ -131,6 +132,11 @@ export default function Cull({
   useEffect(() => {
     viewDoneRef.current = viewDone;
   }, [viewDone]);
+  // 접히는 순서 사다리(2026-08-31) — 격자와 같은 규칙을 고르기에도.
+  // c2(<1080) 탭 숫자·사유·안내문 접힘 → c3(<880) 진행 막대 축소·부제 접힘
+  const w = useViewportW();
+  const c2 = w < 1080;
+  const c3 = w < 880;
   const loadSummary = useCallback(async () => {
     try {
       setSummary(await invoke<Summary[]>("cull_summary", { libraryId: scopeRef.current }));
@@ -619,7 +625,7 @@ export default function Cull({
             <button
               key={k.id}
               onClick={() => setKind(k.id)}
-              title={k.hint}
+              title={c2 && s ? `${k.hint} — 미결 ${(s.groups ?? 0).toLocaleString()}` : k.hint}
               className={`h-control px-3 rounded-md text-[13.5px] ${
                 kind === k.id
                   ? "bg-raised text-white ring-1 ring-line-strong"
@@ -627,7 +633,7 @@ export default function Cull({
               }`}
             >
               {k.label}
-              {k.id !== -3 && k.id !== -4 && (
+              {k.id !== -3 && k.id !== -4 && !c2 && (
                 <span className="tabular-nums text-fg-mute">
                   {" "}
                   {s?.groups ?? 0}
@@ -636,47 +642,6 @@ export default function Cull({
             </button>
           );
         })}
-        {!scanning && (kind === 0 || kind === 1) && (
-          <span className="flex items-center gap-1.5">
-            {/* 범위 — 지워질 사본이 이 라이브러리에 있는 무리만 본다. 목록·숫자·모두 확정에 다 걸린다.
-                조작할 것으로 보이게 라벨을 붙이고 테두리를 진하게 (2026-08-30: «이 메뉴는 처음 봤어») */}
-            <label className="flex items-center gap-1.5 text-[13px] text-fg-dim">
-              범위
-              <select
-                value={scopeLib ?? ""}
-                style={{ flex: "none" }}
-                onChange={(e) => setScopeLib(e.target.value === "" ? null : Number(e.target.value))}
-                title="지워질 사본이 이 라이브러리에 있는 무리만 봅니다 — 목록·숫자·모두 확정에 모두 걸립니다"
-                className="h-control rounded-md bg-raised text-fg text-[13px] px-2 ring-2 ring-accent/70 hover:ring-accent focus:ring-accent outline-none"
-              >
-                <option value="">전체 라이브러리</option>
-                {libs.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name} 쪽을 지울 것만 ({(scopeCounts.get(l.id) ?? 0).toLocaleString()})
-                  </option>
-                ))}
-              </select>
-            </label>
-            {groups.length > 0 && (
-              <button
-                onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "", scopeLib)}
-                title={`${scopeLib === null ? "전체 라이브러리" : `${libs.find((l) => l.id === scopeLib)?.name ?? ""} 쪽을 지울 무리만`} — 한꺼번에 확정합니다. 공용·내사진 안의 사본이 있는 무리는 건너뜁니다`}
-                className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
-              >
-                모두 확정
-              </button>
-            )}
-          </span>
-        )}
-        {!scanning && (toCleanAll?.files ?? 0) > 0 && (
-          <button
-            onClick={() => void cleanExcluded()}
-            title={`지금까지 확정해 제외 표시한 ${toCleanAll?.files.toLocaleString()}장(${fmtBytes(toCleanAll?.bytes ?? 0)}, 모든 라이브러리)을 각 라이브러리의 휴지통으로 옮깁니다 — 휴지통에서 되돌릴 수 있습니다`}
-            className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
-          >
-            {toCleanAll?.files.toLocaleString()}장 휴지통으로
-          </button>
-        )}
         {scanning ? (
           // 찾는 중에는 멈출 수 있어야 한다. 해시를 읽느라 오래 걸린다.
           <button
@@ -737,7 +702,46 @@ export default function Cull({
       ) : (
         <>
       {/* 진행 */}
-      <div className="h-9 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[13.5px] bar-scroll">
+      {/* 조작 줄 — 범위·모두 확정·휴지통으로는 여기(늘 같은 자리). 머리는 탭·닫기만 (2026-08-31 좁은 창) */}
+      <div className="h-10 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[13.5px] bar-scroll">
+            {!scanning && (
+              <label className="flex items-center gap-1.5 text-[13px] text-fg-dim" style={{ flex: "none" }}>
+                {!c3 && "범위"}
+                <select
+                  value={scopeLib ?? ""}
+                  style={{ flex: "none" }}
+                  onChange={(e) => setScopeLib(e.target.value === "" ? null : Number(e.target.value))}
+                  title="지워질 사본이 이 라이브러리에 있는 무리만 봅니다 — 목록·숫자·모두 확정에 모두 걸립니다"
+                  className="h-control rounded-md bg-raised text-fg text-[13px] px-2 ring-2 ring-accent/70 hover:ring-accent focus:ring-accent outline-none"
+                >
+                  <option value="">전체 라이브러리</option>
+                  {libs.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name} 쪽을 지울 것만 ({(scopeCounts.get(l.id) ?? 0).toLocaleString()})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {!scanning && (kind === 0 || kind === 1) && !viewDone && groups.length > 0 && (
+              <button
+                onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "", scopeLib)}
+                title={`${scopeLib === null ? "전체 라이브러리" : `${libs.find((l) => l.id === scopeLib)?.name ?? ""} 쪽을 지울 무리만`} — 한꺼번에 확정합니다. 공용·내사진 안의 사본이 있는 무리는 건너뜁니다`}
+                className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
+              >
+                모두 확정
+              </button>
+            )}
+            {!scanning && (toCleanAll?.files ?? 0) > 0 && (
+              <button
+                onClick={() => void cleanExcluded()}
+                title={`지금까지 확정해 제외 표시한 ${toCleanAll?.files.toLocaleString()}장(${fmtBytes(toCleanAll?.bytes ?? 0)}, 모든 라이브러리)을 각 라이브러리의 휴지통으로 옮깁니다 — 휴지통에서 되돌릴 수 있습니다`}
+                className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
+              >
+                {toCleanAll?.files.toLocaleString()}장 휴지통으로
+              </button>
+            )}
+            <span className="w-px h-4 bg-line" style={{ flex: "none" }}></span>
             {/* 분모는 이 갈래의 미결 무리 전체 — 목록은 200개씩 읽어 두지만 그건 화면 사정이다 */}
             <span
               className="tabular-nums text-fg-dim"
@@ -752,7 +756,7 @@ export default function Cull({
                       : summary.find((x) => x.kind === kind)?.groups) ?? 0,
                   ).toLocaleString()}`}
             </span>
-            <div className="w-56 h-1.5 rounded bg-raised overflow-hidden">
+            <div className={`${c3 ? "w-24" : c2 ? "w-36" : "w-56"} h-1.5 rounded bg-raised overflow-hidden`}>
               <i
                 className="block h-full bg-accent"
                 style={{
@@ -778,7 +782,7 @@ export default function Cull({
                   : `처리됨 ${(summary.find((x) => x.kind === kind)?.done ?? 0).toLocaleString()}개 보기`}
               </button>
             )}
-            {cur && (
+            {cur && !c2 && (
               <span className="text-fg-mute">
                 {cur.reason} · {cur.member_count}장 · 확보{" "}
                 {fmtBytes(cur.size_bytes)}
@@ -885,16 +889,18 @@ export default function Cull({
               className="h-control px-3.5 rounded-lg bg-accent text-accent-fg font-semibold text-[14px] flex items-center gap-2"
             >
               두 폴더 전체
+              {!c3 && (
               <span className="text-[12px] font-normal opacity-80 truncate max-w-[280px]">
                 {best.folder.split("/").pop() || "/"} 남김 · {other.folder.split("/").pop() || "/"} 제외
               </span>
+              )}
             </button>
           );
         })()}
         </>
         )}
         {/* 긴 설명은 단추의 풍선(title)으로 — 막대엔 핵심 낱말만 (2026-08-30) */}
-        {!viewDone && (
+        {!viewDone && !c2 && (
         <span className="text-[13px] text-fg-mute ml-2" title="숫자키를 누르면 그 번호의 사진이 남길 쪽이 됩니다. 두 번 누르면 크게 봅니다">
           숫자키 <span className="font-mono">1–9</span> 남길 쪽 · 두 번 누르면 크게
         </span>

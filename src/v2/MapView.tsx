@@ -11,6 +11,7 @@ import {
   isFinest,
   parseBbox,
   precisionForZoom,
+  safeMapBbox,
 } from "./mapMath";
 
 type Cell = {
@@ -21,14 +22,22 @@ type Cell = {
   thumb: string | null;
 };
 
+type Overview = {
+  total: number;
+  bounds: [number, number, number, number] | null;
+};
+
 const thumbUrl = (c: Cell) => (c.thumb && c.library_id !== null ? thumbUrlOf(c.library_id, c.thumb) : null);
 
 /** 타일은 온라인 — 사용자 결정(2026-08-27). 어두운 바탕이 앱과 맞는다. */
 // Carto 무료 베이스맵은 1x·@2x 모두 «API KEY REQUIRED» 워터마크를 박는다
 // (2026-08-31 타일 실측). 키 없는 OSM 표준 타일로 바꾸고, 어두운 톤은 CSS 필터
-// (.leaflet-tile, index.css)가 만든다.
-const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+// (.acut-map-tile, index.css)가 만든다.
+const TILES = {
+  url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  attribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+} as const;
 
 /**
  * 지도 — 사진이 찍힌 자리를 칸으로 보인다.
@@ -45,15 +54,21 @@ export default function MapView({ filter }: { filter: Filter }) {
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
   const picked = useRef<L.Rectangle | null>(null);
+  const fittedFilter = useRef<string | null>(null);
   const [view, setView] = useState<{ zoom: number; tick: number }>({
-    zoom: 3,
+    zoom: 6,
     tick: 0,
   });
   const [offline, setOffline] = useState(false);
-  const [count, setCount] = useState<number | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [overviewState, setOverviewState] = useState<{
+    key: string;
+    total: number | null;
+    failed: boolean;
+  }>({ key: "", total: null, failed: false });
+  const [cellsState, setCellsState] = useState({ key: "", failed: false });
   const bbox = useView((s) => s.picks.bbox);
   const patchPicks = useView((s) => s.patchPicks);
-  const fitted = useRef(false);
 
   // 지도 한 번 만들기
   useEffect(() => {
@@ -63,8 +78,9 @@ export default function MapView({ filter }: { filter: Filter }) {
       attributionControl: true,
       worldCopyJump: true,
     }).setView([36.5, 127.8], 6);
-    L.tileLayer(TILES, {
-      attribution: ATTRIBUTION,
+    L.tileLayer(TILES.url, {
+      attribution: TILES.attribution,
+      className: "acut-map-tile",
       maxZoom: 19,
     })
       .on("tileerror", () => setOffline(true))
@@ -88,16 +104,63 @@ export default function MapView({ filter }: { filter: Filter }) {
     };
   }, []);
 
-  // 조건이나 화면이 바뀌면 칸을 다시 묻는다. 지도는 bbox 말고 나머지 조건만
-  // 본다 — 고른 영역 밖도 보여야 다른 데로 갈 수 있다.
+  // 지도는 고른 bbox 밖도 보여야 다른 데로 갈 수 있다. 나머지 조건의 전체
+  // 장수와 경계를 따로 읽어, 조건을 바꿀 때마다 새 결과로 정확히 맞춘다.
   const precision = precisionForZoom(view.zoom);
-  const filterKey = JSON.stringify({ ...filter, bbox: null });
+  const filterKey = mapFilterKey(filter);
+  const overviewRequestKey = `${filterKey}\u0000${retry}`;
+  const cellsRequestKey = `${filterKey}\u0000${precision}\u0000${view.tick}\u0000${retry}`;
   useEffect(() => {
     let live = true;
     const f: Filter = { ...JSON.parse(filterKey), bbox: null };
-    invoke<Cell[]>("map_cells", { filter: f, precision })
+    invoke<Overview>("map_overview", { filter: f })
+      .then((overview) => {
+        if (!live || !map.current) return;
+        setOverviewState({
+          key: overviewRequestKey,
+          total: overview.total,
+          failed: false,
+        });
+        if (!overview.bounds) {
+          fittedFilter.current = filterKey;
+          layer.current?.clearLayers();
+          return;
+        }
+        // 같은 조건의 느린 중복 응답이 사용자가 확대한 지도를 다시 끌고
+        // 가지 않게 한다. A → B → A처럼 조건이 실제로 바뀌면 다시 맞춘다.
+        if (fittedFilter.current === filterKey) return;
+        fittedFilter.current = filterKey;
+        const [south, west, north, east] = overview.bounds;
+        map.current.fitBounds(
+          [
+            [south, west],
+            [north, east],
+          ],
+          { maxZoom: 12, animate: false },
+        );
+      })
+      .catch(() => {
+        if (!live) return;
+        setOverviewState({ key: overviewRequestKey, total: null, failed: true });
+      });
+    return () => {
+      live = false;
+    };
+  }, [filterKey, overviewRequestKey]);
+
+  // 화면이 움직이거나 확대 단계가 바뀌면 현재 뷰포트의 칸만 묻는다. 전역
+  // 상위 4,000개를 반복해서 읽지 않으므로 낮은 밀도의 지역도 이동하면 보인다.
+  useEffect(() => {
+    let live = true;
+    const m = map.current;
+    if (!m) return;
+    const f: Filter = { ...JSON.parse(filterKey), bbox: null };
+    const viewport = mapBbox(m);
+    layer.current?.clearLayers();
+    invoke<Cell[]>("map_cells", { filter: f, precision, viewport })
       .then((cells) => {
         if (!live || !map.current || !layer.current) return;
+        setCellsState({ key: cellsRequestKey, failed: false });
         draw(layer.current, cells, precision, (c) => {
           const m = map.current!;
           if (isFinest(precision)) {
@@ -108,19 +171,16 @@ export default function MapView({ filter }: { filter: Filter }) {
             m.setView([c.lat, c.lon], Math.min(m.getZoom() + 3, 18));
           }
         });
-        setCount(cells.reduce((a, c) => a + c.n, 0));
-        // 처음엔 사진이 있는 곳으로 — 세상 지도 한가운데가 아니라
-        if (!fitted.current && cells.length > 0) {
-          fitted.current = true;
-          const b = L.latLngBounds(cells.map((c) => [c.lat, c.lon]));
-          map.current.fitBounds(b.pad(0.2), { maxZoom: 12, animate: false });
-        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!live) return;
+        layer.current?.clearLayers();
+        setCellsState({ key: cellsRequestKey, failed: true });
+      });
     return () => {
       live = false;
     };
-  }, [filterKey, precision, view.tick, patchPicks]);
+  }, [cellsRequestKey, filterKey, precision, patchPicks]);
 
   // 고른 영역을 네모로
   useEffect(() => {
@@ -144,9 +204,17 @@ export default function MapView({ filter }: { filter: Filter }) {
     if (!m) return;
     const b = m.getBounds();
     patchPicks({
-      bbox: bboxString([b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]),
+      bbox: bboxString(
+        safeMapBbox(b.getSouth(), b.getWest(), b.getNorth(), b.getEast()),
+      ),
     });
   };
+
+  const count =
+    overviewState.key === overviewRequestKey ? overviewState.total : null;
+  const dataError =
+    (overviewState.key === overviewRequestKey && overviewState.failed) ||
+    (cellsState.key === cellsRequestKey && cellsState.failed);
 
   return (
     <div className="relative h-[42%] min-h-[180px] shrink-0 border-b border-line">
@@ -174,13 +242,46 @@ export default function MapView({ filter }: { filter: Filter }) {
           </button>
         )}
       </div>
-      {offline && (
-        <div className="absolute left-2 bottom-6 z-[500] px-2 py-1 rounded-md bg-raised/95 text-[12.5px] text-fg-dim">
-          지도 타일을 못 받았습니다 — 오프라인? 왼쪽 목록으로 고르세요.
+      {(offline || dataError) && (
+        <div
+          className="absolute left-2 bottom-6 z-[500] flex flex-col items-start gap-1 text-[12.5px]"
+          aria-live="polite"
+        >
+          {offline && (
+            <span className="px-2 py-1 rounded-md bg-raised/95 text-fg-dim">
+              지도 타일을 못 받았습니다 — 오프라인? 왼쪽 목록으로 고르세요.
+            </span>
+          )}
+          {dataError && (
+            <span className="px-2 py-1 rounded-md bg-raised/95 text-fg-dim flex items-center gap-2">
+              사진 위치를 불러오지 못했습니다.
+              <button
+                type="button"
+                className="text-accent hover:underline"
+                onClick={() => setRetry((n) => n + 1)}
+              >
+                다시 시도
+              </button>
+            </span>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function mapBbox(m: L.Map): string {
+  const b = m.getBounds();
+  return bboxString(
+    safeMapBbox(b.getSouth(), b.getWest(), b.getNorth(), b.getEast()),
+  );
+}
+
+/** 정렬과 이미 고른 bbox는 지도 마커·경계에 영향을 주지 않는다. */
+function mapFilterKey(filter: Filter): string {
+  const value: Record<string, unknown> = { ...filter, bbox: null };
+  delete value.sort;
+  return JSON.stringify(value);
 }
 
 /** 칸을 마커로 — 썸네일 동그라미에 장수 */

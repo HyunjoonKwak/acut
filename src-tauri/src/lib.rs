@@ -192,6 +192,7 @@ pub fn run() {
             api::ai_text_search,
             api::ai_faces_start,
             api::people_list,
+            api::map_overview,
             api::map_cells,
             api::folder_size,
             api::folder_offload,

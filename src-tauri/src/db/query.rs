@@ -186,12 +186,36 @@ pub struct Page {
     pub next: Option<Cursor>,
 }
 
+/// 지도와 위치 갈래가 함께 쓰는 «쓸 수 있는 좌표» 규칙.
+///
+/// 일부 카메라·내보내기 도구는 위치가 없을 때 NULL 대신 (0, 0)을 쓴다.
+/// 실제 라이브러리에도 그런 행이 수천 장 있어 그대로 지도에 넣으면 Null Island가
+/// 가장 큰 장소가 되고 자동 맞춤도 세계 전체로 벌어진다. 두 값이 모두 정확히 0인
+/// 경우만 센티널로 보고, 한쪽 누락·지구 범위 밖 좌표도 위치 없음으로 친다.
+const VALID_GPS_SQL: &str =
+    "fi.gps_lat IS NOT NULL AND fi.gps_lon IS NOT NULL
+     AND fi.gps_lat BETWEEN -90.0 AND 90.0
+     AND fi.gps_lon BETWEEN -180.0 AND 180.0
+     AND NOT (fi.gps_lat = 0.0 AND fi.gps_lon = 0.0)";
+
 /// LIKE 와일드카드를 이스케이프한다. `_`가 임의 문자로 동작하면
 /// `IMG_1234` 검색이 엉뚱한 것까지 잡는다.
-/// `남,서,북,동` → [남, 서, 북, 동]. 네 수가 아니면 None — 조건이 조용히 빠지지 않게 부르는 쪽이 안다.
+/// `남,서,북,동` → [남, 서, 북, 동]. 지구 범위 밖·무한대·뒤집힌 상자는 거절한다.
 pub fn parse_bbox(s: &str) -> Option<[f64; 4]> {
-    let v: Vec<f64> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-    if v.len() != 4 || v[0] > v[2] || v[1] > v[3] {
+    let v: Vec<f64> = s
+        .split(',')
+        .map(|x| x.trim().parse())
+        .collect::<std::result::Result<_, _>>()
+        .ok()?;
+    if v.len() != 4
+        || v.iter().any(|x| !x.is_finite())
+        || !(-90.0..=90.0).contains(&v[0])
+        || !(-90.0..=90.0).contains(&v[2])
+        || !(-180.0..=180.0).contains(&v[1])
+        || !(-180.0..=180.0).contains(&v[3])
+        || v[0] > v[2]
+        || v[1] > v[3]
+    {
         return None;
     }
     Some([v[0], v[1], v[2], v[3]])
@@ -302,14 +326,14 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     }
     if let Some(pl) = f.place.as_ref() {
         if pl.is_empty() {
-            w.push("fi.gps_lat IS NULL".into());
+            w.push(format!("NOT ({VALID_GPS_SQL})"));
         } else if let Some((a, b)) = pl.split_once(',') {
             // 격자 한 칸 = 0.1도 (위도로 약 11km). 그 칸 안이면 같은 곳으로 친다.
             if let (Ok(lat), Ok(lon)) = (a.parse::<f64>(), b.parse::<f64>()) {
-                w.push(
-                    "fi.gps_lat >= ? AND fi.gps_lat < ? AND fi.gps_lon >= ? AND fi.gps_lon < ?"
-                        .into(),
-                );
+                w.push(format!(
+                    "({VALID_GPS_SQL}) AND fi.gps_lat >= ? AND fi.gps_lat < ?
+                     AND fi.gps_lon >= ? AND fi.gps_lon < ?"
+                ));
                 p.push(Box::new(lat));
                 p.push(Box::new(lat + 0.1));
                 p.push(Box::new(lon));
@@ -324,7 +348,10 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         w.push("NOT EXISTS (SELECT 1 FROM thumbs t WHERE t.file_id = fi.id AND t.state = 1)".into());
     }
     if let Some(b) = f.bbox.as_deref().and_then(parse_bbox) {
-        w.push("fi.gps_lat >= ? AND fi.gps_lat <= ? AND fi.gps_lon >= ? AND fi.gps_lon <= ?".into());
+        w.push(format!(
+            "({VALID_GPS_SQL}) AND fi.gps_lat >= ? AND fi.gps_lat <= ?
+             AND fi.gps_lon >= ? AND fi.gps_lon <= ?"
+        ));
         p.push(Box::new(b[0]));
         p.push(Box::new(b[2]));
         p.push(Box::new(b[1]));
@@ -637,20 +664,24 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
     } else {
         ""
     };
-    let expr = match kind {
-        FacetKind::Year => "strftime('%Y', fi.taken_at,'unixepoch','localtime')",
-        FacetKind::Day => "strftime('%Y-%m-%d', fi.taken_at,'unixepoch','localtime')",
-        FacetKind::Camera => "COALESCE(NULLIF(fi.cam_model,''),'')",
-        FacetKind::Lens => "COALESCE(NULLIF(fi.lens,''),'')",
-        FacetKind::Rating => "CAST(fi.rating AS TEXT)",
-        FacetKind::Kind => "CAST(fi.kind AS TEXT)",
+    let expr: String = match kind {
+        FacetKind::Year => "strftime('%Y', fi.taken_at,'unixepoch','localtime')".into(),
+        FacetKind::Day => "strftime('%Y-%m-%d', fi.taken_at,'unixepoch','localtime')".into(),
+        FacetKind::Camera => "COALESCE(NULLIF(fi.cam_model,''),'')".into(),
+        FacetKind::Lens => "COALESCE(NULLIF(fi.lens,''),'')".into(),
+        FacetKind::Rating => "CAST(fi.rating AS TEXT)".into(),
+        FacetKind::Kind => "CAST(fi.kind AS TEXT)".into(),
         // 좌표를 0.1도 격자로 내린다. 역지오코딩이 없어 지명은 못 붙이지만
-        // "이 근처에서 찍은 것"을 모아 보는 데는 충분하다.
-        FacetKind::Place => {
-            "CASE WHEN fi.gps_lat IS NULL THEN ''
-                  ELSE CAST(ROUND(fi.gps_lat*10-0.5)/10 AS TEXT) || ',' ||
-                       CAST(ROUND(fi.gps_lon*10-0.5)/10 AS TEXT) END"
-        }
+        // "이 근처에서 찍은 것"을 모아 보는 데는 충분하다. ROUND(x-.5)는
+        // 정확한 0을 -0.1로 보내므로 쓰지 않는다. 좌표를 10배해 소수 오차를
+        // 먼저 자르고 양수로 옮긴 뒤 CAST하면 음수·경계값도 같은 칸으로 간다.
+        FacetKind::Place => format!(
+            "CASE WHEN NOT ({VALID_GPS_SQL}) THEN ''
+                  ELSE printf('%.1f,%.1f',
+                    CAST(ROUND(fi.gps_lat * 10.0, 8) + 900.0 AS INTEGER) / 10.0 - 90.0,
+                    CAST(ROUND(fi.gps_lon * 10.0, 8) + 1800.0 AS INTEGER) / 10.0 - 180.0)
+             END"
+        ),
     };
     let order = match kind {
         // 연도·평점은 값 순서로, 카메라는 많이 쓴 것부터
@@ -742,8 +773,43 @@ pub struct MapCell {
     pub thumb: Option<String>,
 }
 
+/// 지도 전체 조건의 요약. 마커는 현재 화면만 읽되, 장수와 첫 자동 맞춤은
+/// 잘린 마커 목록이 아니라 이 전역 요약을 사용한다.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MapOverview {
+    pub total: i64,
+    /// [남, 서, 북, 동]. 쓸 수 있는 좌표가 없으면 None.
+    pub bounds: Option<[f64; 4]>,
+}
+
+pub fn map_overview(db: &Db, f: &Filter) -> Result<MapOverview> {
+    let (where_sql, params) = build_where(f, None);
+    let join = if needs_folder_join(f) {
+        "JOIN folders fo ON fo.id = fi.folder_id"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "SELECT COUNT(*), MIN(fi.gps_lat), MIN(fi.gps_lon), MAX(fi.gps_lat), MAX(fi.gps_lon)
+           FROM files fi {join} {where_sql} AND ({VALID_GPS_SQL})"
+    );
+    db.read(|c| {
+        let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        c.query_row(&sql, refs.as_slice(), |r| {
+            let total: i64 = r.get(0)?;
+            let bounds = if total == 0 {
+                None
+            } else {
+                Some([r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?])
+            };
+            Ok(MapOverview { total, bounds })
+        })
+    })
+}
+
 /// 조건에 맞는 사진을 `precision`도 격자로 묶는다 — 지도가 확대될수록 잘게.
-/// 칸마다 평균 좌표, 장수, 대표 한 장. 많은 칸부터 4,000개까지.
+/// 칸마다 평균 좌표, 장수, 대표 한 장. 부르는 쪽이 현재 지도 화면을 bbox로
+/// 넣으므로 4,000개 제한을 넘어도 다른 지역으로 이동하면 그곳을 다시 읽는다.
 pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
     let p = precision.clamp(0.0001, 10.0);
     let (where_sql, params) = build_where(f, None);
@@ -755,7 +821,7 @@ pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
     // +90/+180으로 양수로 만든 뒤 자른다 — CAST는 0쪽으로 자르므로 음수면 칸이 어긋난다
     let sql = format!(
         "SELECT AVG(fi.gps_lat), AVG(fi.gps_lon), COUNT(*), MAX(fi.id)
-           FROM files fi {join} {where_sql} AND fi.gps_lat IS NOT NULL AND fi.gps_lon IS NOT NULL
+           FROM files fi {join} {where_sql} AND ({VALID_GPS_SQL})
           GROUP BY CAST((fi.gps_lat + 90.0) / {p} AS INTEGER), CAST((fi.gps_lon + 180.0) / {p} AS INTEGER)
           ORDER BY 3 DESC LIMIT 4000"
     );
@@ -1447,12 +1513,50 @@ mod tests {
         }
     }
 
+    /// 위치 없음 센티널 (0, 0)은 갈래·필터·지도에서 모두 같은 뜻이어야 한다.
+    /// 예전 ROUND(x*10-.5)는 이를 -0.1 칸으로 보낸 뒤, 그 칸 필터에서는 0을
+    /// 제외해 «2천 장을 눌렀더니 0장»이 됐다.
+    #[test]
+    fn zero_zero_is_missing_and_exact_grid_boundaries_round_trip() {
+        let (_d, db) = seeded();
+        db.write(|c| {
+            c.execute("UPDATE files SET gps_lat=0.0, gps_lon=0.0 WHERE id IN (1,2)", [])?;
+            c.execute("UPDATE files SET gps_lat=0.05, gps_lon=0.05 WHERE id=3", [])
+        })
+        .unwrap();
+
+        let fs = facets(&db, &Filter::default(), FacetKind::Place).unwrap();
+        let none = fs.iter().find(|f| f.value.is_empty()).unwrap();
+        assert_eq!(none.count, 49, "NULL 47장과 (0,0) 두 장");
+        assert!(fs.iter().all(|f| f.value != "-0.1,-0.1"), "{fs:?}");
+
+        let origin_cell = fs.iter().find(|f| f.value == "0.0,0.0").unwrap();
+        assert_eq!(origin_cell.count, 1);
+        let round_trip = summary(
+            &db,
+            &Filter { place: Some(origin_cell.value.clone()), ..Default::default() },
+        )
+        .unwrap()
+        .0;
+        assert_eq!(round_trip, 1);
+        assert_eq!(
+            summary(&db, &Filter { place: Some(String::new()), ..Default::default() })
+                .unwrap()
+                .0,
+            none.count
+        );
+    }
+
     /// 상태바의 «썸네일 없음 N장»과 그걸 눌렀을 때 뜨는 장수가 같아야 한다
     #[test]
     fn bbox_parses_four_numbers_in_order() {
         assert_eq!(parse_bbox("37.4,126.8,37.6,127.1"), Some([37.4, 126.8, 37.6, 127.1]));
         assert_eq!(parse_bbox("37.6,126.8,37.4,127.1"), None); // 남이 북보다 크다
         assert_eq!(parse_bbox("1,2,3"), None);
+        assert_eq!(parse_bbox("0,x,1,2,3"), None);
+        assert_eq!(parse_bbox("NaN,0,1,1"), None);
+        assert_eq!(parse_bbox("-91,0,1,1"), None);
+        assert_eq!(parse_bbox("0,-181,1,1"), None);
     }
 
     #[test]
@@ -1472,6 +1576,23 @@ mod tests {
         let seoul = Filter { bbox: Some("37,126,38,128".into()), ..Default::default() };
         assert_eq!(summary(&db, &seoul).unwrap().0, 2);
         assert_eq!(map_cells(&db, &seoul, 0.1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn map_overview_excludes_missing_sentinels_and_keeps_global_bounds() {
+        let (_d, db) = seeded();
+        db.transaction(|tx| {
+            tx.execute("UPDATE files SET gps_lat=0.0, gps_lon=0.0 WHERE id IN (1,2)", [])?;
+            tx.execute("UPDATE files SET gps_lat=37.55, gps_lon=126.98 WHERE id=3", [])?;
+            tx.execute("UPDATE files SET gps_lat=35.18, gps_lon=129.08 WHERE id=4", [])?;
+            Ok(())
+        })
+        .unwrap();
+
+        let o = map_overview(&db, &Filter::default()).unwrap();
+        assert_eq!(o.total, 2);
+        assert_eq!(o.bounds, Some([35.18, 126.98, 37.55, 129.08]));
+        assert_eq!(map_cells(&db, &Filter::default(), 0.1).unwrap().len(), 2);
     }
 
     #[test]

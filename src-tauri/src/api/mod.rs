@@ -1497,9 +1497,22 @@ pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<()
     Ok(())
 }
 
-/// 지도의 칸들 — 조건에 맞는 사진을 `precision`도 격자로 묶는다
+/// 지도 전체 조건의 장수와 경계 — 마커 제한과 무관한 자동 맞춤 기준.
 #[tauri::command]
-pub async fn map_cells(state: State<'_, AppState>, filter: Filter, precision: f64) -> Result<Vec<query::MapCell>, String> {
+pub async fn map_overview(state: State<'_, AppState>, filter: Filter) -> Result<query::MapOverview, String> {
+    query::map_overview(&state.db, &filter).map_err(err)
+}
+
+/// 지도의 칸들 — 현재 보이는 영역만 `precision`도 격자로 묶는다.
+/// filter의 저장된 bbox 대신 viewport를 써야 영역을 고른 뒤에도 밖으로 이동할 수 있다.
+#[tauri::command]
+pub async fn map_cells(
+    state: State<'_, AppState>,
+    mut filter: Filter,
+    precision: f64,
+    viewport: Option<String>,
+) -> Result<Vec<query::MapCell>, String> {
+    filter.bbox = viewport;
     query::map_cells(&state.db, &filter, precision).map_err(err)
 }
 

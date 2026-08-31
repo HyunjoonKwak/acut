@@ -6,6 +6,7 @@ import {
   isFinest,
   parseBbox,
   precisionForZoom,
+  safeMapBbox,
 } from "./mapMath.ts";
 
 test("멀리서는 굵게, 가까이서는 잘게", () => {
@@ -31,4 +32,14 @@ test("영역 글자는 Filter.bbox가 읽는 꼴로 오간다", () => {
   assert.deepEqual(parseBbox(b), [37.5, 126.9, 37.6, 127]);
   assert.equal(parseBbox(null), null);
   assert.equal(parseBbox("a,b,c,d"), null);
+  assert.equal(parseBbox("0,,1,2"), null);
+  assert.equal(parseBbox("NaN,0,1,1"), null);
+  assert.equal(parseBbox("-91,0,1,1"), null);
+  assert.equal(parseBbox("1,1,0,2"), null);
+});
+
+test("세계 밖으로 감긴 화면은 안전하게 전체 경도로 묻는다", () => {
+  assert.deepEqual(safeMapBbox(30, 120, 40, 140), [30, 120, 40, 140]);
+  assert.deepEqual(safeMapBbox(-100, -220, 100, 220), [-90, -180, 90, 180]);
+  assert.deepEqual(safeMapBbox(-10, 170, 10, 190), [-10, -180, 10, 180]);
 });

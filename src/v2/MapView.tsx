@@ -24,10 +24,11 @@ type Cell = {
 const thumbUrl = (c: Cell) => (c.thumb && c.library_id !== null ? thumbUrlOf(c.library_id, c.thumb) : null);
 
 /** 타일은 온라인 — 사용자 결정(2026-08-27). 어두운 바탕이 앱과 맞는다. */
-// {r}(@2x 레티나) 타일은 Carto 가 «API KEY REQUIRED» 워터마크를 박아 보낸다
-// (2026-08-31 실측 — 1x 는 키 없이 깨끗). 살짝 덜 선명한 대신 워터마크 없는 1x 로.
-const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
-const ATTRIBUTION = "© OpenStreetMap contributors © CARTO";
+// Carto 무료 베이스맵은 1x·@2x 모두 «API KEY REQUIRED» 워터마크를 박는다
+// (2026-08-31 타일 실측). 키 없는 OSM 표준 타일로 바꾸고, 어두운 톤은 CSS 필터
+// (.leaflet-tile, index.css)가 만든다.
+const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 /**
  * 지도 — 사진이 찍힌 자리를 칸으로 보인다.
@@ -64,7 +65,6 @@ export default function MapView({ filter }: { filter: Filter }) {
     }).setView([36.5, 127.8], 6);
     L.tileLayer(TILES, {
       attribution: ATTRIBUTION,
-      subdomains: "abcd",
       maxZoom: 19,
     })
       .on("tileerror", () => setOffline(true))

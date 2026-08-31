@@ -122,6 +122,12 @@
   line-height: 16px;
   font-variant-numeric: tabular-nums;
 }
+/* OSM 밝은 타일을 앱의 어두운 톤으로 — 타일 그림에만 건다. 채도를 낮춰
+   반전 특유의 형광끼를 없앤다. 마커(.acut-pin)·컨트롤은 그대로. */
+.leaflet-tile {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9) saturate(0.4);
+}
+
 .leaflet-container {
   font-family: var(--font-sans);
   background: var(--color-canvas);

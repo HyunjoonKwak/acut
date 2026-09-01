@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "에이컷",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "identifier": "com.acut.media",
   "build": {
     "frontendDist": "../dist",

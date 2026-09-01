@@ -51,7 +51,16 @@ struct RawDoc {
 fn regions() -> &'static [Region] {
     static CACHE: OnceLock<Vec<Region>> = OnceLock::new();
     CACHE.get_or_init(|| {
-        let doc: RawDoc = serde_json::from_str(KR_ADMIN1).expect("내장된 시도 경계를 읽지 못했습니다");
+        // 내장 자료가 깨져도 앱이 죽지는 않게 한다. 시도를 잃을 뿐 나라 판정은
+        // 그대로 살아 있고, 사용자는 «지명이 나라까지만 나온다»를 겪는다.
+        // 여기서 패닉하면 채우기 스레드가 죽어 화면의 진행 표시가 영영 남는다.
+        let doc: RawDoc = match serde_json::from_str(KR_ADMIN1) {
+            Ok(doc) => doc,
+            Err(e) => {
+                log::error!("내장된 시도 경계를 읽지 못했습니다: {e}");
+                return Vec::new();
+            }
+        };
         doc.regions
             .into_iter()
             .map(|r| Region {

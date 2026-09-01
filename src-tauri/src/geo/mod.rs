@@ -241,9 +241,11 @@ fn ask(client: &reqwest::blocking::Client, endpoint: &str, lat: f64, lon: f64, z
     let res = match client.get(&url).header(reqwest::header::USER_AGENT, UA).send() {
         Ok(r) => r,
         // 연결·시간 초과는 망 사정일 때가 많다 — 다시 물어볼 값어치가 있다
+        // `without_url()` 로 주소를 뗀다 — 주소에 인증 토큰이 들어 있으면
+        // 오류 글월을 타고 로그 파일에 남는다
         Err(e) => {
             return Answer::Retryable {
-                message: format!("지명 서버에 연결하지 못했습니다: {e}"),
+                message: format!("지명 서버에 연결하지 못했습니다: {}", e.without_url()),
                 retry_after: None,
             }
         }
@@ -267,7 +269,7 @@ fn ask(client: &reqwest::blocking::Client, endpoint: &str, lat: f64, lon: f64, z
         // 본문이 깨진 것은 대개 중간 장비가 끼어든 경우다 — 한 번 더 물어본다
         Err(e) => {
             return Answer::Retryable {
-                message: format!("지명 서버 응답을 읽지 못했습니다: {e}"),
+                message: format!("지명 서버 응답을 읽지 못했습니다: {}", e.without_url()),
                 retry_after: None,
             }
         }
@@ -1044,6 +1046,26 @@ mod tests {
             .unwrap();
         let s = stats(&db).unwrap();
         assert_eq!((s.named, s.pending_files, s.cells_left, s.offline_cells_left), (2, 1, 1, 1));
+    }
+
+    /// 서버 주소에 열쇠가 들어 있으면 오류 글월을 타고 로그에 남는다 — 떼어 낸다.
+    ///
+    /// 자체 Nominatim 을 `?key=...` 로 지키는 구성이 흔하다. 연결이 실패했을 뿐인데
+    /// 그 열쇠가 로그 파일에 남으면 안 된다.
+    #[test]
+    fn a_failure_never_leaks_the_key_in_the_server_address() {
+        // 아무도 듣지 않는 자리 — 반드시 연결에 실패한다
+        let secret = "s3cr3t-token-do-not-log";
+        let dead = format!("http://127.0.0.1:1/reverse?key={secret}");
+        let answer = ask(&test_client(), &dead, 37.5, 127.0, 12);
+        match answer {
+            Answer::Retryable { message, .. } => {
+                assert!(!message.contains(secret), "열쇠가 오류 글월에 남았습니다: {message}");
+                assert!(!message.contains("127.0.0.1"), "주소가 오류 글월에 남았습니다: {message}");
+                assert!(message.contains("연결하지 못했습니다"), "무슨 일인지는 말해야 한다: {message}");
+            }
+            other => panic!("다시 물어볼 답이어야 한다: {}", matches!(other, Answer::Fatal(_))),
+        }
     }
 
     /// 잠깐 흔들린 서버에는 다시 물어본다 — 한 번 실패했다고 20분 작업을 버리지 않는다

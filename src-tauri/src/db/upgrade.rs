@@ -452,6 +452,91 @@ mod tests {
         assert_eq!(status("4,4"), "none", "값이 비었는데 성공이라고 적힌 행은 고친다");
     }
 
+    /// 갓 만든 DB 와 옛 DB 를 올린 것이 **같은 모양**이어야 한다.
+    ///
+    /// 칸이나 인덱스를 한쪽에만 더하면 조용히 갈라진다 — 새로 설치한 사람만
+    /// 인덱스가 없어 느리거나, 옛 사용자만 칸이 없어 질의가 깨진다.
+    ///
+    /// 만들어진 SQL 글월을 그대로 견주지는 않는다. `ALTER TABLE ADD COLUMN` 은
+    /// 칸을 늘 끝에 붙이므로 순서와 주석이 달라진다 — 그것은 차이가 아니다.
+    /// 이름의 집합만 본다.
+    #[test]
+    fn a_fresh_database_and_an_upgraded_one_end_up_identical() {
+        let dir = tempfile::tempdir().unwrap();
+
+        /// 표·인덱스 이름과 각 표의 칸 이름 — 순서에 흔들리지 않게 모두 정렬한다
+        fn shape(db: &Db) -> Vec<String> {
+            db.read(|c| {
+                let mut names: Vec<(String, String)> = {
+                    let mut st = c.prepare(
+                        "SELECT type, name FROM sqlite_master
+                          WHERE name NOT LIKE 'sqlite_%' AND type IN ('table','index','view','trigger')",
+                    )?;
+                    let it = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                    it.collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                names.sort();
+                let mut out = Vec::new();
+                for (kind, name) in names {
+                    if kind == "table" {
+                        let mut st = c.prepare(&format!("PRAGMA table_info({name})"))?;
+                        let it = st.query_map([], |r| r.get::<_, String>(1))?;
+                        let mut cols = it.collect::<rusqlite::Result<Vec<_>>>()?;
+                        cols.sort();
+                        out.push(format!("table {name}({})", cols.join(",")));
+                    } else {
+                        out.push(format!("{kind} {name}"));
+                    }
+                }
+                Ok(out)
+            })
+            .unwrap()
+        }
+
+        let fresh = Db::open(dir.path().join("fresh.db")).unwrap();
+        let want = shape(&fresh);
+
+        // 0.5.4 판의 모양으로 되돌린 DB 를 올린다. geo_name 은 v2 첫 스키마부터
+        // 있었으므로 남긴다 — 실제로 존재했던 판을 흉내 내야 뜻이 있다.
+        let old_path = dir.path().join("old.db");
+        {
+            let c = Connection::open(&old_path).unwrap();
+            let create: Vec<String> = fresh
+                .read(|f| {
+                    let mut st = f.prepare(
+                        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'",
+                    )?;
+                    let it = st.query_map([], |r| r.get::<_, String>(0))?;
+                    it.collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .unwrap();
+            for sql in &create {
+                c.execute_batch(&format!("{sql};")).unwrap();
+            }
+            c.execute_batch(
+                "DROP INDEX IF EXISTS idx_files_geo;
+                 DROP INDEX IF EXISTS idx_places_status;
+                 DROP TABLE IF EXISTS places;
+                 ALTER TABLE files DROP COLUMN geo_country;
+                 ALTER TABLE files DROP COLUMN geo_admin1;
+                 ALTER TABLE files DROP COLUMN geo_admin2;",
+            )
+            .unwrap();
+        }
+        let got = shape(&Db::open(&old_path).unwrap());
+
+        let missing: Vec<_> = want.iter().filter(|x| !got.contains(x)).collect();
+        let extra: Vec<_> = got.iter().filter(|x| !want.contains(x)).collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "갓 만든 DB 와 올린 DB 의 모양이 다릅니다\n올린 쪽에 없는 것: {missing:#?}\n올린 쪽에만 있는 것: {extra:#?}"
+        );
+
+        // 이 시험이 실제로 무언가를 지키는지 — 지명 인덱스가 양쪽에 다 있어야 한다
+        assert!(want.contains(&"index idx_files_geo".to_string()), "새 DB 에 지명 인덱스가 없습니다");
+        assert!(want.iter().any(|x| x.starts_with("table places(")), "새 DB 에 places 표가 없습니다");
+    }
+
     /// 새 칸을 넣을 때마다 이 목록에 더한다 — 사람이 기억하지 않아도 시험이 잡게.
     #[test]
     fn schema_never_mentions_a_column_that_upgrade_adds_later() {

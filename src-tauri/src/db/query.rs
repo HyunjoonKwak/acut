@@ -851,7 +851,9 @@ pub fn map_overview(db: &Db, f: &Filter) -> Result<MapOverview> {
 /// 넣으므로 4,000개 제한을 넘어도 다른 지역으로 이동하면 그곳을 다시 읽는다.
 pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
     let gps = valid_gps_sql();
-    let p = precision.clamp(0.0001, 10.0);
+    // clamp 는 NaN 을 그대로 통과시킨다 — 그 값이 SQL 글월에 박히면 «그런 칸이
+    // 없다»는 오류로 지도가 통째로 빈다. 숫자가 아니면 기본 칸으로 돌린다.
+    let p = if precision.is_finite() { precision.clamp(0.0001, 10.0) } else { 0.1 };
     let (where_sql, params) = build_where(f, None);
     let join = if needs_folder_join(f) {
         "JOIN folders fo ON fo.id = fi.folder_id"
@@ -1668,6 +1670,22 @@ mod tests {
         let mut names: Vec<_> = close.iter().map(|c| (c.place.clone(), c.places)).collect();
         names.sort();
         assert_eq!(names, vec![(Some("수원시".into()), 1), (Some("용인시".into()), 1)]);
+    }
+
+    /// 칸 크기가 숫자가 아니면 지도가 통째로 비었다 — 기본 칸으로 돌린다
+    #[test]
+    fn a_nonsense_cell_size_falls_back_instead_of_breaking_the_map() {
+        let (_d, db) = seeded();
+        db.transaction(|tx| {
+            tx.execute("UPDATE files SET gps_lat=37.28, gps_lon=127.01 WHERE id IN (1,2)", [])?;
+            Ok(())
+        })
+        .unwrap();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let cells = map_cells(&db, &Filter::default(), bad).unwrap();
+            assert_eq!(cells.len(), 1, "{bad} 에서 지도가 비었습니다");
+            assert_eq!(cells[0].n, 2);
+        }
     }
 
     /// 아직 지명을 안 채웠으면 이름 자리는 비어 있고, 장수는 그대로 보인다

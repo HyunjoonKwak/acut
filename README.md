@@ -4,9 +4,21 @@
 >
 > 폰·카메라·NAS 어디서 온 사진이든 여기서 정리해 제 구역으로 보냅니다.
 
-사진·영상을 가져오고, 고르고, 정리해서 Synology NAS로 올리는 macOS 로컬 컬링 스테이션.
+대규모 로컬 라이브러리를 위한 오프라인 우선 사진 관리자(macOS). 맥에 있는 사진과
+NAS 1차 구역(폰 백업본)을 분류·정리해 공용·내사진 구역으로 보냅니다.
 
 **Tech Stack:** Tauri 2 + Rust + React 19 + TypeScript + TailwindCSS 4 + SQLite
+
+## 사진 셋의 경계
+
+| 앱 | 어디서 | 하는 일 |
+|---|---|---|
+| **Photo Desk** (이것) | 맥 | 맥·NAS 1차 구역을 분류·정리해 공용·내사진으로 보냄 |
+| **[우리집 사진관](https://github.com/HyunjoonKwak/photo_gallery)** | NAS 웹 | 가족이 공용·내사진을 감상 |
+| **[Photo Backup](https://github.com/HyunjoonKwak/photo_backup)** | 안드로이드 | 폰 사진을 NAS 1차 구역으로 백업 |
+
+사진은 `폰 → 1차 구역 → (여기서 정리) → 공용·내사진 → (사진관에서 감상)` 순서로 흐릅니다.
+복잡한 판정(중복·잡동사니·흐림·인물·지명)은 전량 사본이 있는 이곳에서 합니다.
 
 ---
 

@@ -321,6 +321,39 @@ mod tests {
     }
 
 
+    /// 「줄인 사본」(kind 4)에도 정착 구역 안전판이 그대로 걸린다.
+    ///
+    /// 갈래를 더할 때마다 이 성질이 저절로 따라오지는 않는다 — `apply_all` 은 kind 1
+    /// 만 다르게 다루므로 지금은 맞지만, 새 갈래가 그 분기에 끼어들면 조용히 깨진다.
+    /// 이 갈래는 한 번에 7,914무리 7,959장에 제외 표시를 하는 자리라(실측 2026-09-01)
+    /// 그 조용한 변화가 사진을 지운다.
+    #[test]
+    fn the_settled_guard_covers_the_resized_copy_kind_too() {
+        let (_d, db) = setup(false);
+        // 손으로 kind 4 무리 하나 — 대표는 a(작업대), 뺄 것은 b(공용, 정착 구역)
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO groups(id,kind,reason,size_bytes,state,created_at)
+                 VALUES(900,4,'줄인 사본',100,0,0)",
+                [],
+            )?;
+            c.execute(
+                "INSERT INTO group_members(group_id,file_id,is_best)
+                 SELECT 900, id, name = 'copy.jpg' FROM files
+                  WHERE name IN ('copy.jpg','20200101_120001.jpg')",
+                [],
+            )
+        })
+        .unwrap();
+        // 뺄 것이 공용에 있으므로 건너뛴다
+        let r = db.transaction(|tx| apply_all(tx, 4, true, true, None, None)).unwrap();
+        assert_eq!(r.groups, 0, "정착 구역의 사본을 빼려는 무리는 건너뛰어야 한다");
+        assert_eq!(r.skipped, 1);
+        // 안전판을 끄면 확정된다 — 규칙이 «건너뛴다»이지 «무리가 없다»가 아님을 못 박는다
+        let r = db.transaction(|tx| apply_all(tx, 4, false, true, None, None)).unwrap();
+        assert_eq!((r.groups, r.kept, r.rejected), (1, 1, 1));
+    }
+
     #[test]
     fn never_demotes_a_kept_file() {
         let (_d, db) = setup(false);

@@ -63,16 +63,22 @@
 | 무엇 | Photo Backup | Photo Desk | 우리집 사진관 |
 |---|---|---|---|
 | **1차 구역** | 설정 › 업로드 폴더 (`uploadRoot`) | 설정 › NAS (`nas.config.zone1`) | 구역 등록 (`zones.root_path`) |
-| 기본값 | `/homes/<계정>/MobileBackup/<기기>` | `/volume1/homes/luckyguy/Personal` | (없음 — 손으로 등록) |
+| 기본값 | `/homes/<계정>/Personal/<기기>` | `/volume1/homes/luckyguy/Personal` | (없음 — 손으로 등록) |
 | 개인(2차) | — | `nas.config.photos` | Synology Photos 인덱스 |
 | 공용 | — | `nas.config.shared` | Synology Photos 인덱스 |
 
-> **⚠ 기본값이 서로 다릅니다.** Photo Backup 의 기본 업로드 폴더와 Photo Desk 의 기본
-> 1차 구역이 같지 않습니다. **둘 중 하나를 반드시 손으로 맞춰야 합니다.**
-> 맞지 않으면 Photo Backup 은 계속 올리고 Photo Desk 는 «새 사진 없음»이라고 말합니다.
-> 아무도 오류를 내지 않습니다 — 그래서 알아채기 어렵습니다.
+> **✅ 기본값을 맞췄습니다 (2026-09-01).** Photo Backup 의 기본 업로드 폴더가
+> `/homes/<계정>/Personal/<기기>` 로 바뀌어 Photo Desk 의 기본 1차 구역과 같은 곳을
+> 가리킵니다. 옛 기본값(`/homes/<계정>/Photos/MobileBackup/<기기>`)이 저장된 폰은
+> 다음 로그인 때 한 번 자동으로 옮겨 갑니다 — 손으로 정한 값은 건드리지 않습니다.
+> 그 옛 자리는 Photo Desk 가 **2차 구역**(정리가 끝난 내사진)으로 보는 곳이라,
+> 거기로 올리면 아무도 가져가지 않았습니다.
 >
-> 현재 쓰는 값: `/volume1/homes/luckyguy/Personal` (그 아래 기기별 폴더)
+> **한쪽만 손으로 바꾸면 다시 어긋납니다.** 어긋나도 아무도 오류를 내지 않습니다 —
+> Photo Backup 은 계속 올리고 Photo Desk 는 «새 사진 없음» 이라고만 말합니다.
+>
+> 현재 쓰는 값: `/volume1/homes/luckyguy/Personal`
+> (그 아래 기기별 폴더 — 실측 `zFold8`, `현준의 Z Flip8`)
 
 ### 3.2 폴더 이름 규칙
 

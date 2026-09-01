@@ -50,13 +50,14 @@ writeFileSync(cargoPath, cargo);
 
 // Cargo.lock — [[package]] name = "acut" 바로 아래 version 만 바꾼다
 const cargoLockPath = resolve(root, "src-tauri/Cargo.lock");
+const cargoLockEntry = /(name = "acut"\nversion = ")[^"]*(")/;
 let cargoLock = readFileSync(cargoLockPath, "utf-8");
-const before = cargoLock;
-cargoLock = cargoLock.replace(
-  /(name = "acut"\nversion = ")[^"]*(")/,
-  `$1${newVersion}$2`,
-);
-if (cargoLock === before) throw new Error("Cargo.lock 에서 acut 항목을 못 찾았습니다");
+// **바뀌었는지가 아니라 있는지를 본다.** 결과가 같다고 «못 찾았다»로 치면, 이미 그
+// 판인 버전을 그대로 지정할 때(`release.mjs 0.8.0`) 없는 잘못을 만든다 (2026-09-02).
+if (!cargoLockEntry.test(cargoLock)) {
+  throw new Error("Cargo.lock 에서 acut 항목을 못 찾았습니다");
+}
+cargoLock = cargoLock.replace(cargoLockEntry, `$1${newVersion}$2`);
 writeFileSync(cargoLockPath, cargoLock);
 
 console.log(`${oldVersion} → ${newVersion}`);

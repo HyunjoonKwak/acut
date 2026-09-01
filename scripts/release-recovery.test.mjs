@@ -29,9 +29,9 @@ const FILES = [
  * `breakAt` 이 넘어뜨릴 명령, `bundleNotice` 가 가짜 빌드 결과에 고지를 둘지,
  * `signingIdentity` 가 이 판을 무엇으로 선언할지 — `"-"` 면 자체 서명(ad-hoc),
  * `null` 이면 아무 선언도 두지 않고, 그 밖이면 공개 배포다. 저장소의 실제 설정과
- * 무관하게 세 길을 다 시험한다.
+ * 무관하게 세 길을 다 시험한다. `bump` 는 릴리스에 넘길 판 지정이다.
  */
-function runInSandbox(breakAt, bundleNotice = false, signingIdentity = "Developer ID Application: 시험") {
+function runInSandbox(breakAt, bundleNotice = false, signingIdentity = "Developer ID Application: 시험", bump = "minor") {
   const box = mkdtempSync(join(tmpdir(), "acut-release-"));
   try {
     mkdirSync(join(box, "scripts"), { recursive: true });
@@ -81,7 +81,7 @@ function runInSandbox(breakAt, bundleNotice = false, signingIdentity = "Develope
     const before = Object.fromEntries(FILES.map((f) => [f, readFileSync(join(box, f), "utf-8")]));
     let status = 0;
     try {
-      execFileSync(process.execPath, ["scripts/release.mjs", "minor"], {
+      execFileSync(process.execPath, ["scripts/release.mjs", bump], {
         cwd: box,
         env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
         stdio: "pipe",
@@ -172,6 +172,16 @@ console.log("✓ 자체 서명 판 — 공증 검사를 건너뜀");
     assert.equal(after[f], before[f], `${f} 가 손댄 채 남았습니다`);
   }
   console.log("✓ 서명 선언 없음 — 공개 배포로 보고 막음");
+}
+
+// 9) 지금과 **같은 판 번호**를 그대로 지정해도 릴리스가 된다.
+//    Cargo.lock 치환 결과가 같다고 «항목을 못 찾았다»로 오진하던 길을 막는다.
+{
+  const current = JSON.parse(readFileSync(resolve(root, "package.json"), "utf-8")).version;
+  const { status, after } = runInSandbox(null, true, "-", current);
+  assert.equal(status, 0, `같은 판(${current})을 그대로 지정했는데 릴리스가 실패했습니다`);
+  assert.equal(JSON.parse(after["package.json"]).version, current, "판 번호가 바뀌었습니다");
+  console.log(`✓ 같은 판(${current}) 지정 — 그대로 통과`);
 }
 
 console.log("\n릴리스 복구 시험 통과");

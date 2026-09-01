@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node scripts/check-versions.mjs && npm run test:logic && npm run test:ui",
+    "test": "node scripts/check-versions.mjs && node scripts/release-recovery.test.mjs && npm run test:logic && npm run test:ui",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

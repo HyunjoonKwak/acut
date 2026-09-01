@@ -204,7 +204,14 @@ impl Verdict {
 /// 못 박은 좌표도 여기서 지켜진다 — 경계가 KR 이라고 답하기 때문이다.
 /// 나라 이름 글월을 견주지 않는다. 서버가 어느 말로 답하느냐에 따라
 /// «대한민국»과 «South Korea» 가 달라 보이기 때문이다 — ISO 두 글자로만 견준다.
-fn judge(boundary_cc: Option<&str>, answer_cc: Option<&str>, new_depth: u8, old_depth: u8) -> Verdict {
+fn judge(
+    boundary_cc: Option<&str>,
+    answer_cc: Option<&str>,
+    // 시도가 경계와 맞나 — `None` 은 «판단할 수 없다»이지 «어긋난다»가 아니다
+    admin1_ok: Option<bool>,
+    new_depth: u8,
+    old_depth: u8,
+) -> Verdict {
     if let Some(known) = boundary_cc {
         match answer_cc {
             // 나라가 어긋난다 — 값을 지키고 이 서버에는 다시 묻지 않는다
@@ -213,6 +220,12 @@ fn judge(boundary_cc: Option<&str>, answer_cc: Option<&str>, new_depth: u8, old_
             None => return Verdict::Shallow,
             _ => {}
         }
+    }
+    // 나라가 같아도 도가 틀릴 수 있다. 격자 대표 좌표는 칸 안 어딘가일 뿐이라,
+    // 도 경계에 걸친 칸에서 서버가 옆 도를 답하는 일이 실제로 생긴다.
+    // 우리가 아는 시도 이름과 어긋날 때만 막는다 — 모르는 이름에는 다투지 않는다.
+    if admin1_ok == Some(false) {
+        return Verdict::Conflict;
     }
     // 시군구까지 있던 자리를 나라만 있는 답으로 바꾸면 두 단계를 잃는다
     if new_depth < old_depth {
@@ -590,20 +603,33 @@ fn propagate(db: &Db, cell_key: &str, place: &Place, gps: &str, overwrite: Overw
 fn targets(db: &Db, mode: Mode, gps: &str, provider: Option<&str>) -> Result<Vec<(String, f64, f64)>> {
     let cell_expr = cell_sql("gps_lat", "gps_lon");
     let want = match mode {
-        // 판정이 아예 없고, 이름이 없는 사진이 있는 자리.
+        // 아직 오프라인이 손대지 않았고, 이름이 없는 사진이 있는 자리.
+        //
+        // 온라인이 먼저 돌아 충돌·불완전 응답을 만나면 값 없는 `unresolved` 행이
+        // 생긴다. 그때 «판정이 아예 없는 자리»만 고르면 그 좌표는 오프라인으로도
+        // 영영 복구되지 않는다 — 온라인이 실패했다는 이유로 내장 자료마저 막히는
+        // 셈이다. 그래서 **오프라인이 스스로 포기한 자리만** 건너뛴다.
         // 이미 판정된 자리의 미전파는 propagate_all 이 따로 되메운다.
-        Mode::Offline => "p.status IS NULL AND t.unnamed > 0",
+        Mode::Offline => {
+            "(p.status IS NULL
+              OR (p.status = 'unresolved' AND COALESCE(p.source,'') <> 'offline_geonames'))
+             AND t.unnamed > 0"
+        }
         // 이름이 없거나, 오프라인 결과라 더 정밀해질 수 있는 자리.
         //
-        // 여기에 «이 서버에 아직 안 물어봤나»가 반드시 들어가야 한다. 값만 보고
-        // 고르면 서버가 못 찾았거나 얕게 답한 자리가 값이 그대로라는 이유로
-        // 매번 다시 뽑혀 같은 서버에 되풀이해 묻게 된다 — 보강이 끝나지 않는다.
-        // 서버를 바꾸면 online_provider 가 달라 다시 물어볼 수 있다.
+        // 고르는 열쇠는 값이 아니라 **«이 서버에 물어봤나»** 다. 값만 보면 서버가
+        // 못 찾았거나 얕게 답한 자리가 «값이 그대로»라는 이유로 매번 다시 뽑혀
+        // 같은 서버에 되풀이해 묻는다 — 보강이 끝나지 않는다.
+        //
+        // 그래서 `status='none'` 을 여기서 걸러내지 않는다. «이름이 없다»는 것은
+        // 그 서버의 답일 뿐이고, 다른 서버는 알 수도 있다. 서버가 바뀌면
+        // online_provider 가 달라 다시 물어본다. 옛 판에서 넘어온 행은
+        // online_provider 가 비어 있어 새 서버에서 꼭 한 번 다시 물어본다.
         Mode::Online => {
             "(t.unnamed > 0 OR p.source = 'offline_geonames')
-             AND COALESCE(p.status,'') <> 'none'
              AND (p.online_outcome IS NULL
-                  OR (?1 IS NOT NULL AND p.online_provider IS NOT NULL AND p.online_provider <> ?1))"
+                  OR (?1 IS NOT NULL
+                      AND (p.online_provider IS NULL OR p.online_provider <> ?1)))"
         }
     };
     db.read(|c| {
@@ -662,11 +688,25 @@ fn cache_cells_left(db: &Db, gps: &str) -> Result<i64> {
     })
 }
 
-/// 이 서버의 호스트 — 조회 이력의 열쇠. 주소의 열쇠(토큰)는 담지 않는다.
+/// 이 서버를 가리키는 이름 — 조회 이력의 열쇠.
+///
+/// 호스트만으로는 모자란다. 같은 기계에서 포트나 경로만 다르게 띄운 두 서버는
+/// 서로 다른 자료를 가질 수 있는데, 호스트만 보면 «같은 서버»로 여겨 한쪽이
+/// 못 찾은 자리를 다른 쪽에 물어보지 않는다.
+///
+/// **물음표 뒤(query)와 조각(fragment)은 뺀다.** 자체 Nominatim 을 `?key=...` 로
+/// 지키는 구성이 흔한데, 그 열쇠가 DB 에 남으면 안 된다. 대소문자와 끝 빗금도
+/// 고르게 만들어 같은 서버를 다르게 세지 않는다.
 fn provider_of(endpoint: Option<&str>) -> Option<String> {
     let raw = endpoint?;
     validate_endpoint(raw).ok()?;
-    reqwest::Url::parse(raw).ok()?.host_str().map(str::to_string)
+    let url = reqwest::Url::parse(raw).ok()?;
+    let scheme = url.scheme().to_ascii_lowercase();
+    let host = url.host_str()?.to_ascii_lowercase();
+    // 그 scheme 의 기본 포트면 Url 이 None 을 준다 — 적지 않아야 같은 것이 같아진다
+    let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
+    let path = url.path().trim_end_matches('/');
+    Some(format!("{scheme}://{host}{port}{path}"))
 }
 
 /// 캐시에 이미 있는 이름을 이름 없는 사진에 **한 번에** 붙인다.
@@ -678,10 +718,26 @@ fn provider_of(endpoint: Option<&str>) -> Option<String> {
 /// 이 걸음은 언제 돌려도 안전하고, 판정과 전파가 중간에 끊겨 어긋난 것도 여기서
 /// 되메워진다 — 그래서 오프라인 채우기는 늘 이것으로 끝난다.
 fn propagate_all(db: &Db, gps: &str) -> Result<usize> {
+    propagate_scoped(db, gps, None)
+}
+
+/// 한 라이브러리 안에서만 붙인다 — 스캔 뒤에 쓴다.
+///
+/// 감시는 폴더가 바뀔 때마다 스캔을 부르므로, 그때마다 파일 표 전체를 훑으면
+/// 라이브러리가 여럿일수록 헛일이 커진다.
+pub fn propagate_library(db: &Db, library_id: i64) -> Result<usize> {
+    propagate_scoped(db, &valid_gps_sql(), Some(library_id))
+}
+
+fn propagate_scoped(db: &Db, gps: &str, library_id: Option<i64>) -> Result<usize> {
     let cell = cell_sql("gps_lat", "gps_lon");
+    let scope = if library_id.is_some() {
+        "AND folder_id IN (SELECT id FROM folders WHERE library_id = ?1)"
+    } else {
+        ""
+    };
     db.write(|c| {
-        c.execute(
-            &format!(
+        let sql = format!(
                 "UPDATE files SET
                    geo_country = (SELECT p.country FROM places p WHERE p.cell = {cell}),
                    geo_admin1  = (SELECT p.admin1  FROM places p WHERE p.cell = {cell}),
@@ -690,10 +746,13 @@ fn propagate_all(db: &Db, gps: &str) -> Result<usize> {
                  WHERE {gps} AND geo_country IS NULL
                    AND EXISTS(SELECT 1 FROM places p
                                WHERE p.cell = {cell} AND p.status = 'ok'
-                                 AND p.country IS NOT NULL AND trim(p.country) <> '')",
-            ),
-            [],
-        )
+                                 AND p.country IS NOT NULL AND trim(p.country) <> '')
+                   {scope}",
+            );
+        match library_id {
+            Some(id) => c.execute(&sql, [id]),
+            None => c.execute(&sql, []),
+        }
     })
 }
 
@@ -863,17 +922,22 @@ pub fn fill(
                     ))?;
                 std::thread::sleep(GAP); // 같은 서버에는 초당 하나
                 p.asked += 1;
-                let host = reqwest::Url::parse(endpoint.as_str())
-                    .ok()
-                    .and_then(|u| u.host_str().map(str::to_string));
+                // 고르는 열쇠와 적는 열쇠는 반드시 같은 함수에서 나와야 한다
+                let host = provider_of(Some(endpoint.as_str()));
                 match ask_with_retry(&client, endpoint.as_str(), lat, lon, zoom, cancel) {
                     Answer::Found(found) => {
                         // 내장 경계가 나라를 아는 자리에서는 경계가 이긴다 —
                         // 독도에 «일본»이 오는 답으로 정책이 뒤집히지 않게.
                         let known = boundary::country(lat, lon);
+                        let admin1_ok = found
+                            .place
+                            .admin1
+                            .as_deref()
+                            .and_then(|a| boundary::admin1_matches(lat, lon, a));
                         let verdict = judge(
                             known.as_deref(),
                             found.cc.as_deref(),
+                            admin1_ok,
                             found.place.depth(),
                             current_depth(db, &cell_key)?,
                         );
@@ -1004,17 +1068,20 @@ pub fn stats(db: &Db) -> Result<Stats> {
                    -- 서버가 이름 없음으로 확정한 것
                    SUM(CASE WHEN status = '{none}' THEN files - named ELSE 0 END),
                    COUNT(CASE WHEN (status IS NULL OR status <> '{none}') AND files > named THEN 1 END),
-                   -- 오프라인으로 풀 수 있는 자리: 아직 아무 판정이 없는 곳
-                   COUNT(CASE WHEN status IS NULL AND files > named THEN 1 END),
+                   -- 오프라인이 아직 손대지 않은 자리 — targets(Offline) 과 같은 조건
+                   COUNT(CASE WHEN files > named
+                               AND (status IS NULL
+                                    OR (status = '{unresolved}'
+                                        AND COALESCE(source,'') <> '{offline}')) THEN 1 END),
                    -- 서버에만 물을 수 있는 자리: 오프라인이 이미 포기한 곳
                    COUNT(CASE WHEN status = '{unresolved}' AND files > named THEN 1 END),
                    -- 서버에 물을 수 있는 자리 — targets(Online) 과 같은 조건이어야
                    -- 화면의 수와 실제로 도는 수가 어긋나지 않는다
-                   COUNT(CASE WHEN COALESCE(status,'') <> '{none}'
-                               AND (files > named OR source = '{offline}')
+                   COUNT(CASE WHEN (files > named OR source = '{offline}')
                                AND (online_outcome IS NULL
-                                    OR (?1 IS NOT NULL AND online_provider IS NOT NULL
-                                        AND online_provider <> ?1)) THEN 1 END),
+                                    OR (?1 IS NOT NULL
+                                        AND (online_provider IS NULL
+                                             OR online_provider <> ?1))) THEN 1 END),
                    -- 가진 값을 옮겨 붙이기만 하면 되는 자리. 파일 표를 한 번 더
                    -- 훑지 않으려고 같은 질의 안에서 센다 (실측 115→284ms 였다)
                    COUNT(CASE WHEN files > named AND status = '{ok}'
@@ -1458,7 +1525,9 @@ mod tests {
         db.write(|c| {
             c.execute_batch(
                 "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
-                 INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);",
+                 INSERT INTO libraries(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);
+                 INSERT INTO folders(id,volume_uuid,library_id,rel_path,name,area)
+                   VALUES(1,'V',1,'a','a',1);",
             )
         })
         .unwrap();
@@ -1581,6 +1650,36 @@ mod tests {
         assert_eq!(stats(&db).unwrap().cache_cells_left, 0);
     }
 
+    /// 라이브러리 범위 전파는 그 라이브러리만 건드린다 —
+    /// 감시는 폴더가 바뀔 때마다 스캔을 부르므로 헛일을 좁혀야 한다
+    #[test]
+    fn a_library_scoped_pass_leaves_other_libraries_alone() {
+        let (_d, db) = db_with(&[(1, 37.2911, 127.0089)]);
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO volumes(uuid,name,role) VALUES('W','t2','library');
+                 INSERT INTO libraries(id,volume_uuid,rel_path,name,area)
+                   VALUES(2,'W','b','b',1);
+                 INSERT INTO folders(id,volume_uuid,rel_path,name,area,library_id)
+                   VALUES(2,'W','b','b',1,2);
+                 INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
+                   VALUES(2,2,'other.jpg',1,0,1,0,0,37.2915,127.0092);",
+            )
+        })
+        .unwrap();
+        fill_offline(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+        // 둘 다 같은 자리라 둘 다 붙었다
+        assert_eq!(geo_of(&db, 1).2.as_deref(), Some("수원시"));
+        assert_eq!(geo_of(&db, 2).2.as_deref(), Some("수원시"));
+
+        // 지우고 한쪽만 다시 붙인다
+        db.write(|c| c.execute("UPDATE files SET geo_country=NULL, geo_admin1=NULL, geo_admin2=NULL, geo_name=NULL", []))
+            .unwrap();
+        assert_eq!(propagate_library(&db, 1).unwrap(), 1, "제 라이브러리만 붙인다");
+        assert_eq!(geo_of(&db, 1).2.as_deref(), Some("수원시"));
+        assert_eq!(geo_of(&db, 2).2, None, "다른 라이브러리는 그대로다");
+    }
+
     /// 스캔이 끝나면 저절로 붙는다 — 사용자가 단추를 누르지 않아도
     #[test]
     fn a_scan_applies_what_we_already_know() {
@@ -1626,12 +1725,12 @@ mod tests {
         assert_eq!(source, SRC_OFFLINE, "온라인이 못 찾았다고 출처를 거짓으로 바꾸지 않는다");
         assert_eq!(outcome, ONLINE_NONE);
 
-        let mut again = TestServer::start(vec![("500 Internal Server Error", "{}", None)]);
-        set_endpoint(&db, &again.url);
+        // 주소는 그대로 둔다 — 서버는 이미 멈췄으므로, 만약 묻는다면 연결이
+        // 실패해 asked 가 올라간다. 요청이 아예 없어야 통과한다.
         assert_eq!(stats(&db).unwrap().online_cells_left, 0, "물어볼 곳이 0 이어야 한다");
         let second = fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
-        assert_eq!(second.asked, 0, "같은 서버에 다시 묻지 않는다");
-        assert_eq!(again.served(), 0, "HTTP 요청이 한 번도 없어야 한다");
+        assert_eq!((second.total, second.asked), (0, 0), "같은 서버에 다시 묻지 않는다");
+        assert_eq!(second.stopped, None, "요청이 없으니 멈출 일도 없다");
     }
 
     /// 더 얕은 답도 마찬가지 — 값은 지키고, 두 번째 실행은 묻지 않는다
@@ -1655,11 +1754,11 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, ONLINE_SHALLOW);
 
-        let mut again = TestServer::start(vec![("500 Internal Server Error", "{}", None)]);
-        set_endpoint(&db, &again.url);
+        // 주소를 그대로 둔 채 다시 돌린다 — 물으려 하면 죽은 서버에 걸려 asked 가 오른다
         assert_eq!(stats(&db).unwrap().online_cells_left, 0);
-        assert_eq!(fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap().asked, 0);
-        assert_eq!(again.served(), 0);
+        let second = fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+        assert_eq!((second.total, second.asked), (0, 0));
+        assert_eq!(second.stopped, None);
     }
 
     /// 서버를 바꾸면 다시 물어볼 수 있다 — 다른 서버는 다른 답을 알 수 있다
@@ -1676,7 +1775,7 @@ mod tests {
         crate::db::settings::set(&db, "geo.endpoint", "http://other.example/reverse").unwrap();
         assert_eq!(stats(&db).unwrap().online_cells_left, 1, "서버가 바뀌면 다시 물어볼 수 있어야 한다");
         assert_eq!(
-            targets(&db, Mode::Online, &valid_gps_sql(), Some("other.example")).unwrap().len(),
+            targets(&db, Mode::Online, &valid_gps_sql(), Some("http://other.example/reverse")).unwrap().len(),
             1
         );
     }
@@ -1832,15 +1931,101 @@ mod tests {
         assert_eq!(cc(r#"{"country":"대한민국"}"#), None);
     }
 
+    /// 서버를 가리키는 이름은 포트·경로까지 보고, 열쇠는 담지 않는다
+    #[test]
+    fn a_server_is_identified_by_more_than_its_host() {
+        let of = |u: &str| provider_of(Some(u));
+        // 포트가 다르면 다른 서버다 — 한 기계에 두 서버를 띄우는 일은 흔하다
+        assert_ne!(of("http://127.0.0.1:8080/reverse"), of("http://127.0.0.1:9090/reverse"));
+        // 경로가 다르면 다른 서버다
+        assert_ne!(of("http://a.example/one"), of("http://a.example/two"));
+        // 대소문자와 끝 빗금은 같은 것으로 본다
+        assert_eq!(of("http://A.Example/reverse/"), of("http://a.example/reverse"));
+        // 기본 포트를 적었든 안 적었든 같다
+        assert_eq!(of("http://a.example:80/reverse"), of("http://a.example/reverse"));
+        assert_eq!(of("https://a.example:443/reverse"), of("https://a.example/reverse"));
+        // scheme 이 다르면 다른 서버다
+        assert_ne!(of("http://a.example/reverse"), of("https://a.example/reverse"));
+        // **열쇠는 담지 않는다**
+        let with_key = of("http://a.example/reverse?key=s3cr3t").unwrap();
+        assert!(!with_key.contains("s3cr3t"), "{with_key}");
+        assert_eq!(Some(with_key), of("http://a.example/reverse"));
+        // 쓸 수 없는 주소는 이름도 없다
+        assert_eq!(of("https://nominatim.openstreetmap.org/reverse"), None);
+        assert_eq!(of("그냥 글자"), None);
+        assert_eq!(provider_of(None), None);
+    }
+
     /// 판정 규칙만 따로 — 경계가 이기고, 얕은 답은 물러난다
     #[test]
     fn the_boundary_decides_before_the_depth_does() {
-        assert_eq!(judge(Some("KR"), Some("JP"), 3, 1), Verdict::Conflict, "더 깊어도 나라가 다르면 진다");
-        assert_eq!(judge(Some("KR"), Some("kr"), 3, 2), Verdict::Accept, "대소문자는 상관없다");
-        assert_eq!(judge(Some("KR"), None, 3, 1), Verdict::Shallow, "나라를 안 밝히면 못 바꾼다");
-        assert_eq!(judge(None, None, 3, 1), Verdict::Accept, "경계가 모르면 서버를 믿는다");
-        assert_eq!(judge(None, Some("JP"), 1, 3), Verdict::Shallow, "얕아지면 물러난다");
-        assert_eq!(judge(Some("KR"), Some("KR"), 2, 2), Verdict::Accept, "같은 깊이는 받아들인다");
+        let j = |b, a, ok, nd, od| judge(b, a, ok, nd, od);
+        assert_eq!(j(Some("KR"), Some("JP"), None, 3, 1), Verdict::Conflict, "더 깊어도 나라가 다르면 진다");
+        assert_eq!(j(Some("KR"), Some("kr"), None, 3, 2), Verdict::Accept, "대소문자는 상관없다");
+        assert_eq!(j(Some("KR"), None, None, 3, 1), Verdict::Shallow, "나라를 안 밝히면 못 바꾼다");
+        assert_eq!(j(None, None, None, 3, 1), Verdict::Accept, "경계가 모르면 서버를 믿는다");
+        assert_eq!(j(None, Some("JP"), None, 1, 3), Verdict::Shallow, "얕아지면 물러난다");
+        assert_eq!(j(Some("KR"), Some("KR"), None, 2, 2), Verdict::Accept, "같은 깊이는 받아들인다");
+        // 나라가 같아도 도가 어긋나면 막는다
+        assert_eq!(j(Some("KR"), Some("KR"), Some(false), 3, 1), Verdict::Conflict, "도가 틀리면 진다");
+        assert_eq!(j(Some("KR"), Some("KR"), Some(true), 3, 2), Verdict::Accept, "도가 맞으면 받아들인다");
+        // 모르는 시도 이름에는 다투지 않는다 — 그러면 정상 응답까지 막힌다
+        assert_eq!(j(Some("KR"), Some("KR"), None, 3, 2), Verdict::Accept);
+    }
+
+    /// **나라가 같아도 도가 다르면 기존 경계 판정을 지킨다.**
+    ///
+    /// 격자 대표 좌표는 칸 안 어딘가일 뿐이라, 도 경계에 걸친 칸에서 서버가 옆
+    /// 도를 답하는 일이 실제로 생긴다 (2026-09-01).
+    #[test]
+    fn a_wrong_province_in_the_right_country_never_wins() {
+        let (_d, db) = db_with(&[(1, 37.2911, 127.0089)]);
+        fill_offline(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+        assert_eq!(geo_of(&db, 1).1.as_deref(), Some("경기도"));
+
+        // 나라는 맞지만 도가 틀린 답 — 시군구까지 있어 «더 깊다»
+        let mut server = TestServer::start(vec![(
+            "200 OK",
+            r#"{"address":{"country":"대한민국","country_code":"kr","state":"경상북도","city":"경주시"}}"#,
+            None,
+        )]);
+        set_endpoint(&db, &server.url);
+        fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+        assert_eq!(server.served(), 1);
+
+        assert_eq!(
+            geo_of(&db, 1),
+            (
+                Some("대한민국".into()),
+                Some("경기도".into()),
+                Some("수원시".into()),
+                Some("수원시".into())
+            ),
+            "경계가 정한 도가 서버 답에 밀렸습니다"
+        );
+        let outcome: String = db
+            .read(|c| c.query_row("SELECT online_outcome FROM places WHERE cell='37.29,127.00'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(outcome, ONLINE_CONFLICT);
+        assert_eq!(stats(&db).unwrap().online_cells_left, 0, "같은 서버에 다시 묻지 않는다");
+    }
+
+    /// 영문으로 답해도 같은 판정이어야 한다 — 표기 차이로 막히면 안 된다
+    #[test]
+    fn an_english_province_name_is_understood_too() {
+        let (_d, db) = db_with(&[(1, 37.2911, 127.0089)]);
+        fill_offline(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+        let mut server = TestServer::start(vec![(
+            "200 OK",
+            r#"{"address":{"country":"South Korea","country_code":"kr","state":"Gyeonggi-do","city":"Suwon-si","borough":"Yeongtong-gu"}}"#,
+            None,
+        )]);
+        set_endpoint(&db, &server.url);
+        fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+        assert_eq!(server.served(), 1);
+        // 도가 맞으므로 받아들인다. 시군구는 fold 의 차례대로 city 가 먼저다.
+        assert_eq!(geo_of(&db, 1).1.as_deref(), Some("Gyeonggi-do"));
+        assert_eq!(geo_of(&db, 1).2.as_deref(), Some("Suwon-si"));
     }
 
     /// 서버 없이 채운다 — 내장 자료만으로 세 단계가 다 붙는다
@@ -1928,9 +2113,10 @@ mod tests {
         assert_eq!(s.online_cells_left, 1);
     }
 
-    /// 서버가 «이름 없음»으로 확정한 자리는 오프라인이 다시 건드리지 않는다
+    /// 서버가 «이름 없음»이라 한 자리는 **그 서버에는** 다시 묻지 않는다.
+    /// 오프라인도 건드리지 않는다 — 값이 없다고 내장 자료로 지어내지 않는다.
     #[test]
-    fn a_settled_empty_cell_is_left_alone_by_both_passes() {
+    fn a_settled_empty_cell_is_left_alone_by_the_same_server() {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(dir.path().join("t.db")).unwrap();
         db.write(|c| {
@@ -1939,17 +2125,63 @@ mod tests {
                  INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);
                  INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
                    VALUES(1,1,'a.jpg',1,0,1,0,0,37.2911,127.0089);
-                 INSERT INTO places(cell,status,source,precision,at)
-                   VALUES('37.29,127.00','none','nominatim','remote',0);",
+                 INSERT INTO places(cell,status,source,precision,
+                                    online_outcome,online_provider,online_checked_at,at)
+                   VALUES('37.29,127.00','none','nominatim','remote','none','http://a.example/reverse',0,0);",
             )
         })
         .unwrap();
         assert_eq!(targets(&db, Mode::Offline, &valid_gps_sql(), None).unwrap().len(), 0);
-        assert_eq!(targets(&db, Mode::Online, &valid_gps_sql(), None).unwrap().len(), 0);
-        let s = stats(&db).unwrap();
-        assert_eq!((s.offline_cells_left, s.online_cells_left), (0, 0));
+        assert_eq!(
+            targets(&db, Mode::Online, &valid_gps_sql(), Some("http://a.example/reverse")).unwrap().len(),
+            0,
+            "같은 서버에는 다시 묻지 않는다"
+        );
         let p = fill_offline(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
         assert_eq!(p.total, 0, "오프라인이 서버의 확정을 뒤집으면 안 된다");
+
+        // 서버를 바꾸면 다시 물어볼 수 있다 — «없다»는 그 서버의 답이었을 뿐이다
+        assert_eq!(
+            targets(&db, Mode::Online, &valid_gps_sql(), Some("http://b.example/reverse")).unwrap().len(),
+            1,
+            "다른 서버는 알 수도 있다"
+        );
+    }
+
+    /// **서버 A 가 «없다»고 한 자리를 서버 B 로 바꾸면 다시 조회한다.**
+    ///
+    /// «이름이 없다»는 그 서버의 답이지 세상의 사실이 아니다. 자체 Nominatim 의
+    /// 지역 자료가 좁아 못 찾은 것을 다른 서버는 알 수도 있다 (2026-09-01).
+    #[test]
+    fn a_new_server_gets_to_answer_a_cell_the_old_one_gave_up_on() {
+        // 내장 경계가 나라를 모르는 자리라야 서버 답이 그대로 쓰인다 —
+        // 육지였다면 국가 충돌로 거부되어 이 시험의 뜻이 흐려진다
+        let (_d, db) = db_with(&[(1, 0.005, -140.005)]);
+        assert_eq!(boundary::country(0.005, -140.005), None);
+        let mut a = TestServer::start(vec![("200 OK", r#"{"error":"Unable to geocode"}"#, None)]);
+        set_endpoint(&db, &a.url);
+        fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+        assert_eq!(a.served(), 1);
+        let status: String = db
+            .read(|c| c.query_row("SELECT status FROM places WHERE cell='0.00,-140.01'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(status, NONE, "이름이 없다고 못 박혔다");
+        assert_eq!(stats(&db).unwrap().online_cells_left, 0, "그 서버에는 더 물을 것이 없다");
+
+        // 서버를 바꾼다 — 이번엔 답을 안다
+        let mut b = TestServer::start(vec![(
+            "200 OK",
+            r#"{"address":{"country":"어느나라","country_code":"xx","state":"어느주","city":"어느시"}}"#,
+            None,
+        )]);
+        set_endpoint(&db, &b.url);
+        assert_eq!(stats(&db).unwrap().online_cells_left, 1, "새 서버에는 물어볼 곳이 있다");
+
+        let p = fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+        assert_eq!(b.served(), 1, "새 서버에 물어봐야 한다");
+        assert_eq!(p.files, 1);
+        assert_eq!(geo_of(&db, 1).2.as_deref(), Some("어느시"));
+        assert_eq!(stats(&db).unwrap().online_cells_left, 0);
     }
 
     /// 캐시에 있으면 묻지 않고 곧바로 사진에 붙인다 — 네트워크 없이 도는 길
@@ -2030,8 +2262,9 @@ mod tests {
                  INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
                    VALUES(1,1,'a.jpg',1,0,1,0,0,10.005,20.005),
                          (2,1,'b.jpg',1,0,1,0,0,10.006,20.006);
-                 INSERT INTO places(cell,country,admin1,admin2,name,status,at)
-                   VALUES('10.00,20.00',NULL,NULL,NULL,NULL,'none',0);",
+                 INSERT INTO places(cell,country,admin1,admin2,name,status,
+                                    online_outcome,online_provider,at)
+                   VALUES('10.00,20.00',NULL,NULL,NULL,NULL,'none','none','http://my.server/reverse',0);",
             )
         })
         .unwrap();
@@ -2265,6 +2498,31 @@ mod bench {
         }
         warm.sort();
         println!("통계 — 채우기 전 {stats_ms}ms · 채운 뒤 {}ms (다섯 번의 가운데값)", warm[2]);
+
+        // 첫 화면이 기다리는 질의들 — 어디가 오래 걸리는지 갈라 본다
+        {
+            use crate::db::query::{Filter, GroupBy};
+            let f = Filter::default();
+            let take = |name: &str, ms: Vec<u128>| {
+                let mut ms = ms;
+                ms.sort();
+                println!("첫 화면 · {name} {}ms", ms[ms.len() / 2]);
+            };
+            let mut a = vec![];
+            for _ in 0..3 {
+                let t = std::time::Instant::now();
+                let _ = crate::db::query::page(&db, &f, None, 200, GroupBy::None).unwrap();
+                a.push(t.elapsed().as_millis());
+            }
+            take("사진 첫 쪽 200장", a);
+            let mut b = vec![];
+            for _ in 0..3 {
+                let t = std::time::Instant::now();
+                let _ = crate::db::query::summary(&db, &f).unwrap();
+                b.push(t.elapsed().as_millis());
+            }
+            take("요약", b);
+        }
 
         // 지도 칸 질의는 지도를 움직일 때마다 돈다 — 지명을 얹어 느려졌는지 직접 잰다.
         // 지명이 없던 시절의 질의를 나란히 돌려 같은 조건에서 견준다.

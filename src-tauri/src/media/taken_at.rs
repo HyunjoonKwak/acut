@@ -63,7 +63,7 @@ pub fn resolve_video(
     let mut best: Option<(i64, Source)> = None;
     let mut offer = |t: Option<i64>, src: Source| {
         if let Some(t) = t.filter(|&t| is_plausible(t, now)) {
-            if best.map_or(true, |(b, _)| t < b) {
+            if best.is_none_or(|(b, _)| t < b) {
                 best = Some((t, src));
             }
         }

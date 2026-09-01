@@ -151,6 +151,18 @@ fn add_geo_levels(c: &Connection) -> rusqlite::Result<()> {
             c.execute_batch(&format!("ALTER TABLE places ADD COLUMN {col} {decl}"))?;
         }
     }
+    // 옛 판의 «이름 없음»은 온라인이 그렇게 답한 것이다. 조회 이력 칸이 생기기
+    // 전에 만들어졌으므로 여기서 채워 준다 — 비워 두면 «아직 아무한테도 안
+    // 물어봤다»로 읽혀 대상에 다시 들어간다. 어느 서버였는지는 알 수 없으니
+    // online_provider 는 비워 둔다: 서버를 설정하면 딱 한 번 다시 물어보고,
+    // 그때 서버 이름이 기록돼 그다음부터는 조용해진다.
+    c.execute_batch(
+        "UPDATE places
+            SET online_outcome = 'none',
+                online_provider = provider,
+                online_checked_at = COALESCE(resolved_at, at)
+          WHERE status = 'none' AND online_outcome IS NULL;",
+    )?;
     // 기존 캐시는 모두 온라인에서 온 것이다 — 오프라인 경로가 없던 시절의 값이다
     c.execute_batch(
         "UPDATE places SET source='nominatim', precision='remote',

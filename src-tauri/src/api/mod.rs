@@ -227,18 +227,9 @@ pub async fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
         });
         match r {
             Ok(p) => {
+                // 지명 캐시 적용은 scan_folder 안에서 이미 끝났다 — 이 알림을
+                // 받은 화면이 새로 고치면 새 사진에도 이름이 붙어 있다
                 let _ = app.emit("scan-done", p);
-                // 새로 들어온 사진이 이미 이름을 아는 자리에 있으면 곧바로 붙인다.
-                // 서버도 내장 자료도 필요 없다 — 가진 값을 옮기는 것뿐이다.
-                // 폴더마다가 아니라 스캔이 끝날 때 한 번만 돈다(파일 표 1회 훑기).
-                match crate::geo::propagate_cached(&db) {
-                    Ok(n) if n > 0 => {
-                        log::info!("스캔 뒤 지명 캐시 적용 — {n}장");
-                        let _ = app.emit("geo-applied", n);
-                    }
-                    Ok(_) => {}
-                    Err(e) => log::warn!("스캔 뒤 지명 캐시 적용 실패: {e}"),
-                }
                 // 스캔이 끝나면 곧바로 썸네일을 만든다. 목록은 이미 볼 수 있다.
                 // 1차 — 박힌 미리보기를 그대로 받는다. 몇 분이면 그리드가 찬다.
                 let tp = scan::thumbs::generate(
@@ -372,7 +363,7 @@ pub async fn folder_by_path(state: State<'_, AppState>, path: String) -> Result<
             want.strip_prefix(&format!("{root}/")).map(str::to_string)
         };
         if let Some(sub) = sub {
-            if best.as_ref().map_or(true, |(b, _)| b.dir.as_ref().map_or(0, |d| d.as_os_str().len()) < root.len()) {
+            if best.as_ref().is_none_or(|(b, _)| b.dir.as_ref().map_or(0, |d| d.as_os_str().len()) < root.len()) {
                 best = Some((l, sub));
             }
         }
@@ -427,7 +418,7 @@ pub async fn folders_list(
     // 4,476줄이 한꺼번에 쏟아지지 않는 건 접혀 있기 때문이다. 프론트는
     // 펼친 마디의 자식만 그린다.
     let mut out = Vec::new();
-    for l in libs.iter().filter(|l| library_id.map_or(true, |id| l.id == id)) {
+    for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
         let nodes = tree::build(leaves_of(state.inner(), l.id, &l.rel_path)?, &l.rel_path, l.id);
         if library_id.is_some() {
             out.extend(nodes);
@@ -544,7 +535,7 @@ pub async fn cache_usage(
     let libs = crate::db::libraries::list(&state.db).map_err(err)?;
     let (bytes, files) = libs
         .iter()
-        .filter(|l| library_id.map_or(true, |id| l.id == id))
+        .filter(|l| library_id.is_none_or(|id| l.id == id))
         .flat_map(|l| {
             [
                 cache::cache_root(&state.cache_base, l.id),
@@ -563,7 +554,7 @@ pub async fn cache_usage(
 #[tauri::command]
 pub async fn cache_clear(state: State<'_, AppState>, library_id: Option<i64>) -> Result<(), String> {
     let libs = crate::db::libraries::list(&state.db).map_err(err)?;
-    for l in libs.iter().filter(|l| library_id.map_or(true, |id| l.id == id)) {
+    for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
         for root in [
             cache::cache_root(&state.cache_base, l.id),
             cache::preview_root(&state.cache_base, l.id),

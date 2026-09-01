@@ -69,11 +69,6 @@ export function useScanEvents(cb: {
         );
       },
     );
-    // 스캔이 끝나며 이미 아는 이름을 새 사진에 붙였다 — 갈래와 지도가 곧바로 반영되게
-    on<number>("geo-applied", (n) => {
-      data().bumpGeo();
-      if (n > 0) toast(`새 사진 ${n.toLocaleString()}장에 지명을 붙였습니다`, "ok");
-    });
     on<string>("geo-error", (e) => {
       job().clear();
       toast(e, "drop");
@@ -106,6 +101,8 @@ export function useScanEvents(cb: {
     on<{ removed?: number; folders_removed?: number }>("scan-done", (p) => {
       data().setScanMsg("스캔 완료 — 썸네일 만드는 중");
       job().clear();
+      // 스캔이 새 사진에 이미 아는 지명을 붙여 놓았다 — 갈래와 지도가 곧바로 보게 한다
+      data().bumpGeo();
       if ((p?.removed ?? 0) > 0)
         toast(
           `디스크에서 사라진 사진 ${(p.removed ?? 0).toLocaleString()}장${(p.folders_removed ?? 0) > 0 ? ` · 폴더 ${(p.folders_removed ?? 0).toLocaleString()}개` : ""}의 기록을 정리했습니다`,

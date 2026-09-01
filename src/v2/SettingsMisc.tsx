@@ -61,13 +61,13 @@ export function About() {
         label="마지막 시작"
         hint={
           startup
-            ? `프로세스 시작 → DB 준비 ${startup.db_ms}ms · 첫 그리드 ${startup.first_grid_ms}ms (${fmtDateTime(startup.at)}). 목표는 1초.${
+            ? `프로세스 시작 → DB 준비 ${startup.db_ms}ms · 첫 그리드 ${startup.first_grid_ms}ms (${fmtDateTime(startup.at)}).${
                 startup.marks
                   ? ` 웹뷰 기준: ${Object.entries(startup.marks)
                       .map(([k, v]) => `${k} ${v}`)
-                      .join(" · ")}`
+                      .join(" · ")}.`
                   : ""
-              }`
+              } 사진이 5만 장을 넘으면 첫 그리드가 몇 초 걸립니다 — 사진 목록을 읽는 질의 자체는 1ms 안쪽이고, 시간은 웹뷰가 첫 화면을 그리는 데 듭니다.`
             : "아직 잰 적 없습니다."
         }
       >

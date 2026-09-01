@@ -59,7 +59,7 @@ pub fn classify(name: &str, rel_dir: &str, size: i64, width: Option<i64>) -> Opt
     }
     // 작은 파일 — 해상도가 알려져 있고 사진 크기(400px 초과)면 옛 카메라 원본일 수 있어 넘긴다.
     // 잡동사니는 대표 없이 전부 제외되므로 애매하면 잡지 않는다.
-    if size > 0 && size < TINY_BYTES && width.map_or(true, |w| w <= 400) {
+    if size > 0 && size < TINY_BYTES && width.is_none_or(|w| w <= 400) {
         return Some(Reason::TooSmall);
     }
     None

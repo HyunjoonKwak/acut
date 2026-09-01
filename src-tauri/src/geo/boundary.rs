@@ -26,6 +26,8 @@ pub struct Region {
     pub code: String,
     /// 한글 이름 — 서울특별시
     pub name: String,
+    /// 이 시도를 가리키는 것으로 아는 이름들 — 한글·영문·로마자 표기
+    aliases: Vec<String>,
     /// GeoNames 시도 코드 — 도시 표와 대조하는 열쇠
     pub geonames_admin1: String,
     /// [최소경도, 최소위도, 최대경도, 최대위도] — 폴리곤을 재기 전에 먼저 자른다
@@ -38,6 +40,8 @@ pub struct Region {
 struct RawRegion {
     code: String,
     name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
     geonames_admin1: String,
     bbox: [f64; 4],
     polys: Vec<Vec<Vec<[f64; 2]>>>,
@@ -66,6 +70,7 @@ fn regions() -> &'static [Region] {
             .map(|r| Region {
                 code: r.code,
                 name: r.name,
+                aliases: r.aliases,
                 geonames_admin1: r.geonames_admin1,
                 bbox: r.bbox,
                 polys: r.polys,
@@ -113,6 +118,59 @@ pub fn kr_admin1(lat: f64, lon: f64) -> Option<&'static Region> {
     regions().iter().find(|r| contains(r, lat, lon))
 }
 
+/// 시도 이름을 견주기 좋게 다듬는다.
+///
+/// 같은 곳을 부르는 말이 여럿이다 — «강원도»·«강원특별자치도»·«Gangwon-do»·
+/// «Gangwon». 공백·붙임표를 지우고 소문자로 내린 뒤, 행정 단위 접미사를 뗀다.
+/// 그래야 «경상북도»와 «경상남도»는 여전히 다르게 남는다.
+fn normalize(name: &str) -> String {
+    let mut s: String = name
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    for suffix in [
+        "특별자치도", "특별자치시", "특별시", "광역시", "자치도", "자치시",
+        "teukbyeoljachido", "teukbyeolsi", "gwangyeoksi", "do", "si", "도", "시",
+    ] {
+        if let Some(rest) = s.strip_suffix(suffix) {
+            if !rest.is_empty() {
+                s = rest.to_string();
+                break;
+            }
+        }
+    }
+    s
+}
+
+/// 이 이름이 그 시도를 가리키나 — 아는 표기 가운데 하나와 맞으면 그렇다.
+///
+/// 모르는 이름에는 «아니다»가 아니라 «모르겠다»가 맞다. 그래서 이 함수는
+/// 판정을 내리는 곳(`admin1_matches`)에서만 쓰고, 결과가 없으면 다투지 않는다.
+impl Region {
+    fn names_match(&self, name: &str) -> bool {
+        let want = normalize(name);
+        !want.is_empty() && self.aliases.iter().any(|a| normalize(a) == want)
+    }
+}
+
+/// 온라인이 말한 시도가 경계 판정과 어긋나나.
+///
+/// 셋 중 하나를 답한다: `Some(true)` 맞다 · `Some(false)` 어긋난다 ·
+/// `None` 판단할 수 없다(우리가 모르는 표기이거나 한국 밖이다).
+/// **모르는 것을 어긋난다고 하지 않는다** — 그러면 정상 응답까지 막힌다.
+pub fn admin1_matches(lat: f64, lon: f64, name: &str) -> Option<bool> {
+    let here = kr_admin1(lat, lon)?;
+    if here.names_match(name) {
+        return Some(true);
+    }
+    // 우리가 아는 다른 시도의 이름이라면 어긋난 것이다
+    if regions().iter().any(|r| r.names_match(name)) {
+        return Some(false);
+    }
+    None
+}
+
 /// GeoNames 시도 코드로 시도를 찾는다 — 도시 표가 가리키는 곳을 이름으로 바꾼다
 pub fn kr_admin1_by_geonames(code: &str) -> Option<&'static Region> {
     regions().iter().find(|r| r.geonames_admin1 == code)
@@ -156,6 +214,42 @@ mod tests {
         let got = format!("{:x}", Sha256::digest(KR_ADMIN1.as_bytes()));
         assert_eq!(got, m["sha256"].as_str().unwrap(), "kr_admin1.json 이 MANIFEST 와 다릅니다");
         assert_eq!(regions().len(), 17, "한국 시도는 17개다");
+    }
+
+    #[test]
+    fn every_region_knows_what_it_is_called() {
+        for r in regions() {
+            assert!(r.aliases.iter().any(|a| a == &r.name), "{} 의 별칭에 제 이름이 없습니다", r.name);
+            assert!(r.aliases.len() >= 2, "{} 에 영문 표기가 없습니다", r.name);
+            assert!(r.names_match(&r.name));
+        }
+        // 접미사를 떼도 서로 다른 도는 다르게 남아야 한다
+        assert_ne!(normalize("경상북도"), normalize("경상남도"));
+        assert_ne!(normalize("충청북도"), normalize("충청남도"));
+        assert_eq!(normalize("강원도"), normalize("강원특별자치도"));
+        assert_eq!(normalize("Gangwon-do"), normalize("gangwon"));
+        // 한글과 영문은 정규화로 같아지지 않는다 — 그것이 별칭 목록이 있는 이유다
+        let seoul = regions().iter().find(|r| r.code == "KR-11").unwrap();
+        assert!(seoul.names_match("서울특별시") && seoul.names_match("Seoul"));
+        assert!(!seoul.names_match("부산광역시"));
+    }
+
+    /// 같은 나라 안에서도 시도가 어긋나면 알아채야 한다
+    #[test]
+    fn it_can_tell_a_wrong_province_from_an_unknown_one() {
+        // 수원 — 경기도
+        assert_eq!(admin1_matches(37.2911, 127.0089, "경기도"), Some(true));
+        assert_eq!(admin1_matches(37.2911, 127.0089, "Gyeonggi-do"), Some(true));
+        assert_eq!(admin1_matches(37.2911, 127.0089, "경상북도"), Some(false), "다른 도는 어긋난 것이다");
+        assert_eq!(admin1_matches(37.2911, 127.0089, "Gyeongsangbuk-do"), Some(false));
+        // 우리가 모르는 이름에는 다투지 않는다 — 시군구나 옛 이름일 수 있다
+        assert_eq!(admin1_matches(37.2911, 127.0089, "수원시"), None);
+        assert_eq!(admin1_matches(37.2911, 127.0089, ""), None);
+        // 한국 밖에는 견줄 경계가 없다
+        assert_eq!(admin1_matches(35.6762, 139.6503, "Tokyo"), None);
+        // **독도** — 경상북도가 맞고, 시마네는 아니다
+        assert_eq!(admin1_matches(37.2411, 131.8694, "경상북도"), Some(true));
+        assert_eq!(admin1_matches(37.2411, 131.8694, "강원도"), Some(false));
     }
 
     #[test]

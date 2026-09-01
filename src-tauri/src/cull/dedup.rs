@@ -176,7 +176,7 @@ pub fn scan(
                 }
             };
             let n = counter.fetch_add(1, Ordering::Relaxed);
-            if n % 500 == 0 {
+            if n.is_multiple_of(500) {
                 let mut p = progress.lock().unwrap();
                 p.phase = "quick";
                 p.hashed = n;
@@ -238,7 +238,7 @@ pub fn scan(
                 }
             };
             let n = full_done.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % 25 == 0 || n == full_total {
+            if n.is_multiple_of(25) || n == full_total {
                 let mut p = progress.lock().unwrap();
                 p.full_done = n;
                 p.full_bytes = full_bytes.load(Ordering::Relaxed);
@@ -310,7 +310,7 @@ pub fn scan(
                 }
             };
             let n = image_done.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % 25 == 0 || n == image_total {
+            if n.is_multiple_of(25) || n == image_total {
                 let mut p = progress.lock().unwrap();
                 p.image_done = n;
                 on_progress(&p.clone());

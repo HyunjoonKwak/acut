@@ -69,7 +69,7 @@ fn korea(lat: f64, lon: f64, country: String) -> Resolved {
     let corrected = near
         .filter(|n| n.km <= TRUST_KM)
         .and_then(|n| boundary::kr_admin1_by_geonames(n.city.admin1_code))
-        .filter(|r| !by_polygon.is_some_and(|p| p.code == r.code));
+        .filter(|r| by_polygon.is_none_or(|p| p.code != r.code));
 
     let region = corrected.or(by_polygon);
     let admin1 = region.map(|r| r.name.clone());

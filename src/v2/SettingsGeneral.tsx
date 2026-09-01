@@ -279,16 +279,30 @@ function GeoEndpointRow() {
 
 /** 지명 채우기 — 좌표를 국가·시도·시군구 이름으로. 격자마다 한 번만 묻는다 */
 function GeoRow() {
-  const [st, setSt] = useState<GeoStats | null>(null);
   const hasJob = useJob((s) => s.job !== null);
   const geoRev = useData((s) => s.geoRev);
+  // 어느 요청의 답인지 함께 담는다. 숫자를 읽기 전에는 «처리 완료»라고 말하지
+  // 않아야 한다 — 0 과 «아직 모름»은 다르다. 화면 그리는 중에 상태를 건드리지
+  // 않으려고 따로 loading 을 두는 대신 열쇠를 견준다.
+  const requestKey = String(geoRev);
+  const [state, setState] = useState<{ key: string | null; data: GeoStats | null }>({
+    key: null,
+    data: null,
+  });
   // 처음 열 때, 일이 끝날 때, 서버 설정이 바뀔 때 숫자를 다시 읽는다
   useEffect(() => {
-    if (!hasJob)
-      void invoke<GeoStats>("geo_stats")
-        .then(setSt)
-        .catch(() => {});
-  }, [hasJob, geoRev]);
+    if (hasJob) return;
+    let live = true;
+    void invoke<GeoStats>("geo_stats")
+      .then((v) => live && setState({ key: requestKey, data: v }))
+      .catch(() => live && setState({ key: requestKey, data: null }));
+    return () => {
+      live = false;
+    };
+  }, [hasJob, requestKey]);
+  const st = state.data;
+  // 일이 도는 중에는 마지막으로 읽은 값을 그대로 보여 준다
+  const loading = !hasJob && state.key !== requestKey;
 
   // 서버 없이 할 수 있는 일 = 새로 판정할 자리 + 가진 값을 옮길 자리.
   // 둘을 합쳐야 화면의 수와 실제로 도는 일이 같아진다 — 스캔으로 새 사진이
@@ -304,7 +318,9 @@ function GeoRow() {
       .catch((e) => toast(String(e), "drop"));
   };
 
-  const summary = st
+  const summary = loading
+    ? "얼마나 남았는지 세는 중입니다…"
+    : st
     ? `유효한 좌표가 있는 사진 ${st.with_gps.toLocaleString()}장 중 ${st.named.toLocaleString()}장에 지명이 붙어 있습니다.` +
       (st.unavailable_files > 0
         ? ` 서버가 이름을 찾지 못한 ${st.unavailable_files.toLocaleString()}장은 좌표로만 표시됩니다.`
@@ -327,22 +343,26 @@ function GeoRow() {
         }`}
       >
         <Btn
-          disabled={hasJob || offlineLeft === 0}
+          disabled={hasJob || loading || offlineLeft === 0}
           onClick={() =>
             start("offline", null, "지명을 채웁니다 — 진행은 위 작업 표시에서")
           }
         >
-          {offlineLeft === 0
-            ? "처리 완료"
-            : cacheOnly
-              ? `${offlineLeft.toLocaleString()}곳 붙이기`
-              : `${offlineLeft.toLocaleString()}곳 채우기`}
+          {loading
+            ? "세는 중…"
+            : offlineLeft === 0
+              ? "처리 완료"
+              : cacheOnly
+                ? `${offlineLeft.toLocaleString()}곳 붙이기`
+                : `${offlineLeft.toLocaleString()}곳 채우기`}
         </Btn>
       </Row>
       <Row
         label="정밀 보강"
         hint={
-          onlineLeft === 0
+          loading
+            ? "얼마나 남았는지 세는 중입니다…"
+            : onlineLeft === 0
             ? "서버에 더 물어볼 곳이 없습니다."
             : `지명 서버에 물어 ${
                 st && st.approximate_files > 0
@@ -355,19 +375,21 @@ function GeoRow() {
       >
         <>
           <Btn
-            disabled={hasJob || onlineLeft === 0 || !ready}
+            disabled={hasJob || loading || onlineLeft === 0 || !ready}
             onClick={() =>
               start("online", 100, "최대 100곳을 보강합니다 — 진행은 위 작업 표시에서")
             }
           >
-            {!ready && onlineLeft > 0
-              ? "서버 설정 필요"
-              : onlineLeft > 0
-                ? `${Math.min(100, onlineLeft).toLocaleString()}곳 보강`
-                : "보강 완료"}
+            {loading
+              ? "세는 중…"
+              : !ready && onlineLeft > 0
+                ? "서버 설정 필요"
+                : onlineLeft > 0
+                  ? `${Math.min(100, onlineLeft).toLocaleString()}곳 보강`
+                  : "보강 완료"}
           </Btn>
           <Btn
-            disabled={hasJob || onlineLeft === 0 || !ready}
+            disabled={hasJob || loading || onlineLeft === 0 || !ready}
             onClick={() =>
               start("online", null, "남은 곳을 모두 보강합니다 — 멈추면 채운 것은 남습니다")
             }

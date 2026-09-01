@@ -320,7 +320,23 @@ pub fn scan_folder(
         )
     })?;
 
+    // 새로 들어오거나 좌표가 바뀐 사진에, 이미 아는 지명을 곧바로 붙인다.
+    //
+    // 여기서 하는 이유: 전체 스캔·가져오기·폴더 감시·EXIF 재읽기가 모두 이
+    // 함수를 지난다. 부르는 쪽마다 따로 붙이면 한 곳은 반드시 빠진다. 그리고
+    // 이 자리는 `scan-done` 을 알리기 **전**이라, 화면이 새로 고칠 때는 이미
+    // 이름이 붙어 있다 (2026-09-01).
+    //
+    // 바뀐 것이 없으면 건너뛴다 — 감시는 폴더가 바뀔 때마다 이 함수를 부른다.
     let out = progress.lock().unwrap().clone();
+    if out.inserted > 0 || out.updated > 0 {
+        match crate::geo::propagate_library(db, library_id) {
+            Ok(n) if n > 0 => log::info!("스캔 뒤 지명 캐시 적용 — {n}장"),
+            Ok(_) => {}
+            // 지명은 곁들이일 뿐이다 — 실패해도 스캔 자체는 성공이다
+            Err(e) => log::warn!("스캔 뒤 지명 캐시 적용 실패: {e}"),
+        }
+    }
     on_progress(&out);
     Ok(out)
 }
@@ -557,6 +573,68 @@ mod tests {
 
 
     use super::*;
+
+    /// 스캔이 끝나면 이미 아는 지명이 새 사진에 붙어 있어야 한다.
+    ///
+    /// 전체 스캔·가져오기·폴더 감시·EXIF 재읽기가 모두 이 함수를 지나므로,
+    /// 여기서 붙으면 네 경로 모두에서 붙는다. 그리고 이 일은 `Ok` 를 돌려주기
+    /// **전**에 끝나므로, `scan-done` 을 받은 화면은 이미 이름을 본다.
+    #[test]
+    fn a_scan_finishes_with_known_place_names_already_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.jpg"), b"x".repeat(50)).unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+
+        // 그 사진에 좌표가 있고, 그 자리의 이름을 이미 안다고 하자
+        db.write(|c| {
+            c.execute_batch(
+                "UPDATE files SET gps_lat=37.2911, gps_lon=127.0089 WHERE name='a.jpg';
+                 INSERT INTO places(cell,country,admin1,admin2,name,status,source,precision,at)
+                   VALUES('37.29,127.00','대한민국','경기도','수원시','수원시','ok','offline_geonames','approximate',0);",
+            )
+        })
+        .unwrap();
+        let named = |n: &str| -> Option<String> {
+            db.read(|c| c.query_row("SELECT geo_name FROM files WHERE name=?1", [n], |r| r.get(0)))
+                .unwrap()
+        };
+        assert_eq!(named("a.jpg"), None, "아직 붙지 않았다");
+
+        // 사진이 하나 더 들어와 스캔이 다시 돈다 (가져오기·감시도 같은 길이다)
+        std::fs::write(dir.path().join("b.jpg"), b"y".repeat(50)).unwrap();
+        let lib: i64 = db.read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0))).unwrap();
+        let p = scan_folder(&db, lib, dir.path(), 0, |_| {}).unwrap();
+        assert_eq!(p.inserted, 1);
+
+        // 스캔이 돌아온 시점에 이미 붙어 있다 — 사용자가 아무것도 누르지 않았다
+        assert_eq!(named("a.jpg").as_deref(), Some("수원시"));
+    }
+
+    /// 바뀐 것이 없는 스캔은 전파를 건너뛴다 — 감시는 폴더마다 이 함수를 부른다
+    #[test]
+    fn a_scan_that_changed_nothing_does_not_touch_the_photos() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.jpg"), b"x".repeat(50)).unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, dir.path(), 0, |_| {}).unwrap();
+        db.write(|c| {
+            c.execute_batch(
+                "UPDATE files SET gps_lat=37.2911, gps_lon=127.0089 WHERE name='a.jpg';
+                 INSERT INTO places(cell,country,admin1,admin2,name,status,source,precision,at)
+                   VALUES('37.29,127.00','대한민국','경기도','수원시','수원시','ok','offline_geonames','approximate',0);",
+            )
+        })
+        .unwrap();
+
+        let lib: i64 = db.read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0))).unwrap();
+        let p = scan_folder(&db, lib, dir.path(), 0, |_| {}).unwrap();
+        assert_eq!((p.inserted, p.updated), (0, 0), "바뀐 것이 없다");
+        let name: Option<String> = db
+            .read(|c| c.query_row("SELECT geo_name FROM files WHERE name='a.jpg'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(name, None, "할 일이 없으면 파일 표를 훑지도 않는다");
+    }
 
     #[test]
     fn nfc_normalizes_hangul() {

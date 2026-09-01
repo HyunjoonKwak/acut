@@ -185,6 +185,9 @@ function main() {
         geonames_admin1: gn,
         // 표시용 이름은 한글 — 없으면 영문으로 떨어진다
         name: (p.name_ko || p.name || "").trim(),
+        // 온라인 응답과 대조할 이름들. 서버는 한글로도 영문으로도 답할 수 있고
+        // 표기가 여럿이라(«강원도» · «Gangwon-do» · «Gangwon») 아는 이름을 모아 둔다.
+        aliases: [...new Set([p.name_ko, p.name, p.gn_name, p.name_en].filter(Boolean).map((v) => v.trim()))],
         bbox: bbox(polys),
         polys,
       };

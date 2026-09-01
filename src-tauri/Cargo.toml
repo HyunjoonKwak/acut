@@ -5,7 +5,9 @@ description = "에이컷 - 사진을 고르고 정리해 NAS로 올리는 컬링
 authors = ["에이컷"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77.2"
+# 의존성이 실제로 요구하는 값이다 — scripts/check-msrv.mjs 가 릴리스 때 확인한다.
+# 낮게 적어 두면 «이 버전에서 된다»는 거짓말이 되고, 그 툴체인에서는 빌드가 깨진다.
+rust-version = "1.88.0"
 
 [lib]
 name = "app_lib"

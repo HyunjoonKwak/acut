@@ -196,11 +196,11 @@ pub struct Page {
 /// 실제 라이브러리에도 그런 행이 수천 장 있어 그대로 지도에 넣으면 Null Island가
 /// 가장 큰 장소가 되고 자동 맞춤도 세계 전체로 벌어진다. 두 값이 모두 정확히 0인
 /// 경우만 센티널로 보고, 한쪽 누락·지구 범위 밖 좌표도 위치 없음으로 친다.
-const VALID_GPS_SQL: &str =
-    "fi.gps_lat IS NOT NULL AND fi.gps_lon IS NOT NULL
-     AND fi.gps_lat BETWEEN -90.0 AND 90.0
-     AND fi.gps_lon BETWEEN -180.0 AND 180.0
-     AND NOT (fi.gps_lat = 0.0 AND fi.gps_lon = 0.0)";
+/// 파일 표의 별칭은 이 모듈 전체에서 `fi` 다. 판정 자체는 db::predicates 가 갖는다 —
+/// geo.rs 와 같은 뜻이어야 «세는 사진»과 «처리하는 사진»이 어긋나지 않는다
+fn valid_gps_sql() -> String {
+    crate::db::predicates::valid_gps_sql("fi")
+}
 
 /// LIKE 와일드카드를 이스케이프한다. `_`가 임의 문자로 동작하면
 /// `IMG_1234` 검색이 엉뚱한 것까지 잡는다.
@@ -239,6 +239,7 @@ fn needs_folder_join(f: &Filter) -> bool {
 
 /// 필터를 WHERE 절과 파라미터로 바꾼다.
 fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let gps = valid_gps_sql();
     let mut w: Vec<String> = Vec::new();
     let mut p: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -344,12 +345,12 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     }
     if let Some(pl) = f.place.as_ref() {
         if pl.is_empty() {
-            w.push(format!("NOT ({VALID_GPS_SQL})"));
+            w.push(format!("NOT ({gps})"));
         } else if let Some((a, b)) = pl.split_once(',') {
             // 격자 한 칸 = 0.1도 (위도로 약 11km). 그 칸 안이면 같은 곳으로 친다.
             if let (Ok(lat), Ok(lon)) = (a.parse::<f64>(), b.parse::<f64>()) {
                 w.push(format!(
-                    "({VALID_GPS_SQL}) AND fi.gps_lat >= ? AND fi.gps_lat < ?
+                    "({gps}) AND fi.gps_lat >= ? AND fi.gps_lat < ?
                      AND fi.gps_lon >= ? AND fi.gps_lon < ?"
                 ));
                 p.push(Box::new(lat));
@@ -367,7 +368,7 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
     }
     if let Some(b) = f.bbox.as_deref().and_then(parse_bbox) {
         w.push(format!(
-            "({VALID_GPS_SQL}) AND fi.gps_lat >= ? AND fi.gps_lat <= ?
+            "({gps}) AND fi.gps_lat >= ? AND fi.gps_lat <= ?
              AND fi.gps_lon >= ? AND fi.gps_lon <= ?"
         ));
         p.push(Box::new(b[0]));
@@ -680,6 +681,7 @@ pub enum FacetKind {
 /// 필터를 함께 거는 이유: 「2020년」을 고른 뒤 카메라 목록을 보면 그해에 쓴
 /// 카메라만 나와야 한다. 전체 목록이 나오면 눌러도 0장인 것이 섞인다.
 pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
+    let gps = valid_gps_sql();
     let (where_sql, params) = build_where(f, None);
     let join = if needs_folder_join(f) {
         "JOIN folders fo ON fo.id = fi.folder_id"
@@ -701,7 +703,7 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
         FacetKind::Admin1 => "COALESCE(fi.geo_admin1,'')".into(),
         FacetKind::Admin2 => "COALESCE(fi.geo_admin2,'')".into(),
         FacetKind::Place => format!(
-            "CASE WHEN NOT ({VALID_GPS_SQL}) THEN ''
+            "CASE WHEN NOT ({gps}) THEN ''
                   ELSE printf('%.1f,%.1f',
                     CAST(ROUND(fi.gps_lat * 10.0, 8) + 900.0 AS INTEGER) / 10.0 - 90.0,
                     CAST(ROUND(fi.gps_lon * 10.0, 8) + 1800.0 AS INTEGER) / 10.0 - 180.0)
@@ -815,6 +817,7 @@ pub struct MapOverview {
 }
 
 pub fn map_overview(db: &Db, f: &Filter) -> Result<MapOverview> {
+    let gps = valid_gps_sql();
     let (where_sql, params) = build_where(f, None);
     let join = if needs_folder_join(f) {
         "JOIN folders fo ON fo.id = fi.folder_id"
@@ -823,7 +826,7 @@ pub fn map_overview(db: &Db, f: &Filter) -> Result<MapOverview> {
     };
     let sql = format!(
         "SELECT COUNT(*), MIN(fi.gps_lat), MIN(fi.gps_lon), MAX(fi.gps_lat), MAX(fi.gps_lon)
-           FROM files fi {join} {where_sql} AND ({VALID_GPS_SQL})"
+           FROM files fi {join} {where_sql} AND ({gps})"
     );
     db.read(|c| {
         let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
@@ -843,6 +846,7 @@ pub fn map_overview(db: &Db, f: &Filter) -> Result<MapOverview> {
 /// 칸마다 평균 좌표, 장수, 대표 한 장. 부르는 쪽이 현재 지도 화면을 bbox로
 /// 넣으므로 4,000개 제한을 넘어도 다른 지역으로 이동하면 그곳을 다시 읽는다.
 pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
+    let gps = valid_gps_sql();
     let p = precision.clamp(0.0001, 10.0);
     let (where_sql, params) = build_where(f, None);
     let join = if needs_folder_join(f) {
@@ -853,7 +857,7 @@ pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
     // +90/+180으로 양수로 만든 뒤 자른다 — CAST는 0쪽으로 자르므로 음수면 칸이 어긋난다
     let sql = format!(
         "SELECT AVG(fi.gps_lat), AVG(fi.gps_lon), COUNT(*), MAX(fi.id)
-           FROM files fi {join} {where_sql} AND ({VALID_GPS_SQL})
+           FROM files fi {join} {where_sql} AND ({gps})
           GROUP BY CAST((fi.gps_lat + 90.0) / {p} AS INTEGER), CAST((fi.gps_lon + 180.0) / {p} AS INTEGER)
           ORDER BY 3 DESC LIMIT 4000"
     );

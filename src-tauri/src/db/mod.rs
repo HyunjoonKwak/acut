@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod conn;
 pub mod libraries;
+pub mod predicates;
 pub mod query;
 pub mod settings;
 pub mod smart;

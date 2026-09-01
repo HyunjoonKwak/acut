@@ -29,13 +29,12 @@ const OK: &str = "ok";
 /// 그 자리에 이름이 없다(바다 한가운데 등). 다시 묻지 않는다
 const NONE: &str = "none";
 
-/// 지도와 같은 «쓸 수 있는 좌표» 규칙. 통계·대상 선택·파일 갱신이 반드시
-/// 이 한 조건을 함께 써야, 처리할 수 없는 행을 영원히 남은 것으로 세지 않는다.
-const VALID_GPS_SQL: &str =
-    "gps_lat IS NOT NULL AND gps_lon IS NOT NULL
-     AND gps_lat BETWEEN -90.0 AND 90.0
-     AND gps_lon BETWEEN -180.0 AND 180.0
-     AND NOT (gps_lat = 0.0 AND gps_lon = 0.0)";
+/// 지도와 같은 «쓸 수 있는 좌표» 규칙 — 판정은 db::predicates 가 갖는다.
+/// 통계·대상 선택·파일 갱신이 반드시 같은 조건을 써야, 처리할 수 없는 행을
+/// 영원히 남은 것으로 세지 않는다. 이 모듈의 질의는 별칭 없이 files 를 읽는다.
+fn valid_gps_sql() -> String {
+    crate::db::predicates::valid_gps_sql("")
+}
 
 fn validate_endpoint(raw: &str) -> Result<String> {
     let raw = raw.trim();
@@ -217,6 +216,7 @@ pub fn fill(
     limit: Option<usize>,
     on_progress: impl Fn(&Progress),
 ) -> Result<Progress> {
+    let gps = valid_gps_sql();
     // 서버가 없어도 기존 성공 캐시는 파일에 적용할 수 있다. 실제로 새 좌표를
     // 물어야 하는 순간에만 설정을 요구한다.
     let endpoint = endpoint_setting(db)?;
@@ -234,7 +234,7 @@ pub fn fill(
                       ROW_NUMBER() OVER (PARTITION BY {cell_expr} ORDER BY gps_lat, gps_lon) AS rn,
                       COUNT(*) OVER (PARTITION BY {cell_expr}) AS n
                  FROM files
-                WHERE {VALID_GPS_SQL}
+                WHERE {gps}
                   AND geo_country IS NULL AND trashed_at IS NULL
              )
              SELECT cell, la, lo FROM pts WHERE rn = (n + 1) / 2
@@ -335,7 +335,7 @@ pub fn fill(
                 &format!(
                     "UPDATE files SET geo_country = ?2, geo_admin1 = ?3, geo_admin2 = ?4,
                             geo_name = COALESCE(?4, ?3, ?2)
-                     WHERE {cell_expr} = ?1 AND {VALID_GPS_SQL} AND geo_country IS NULL"
+                     WHERE {cell_expr} = ?1 AND {gps} AND geo_country IS NULL"
                 ),
                 rusqlite::params![&cell_key, &place.country, &place.admin1, &place.admin2],
             )
@@ -370,6 +370,7 @@ pub struct Stats {
 }
 
 pub fn stats(db: &Db) -> Result<Stats> {
+    let gps = valid_gps_sql();
     let endpoint_ready = endpoint_setting(db)?
         .as_deref()
         .is_some_and(|s| validate_endpoint(s).is_ok());
@@ -379,7 +380,7 @@ pub fn stats(db: &Db) -> Result<Stats> {
                 "WITH valid AS (
                    SELECT geo_country, {cell} AS cell
                      FROM files
-                    WHERE {VALID_GPS_SQL} AND trashed_at IS NULL
+                    WHERE {gps} AND trashed_at IS NULL
                  )
                  SELECT COUNT(*),
                         COALESCE(SUM(geo_country IS NOT NULL), 0),
@@ -422,23 +423,95 @@ mod tests {
     use serde_json::json;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::Arc;
 
-    fn one_shot_server(status: &str, body: &str) -> (String, std::thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let status = status.to_string();
-        let body = body.to_string();
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 2048];
-            let _ = stream.read(&mut request);
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream.write_all(response.as_bytes()).unwrap();
-        });
-        (format!("http://{address}/reverse"), handle)
+    /// 시험용 최소 HTTP 서버 — 미리 준비한 응답을 순서대로 하나씩 돌려준다.
+    ///
+    /// 안전장치(2026-09-01 리뷰): 클라이언트가 오지 않아도 **스스로 끝난다**.
+    /// nonblocking accept + 2초 마감 + 소켓 읽기·쓰기 시간 제한. 시험은 join 대신
+    /// 채널을 recv_timeout 으로 받아 «실패»가 «영원한 대기»가 되지 않게 한다.
+    struct TestServer {
+        url: String,
+        /// 스레드가 끝나며 «받은 요청 수»를 보낸다
+        done: std::sync::mpsc::Receiver<usize>,
+        stop: Arc<AtomicBool>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl TestServer {
+        /// `replies` 는 (상태줄, 본문, 여분 헤더) 목록 — 요청 순서대로 쓰인다.
+        /// 목록이 다 떨어지면 마지막 것을 되풀이한다.
+        fn start(replies: Vec<(&'static str, &'static str, Option<&'static str>)>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let url = format!("http://{}/reverse", listener.local_addr().unwrap());
+            let (tx, done) = std::sync::mpsc::channel();
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_thread = Arc::clone(&stop);
+            let handle = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                let mut served = 0usize;
+                while std::time::Instant::now() < deadline && !stop_thread.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                            let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+                            let mut buf = [0_u8; 2048];
+                            let _ = stream.read(&mut buf);
+                            let (status, body, extra) =
+                                replies.get(served).copied().unwrap_or_else(|| *replies.last().unwrap());
+                            served += 1;
+                            let extra = extra.map(|h| format!("{h}\r\n")).unwrap_or_default();
+                            let res = format!(
+                                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = stream.write_all(res.as_bytes());
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let _ = tx.send(served);
+            });
+            TestServer { url, done, stop, handle: Some(handle) }
+        }
+
+        /// 응답을 한 번만 주는 서버 — 흔한 경우
+        fn once(status: &'static str, body: &'static str) -> Self {
+            Self::start(vec![(status, body, None)])
+        }
+
+        /// 서버가 받은 요청 수 — 재시도가 실제로 일어났는지 센다
+        fn served(&mut self) -> usize {
+            self.stop.store(true, Ordering::Relaxed);
+            let n = self.done.recv_timeout(Duration::from_secs(3)).expect("서버 스레드가 끝나야 한다");
+            if let Some(h) = self.handle.take() {
+                h.join().expect("서버 스레드 join");
+            }
+            n
+        }
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            // 시험이 중간에 실패해도 스레드를 남기지 않는다
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(h) = self.handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+
+    /// 시험용 클라이언트 — 반드시 시간 제한을 둔다. 없으면 실패가 무한 대기가 된다
+    fn test_client() -> reqwest::blocking::Client {
+        reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
     }
 
     #[test]
@@ -688,37 +761,39 @@ mod tests {
     /// 실제 HTTP 429가 enum 이름만 검사하는 가짜 시험이 아니라 ask의 중단 경로를 탄다.
     #[test]
     fn an_http_429_stops_the_run() {
-        let (endpoint, server) = one_shot_server("429 Too Many Requests", r#"{"error":"slow down"}"#);
-        let client = reqwest::blocking::Client::builder().build().unwrap();
-        match ask(&client, &endpoint, 37.5, 127.0, 12) {
+        let mut server = TestServer::once("429 Too Many Requests", r#"{"error":"slow down"}"#);
+        match ask(&test_client(), &server.url, 37.5, 127.0, 12) {
             Answer::Backoff(msg) => assert!(msg.contains("429")),
             _ => panic!("백오프여야 한다"),
         }
-        server.join().unwrap();
+        assert_eq!(server.served(), 1);
     }
 
     #[test]
     fn an_error_hidden_in_a_200_response_stops_instead_of_becoming_a_cache_miss() {
-        let (endpoint, server) = one_shot_server("200 OK", r#"{"error":"rate limit exceeded"}"#);
-        let client = reqwest::blocking::Client::builder().build().unwrap();
-        assert!(matches!(ask(&client, &endpoint, 37.5, 127.0, 12), Answer::Backoff(_)));
-        server.join().unwrap();
+        let mut limited = TestServer::once("200 OK", r#"{"error":"rate limit exceeded"}"#);
+        assert!(matches!(ask(&test_client(), &limited.url, 37.5, 127.0, 12), Answer::Backoff(_)));
+        assert_eq!(limited.served(), 1);
 
-        let (endpoint, server) = one_shot_server("200 OK", r#"{"error":"Unable to geocode"}"#);
-        assert!(matches!(ask(&client, &endpoint, 37.5, 127.0, 12), Answer::Nothing));
-        server.join().unwrap();
+        let mut nowhere = TestServer::once("200 OK", r#"{"error":"Unable to geocode"}"#);
+        assert!(matches!(ask(&test_client(), &nowhere.url, 37.5, 127.0, 12), Answer::Nothing));
+        assert_eq!(nowhere.served(), 1);
     }
 
     /// HTTP 성공이어도 국가가 없는 부분 응답은 성공 캐시로 저장하지 않는다.
     #[test]
     fn a_partial_place_without_a_country_is_not_success() {
-        let (endpoint, server) = one_shot_server(
-            "200 OK",
-            r#"{"address":{"city":"서울특별시","borough":"서초구"}}"#,
-        );
-        let client = reqwest::blocking::Client::builder().build().unwrap();
-        assert!(matches!(ask(&client, &endpoint, 37.5, 127.0, 12), Answer::Nothing));
-        server.join().unwrap();
+        let mut server = TestServer::once("200 OK", r#"{"address":{"city":"서울특별시","borough":"서초구"}}"#);
+        assert!(matches!(ask(&test_client(), &server.url, 37.5, 127.0, 12), Answer::Nothing));
+        assert_eq!(server.served(), 1);
+    }
+
+    /// 아무도 연결하지 않아도 서버 스레드는 제 마감으로 끝난다 —
+    /// 시험이 실패 대신 영원히 매달리던 것을 막는다 (2026-09-01 리뷰)
+    #[test]
+    fn the_test_server_stops_itself_when_nobody_connects() {
+        let mut server = TestServer::once("200 OK", "{}");
+        assert_eq!(server.served(), 0, "요청이 없었다");
     }
 
     /// 멈추면 그때까지 채운 것은 남는다

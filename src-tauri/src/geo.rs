@@ -26,8 +26,18 @@ const ENDPOINT_KEY: &str = "geo.endpoint";
 const PUBLIC_HOST: &str = "nominatim.openstreetmap.org";
 /// 캐시 한 줄의 상태 — 이 셋을 섞으면 «결과 없음»을 영영 다시 묻는다 (2026-09-01 리뷰)
 const OK: &str = "ok";
-/// 그 자리에 이름이 없다(바다 한가운데 등). 다시 묻지 않는다
+/// 그 자리에 이름이 없다고 **온라인 서버가 확정**했다. 다시 묻지 않는다
 const NONE: &str = "none";
+/// 오프라인으로 안전하게 정하지 못했다 — 온라인으로 다시 물을 수 있다.
+/// none 과 섞으면 «물어볼 수 있는 것»을 영영 잃는다 (2026-09-01 리뷰)
+const UNRESOLVED: &str = "unresolved";
+/// 출처 — 어디서 온 값인가
+const SRC_OFFLINE: &str = "offline_geonames";
+const SRC_ONLINE: &str = "nominatim";
+/// 정밀도 — 얼마나 믿을 만한가
+const PREC_APPROX: &str = "approximate";
+const PREC_BOUNDARY: &str = "boundary";
+const PREC_REMOTE: &str = "remote";
 
 /// 지도와 같은 «쓸 수 있는 좌표» 규칙 — 판정은 db::predicates 가 갖는다.
 /// 통계·대상 선택·파일 갱신이 반드시 같은 조건을 써야, 처리할 수 없는 행을
@@ -202,6 +212,73 @@ pub struct Progress {
     pub stopped: Option<String>,
 }
 
+/// 캐시 한 줄을 쓰고 그 자리의 사진에 전파한다 — **한 트랜잭션**으로.
+///
+/// 중간에 앱이 꺼져도 places 와 files 가 어긋나지 않는다. 실패하면 둘 다 그대로다.
+/// `INSERT OR REPLACE` 가 아니라 `ON CONFLICT DO UPDATE` 를 쓴다 — 행을 지웠다
+/// 다시 만들면 나중에 붙일 외래 키·트리거가 조용히 깨진다 (2026-09-01 리뷰).
+#[allow(clippy::too_many_arguments)]
+fn write_place(
+    db: &Db,
+    cell_key: &str,
+    place: &Place,
+    status: &str,
+    source: &str,
+    precision: &str,
+    distance_km: Option<f64>,
+    dataset_version: Option<&str>,
+    provider: Option<&str>,
+    gps: &str,
+) -> Result<usize> {
+    let name = place.name();
+    db.transaction(|tx| {
+        tx.execute(
+            "INSERT INTO places(cell,country,admin1,admin2,name,status,source,precision,
+                                distance_km,dataset_version,provider,resolved_at,at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,strftime('%s','now'),strftime('%s','now'))
+             ON CONFLICT(cell) DO UPDATE SET
+               country=excluded.country, admin1=excluded.admin1, admin2=excluded.admin2,
+               name=excluded.name, status=excluded.status, source=excluded.source,
+               precision=excluded.precision, distance_km=excluded.distance_km,
+               dataset_version=excluded.dataset_version, provider=excluded.provider,
+               resolved_at=excluded.resolved_at",
+            rusqlite::params![
+                cell_key, &place.country, &place.admin1, &place.admin2, &name,
+                status, source, precision, distance_km, dataset_version, provider
+            ],
+        )?;
+        if place.country.is_none() {
+            return Ok(0);
+        }
+        // 이 자리의 사진에 전파 — 아직 이름이 없거나, 덜 정밀한 값이 붙어 있는 것
+        let n = tx.execute(
+            &format!(
+                "UPDATE files SET geo_country = ?2, geo_admin1 = ?3, geo_admin2 = ?4,
+                        geo_name = COALESCE(?4, ?3, ?2)
+                 WHERE {cell} = ?1 AND {gps} AND geo_country IS NULL",
+                cell = cell_sql("gps_lat", "gps_lon")
+            ),
+            rusqlite::params![cell_key, &place.country, &place.admin1, &place.admin2],
+        )?;
+        Ok(n)
+    })
+}
+
+/// 이미 캐시에 있는 값을 그 자리의 사진에 붙인다 (네트워크 없이)
+fn propagate(db: &Db, cell_key: &str, place: &Place, gps: &str) -> Result<usize> {
+    db.write(|c| {
+        c.execute(
+            &format!(
+                "UPDATE files SET geo_country = ?2, geo_admin1 = ?3, geo_admin2 = ?4,
+                        geo_name = COALESCE(?4, ?3, ?2)
+                 WHERE {cell} = ?1 AND {gps} AND geo_country IS NULL",
+                cell = cell_sql("gps_lat", "gps_lon")
+            ),
+            rusqlite::params![cell_key, &place.country, &place.admin1, &place.admin2],
+        )
+    })
+}
+
 /// 이름이 없는 사진들의 자리에 이름을 붙인다.
 ///
 /// 격자는 «같은 곳을 두 번 묻지 않기» 위한 열쇠일 뿐이고, **물어보는 좌표는 그 칸에
@@ -296,25 +373,20 @@ pub fn fill(
                 p.asked += 1;
                 match ask(&client, endpoint.as_str(), lat, lon, zoom) {
                     Answer::Found(place) => {
-                        let name = place.name();
-                        db.write(|c| {
-                            c.execute(
-                                "INSERT OR REPLACE INTO places(cell,country,admin1,admin2,name,status,at)
-                                 VALUES(?1,?2,?3,?4,?5,?6,strftime('%s','now'))",
-                                rusqlite::params![&cell_key, &place.country, &place.admin1, &place.admin2, &name, OK],
-                            )
-                        })?;
+                        // 캐시 갱신과 파일 전파를 한 트랜잭션에 둔다 — 중간에 앱이 꺼져도
+                        // places 와 files 가 어긋나지 않는다 (2026-09-01 리뷰)
+                        let host = reqwest::Url::parse(endpoint.as_str())
+                            .ok()
+                            .and_then(|u| u.host_str().map(str::to_string));
+                        write_place(db, &cell_key, &place, OK, SRC_ONLINE, PREC_REMOTE, None, None, host.as_deref(), &gps)?;
                         place
                     }
                     Answer::Nothing => {
-                        // 이름이 없는 자리 — 못 박아 두고 다시 묻지 않는다
-                        db.write(|c| {
-                            c.execute(
-                                "INSERT OR REPLACE INTO places(cell,country,admin1,admin2,name,status,at)
-                                 VALUES(?1,NULL,NULL,NULL,NULL,?2,strftime('%s','now'))",
-                                rusqlite::params![&cell_key, NONE],
-                            )
-                        })?;
+                        // 서버가 «없다»고 확정한 자리 — 못 박아 두고 다시 묻지 않는다
+                        let host = reqwest::Url::parse(endpoint.as_str())
+                            .ok()
+                            .and_then(|u| u.host_str().map(str::to_string));
+                        write_place(db, &cell_key, &Place::default(), NONE, SRC_ONLINE, PREC_REMOTE, None, None, host.as_deref(), &gps)?;
                         p.empty += 1;
                         p.done += 1;
                         on_progress(&p);
@@ -329,20 +401,9 @@ pub fn fill(
             }
         };
 
-        // 이 칸의 사진들에 이름을 붙인다 — 이름이 있는 값만 센다
-        let n = db.write(|c| {
-            c.execute(
-                &format!(
-                    "UPDATE files SET geo_country = ?2, geo_admin1 = ?3, geo_admin2 = ?4,
-                            geo_name = COALESCE(?4, ?3, ?2)
-                     WHERE {cell_expr} = ?1 AND {gps} AND geo_country IS NULL"
-                ),
-                rusqlite::params![&cell_key, &place.country, &place.admin1, &place.admin2],
-            )
-        })?;
-        // 국가가 비어 있으면 붙은 것이 아니다 — «N장에 붙였습니다»가 거짓이 되지 않게
-        if place.country.is_some() {
-            p.files += n;
+        // 캐시 적중이면 파일 전파만 하면 된다
+        if !place.is_empty() {
+            p.files += propagate(db, &cell_key, &place, &gps)?;
         }
         p.done += 1;
         on_progress(&p);
@@ -353,17 +414,23 @@ pub fn fill(
 /// 얼마나 남았나 — 설정 화면이 «지명 채우기» 앞에 보여 준다.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct Stats {
-    /// 좌표가 있는 사진
+    /// 쓸 수 있는 좌표가 있는 사진
     pub with_gps: i64,
-    /// 그중 이름이 붙은 사진
+    /// 그중 이름이 붙은 사진 (오프라인·온라인 합)
     pub named: i64,
-    /// 아직 조회할 수 있는 이름 없는 사진
+    /// 이름이 붙었으나 온라인으로 더 정밀하게 만들 수 있는 사진 (오프라인 결과)
+    pub approximate_files: i64,
+    /// 온라인 정밀 결과가 붙은 사진
+    pub precise_files: i64,
+    /// 아직 이름이 없고 **처리할 수 있는** 사진 (캐시 적용 또는 조회 대상)
     pub pending_files: i64,
-    /// 조회했지만 서버에 지명이 없었던 사진
+    /// 온라인 서버가 «이름 없음»으로 확정한 사진 — 더 할 일이 없다
     pub unavailable_files: i64,
-    /// 이름이 필요한 격자 수 — 대략 이만큼 초가 걸린다
+    /// 처리할 자리 수
     pub cells_left: i64,
-    /// 남은 격자 중 성공 캐시가 없어 서버에 물어야 하는 수
+    /// 그중 오프라인으로 풀 수 있는 자리 (스냅샷만 있으면 된다)
+    pub offline_cells_left: i64,
+    /// 그중 서버에 물어야만 하는 자리 (오프라인이 이미 포기한 곳)
     pub network_cells_left: i64,
     /// 새 조회에 쓸 수 있는 비공개/허가된 서버가 설정됐나
     pub endpoint_ready: bool,
@@ -375,42 +442,60 @@ pub fn stats(db: &Db) -> Result<Stats> {
         .as_deref()
         .is_some_and(|s| validate_endpoint(s).is_ok());
     let mut stats = db.read(|c| {
+        // 52,000행을 먼저 1,143개 자리로 접고, places 는 PK 로 한 번만 붙인다.
+        // 행마다 상관 서브쿼리를 돌리던 이전 방식은 실측 0.23초였다 (2026-09-01 리뷰)
         c.query_row(
             &format!(
                 "WITH valid AS (
-                   SELECT geo_country, {cell} AS cell
+                   SELECT {cell} AS cell, geo_country
                      FROM files
                     WHERE {gps} AND trashed_at IS NULL
+                 ),
+                 by_cell AS (
+                   SELECT cell,
+                          COUNT(*) AS files,
+                          SUM(geo_country IS NOT NULL) AS named
+                     FROM valid GROUP BY cell
+                 ),
+                 joined AS (
+                   SELECT b.cell, b.files, b.named,
+                          p.status, p.source, p.precision
+                     FROM by_cell b LEFT JOIN places p ON p.cell = b.cell
                  )
-                 SELECT COUNT(*),
-                        COALESCE(SUM(geo_country IS NOT NULL), 0),
-                        COALESCE(SUM(geo_country IS NULL AND NOT EXISTS(
-                          SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{none}'
-                        )), 0),
-                        COALESCE(SUM(geo_country IS NULL AND EXISTS(
-                          SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{none}'
-                        )), 0),
-                        COUNT(DISTINCT CASE WHEN geo_country IS NULL AND NOT EXISTS(
-                          SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{none}'
-                        ) THEN cell END),
-                        COUNT(DISTINCT CASE WHEN geo_country IS NULL
-                          AND NOT EXISTS(SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{none}')
-                          AND NOT EXISTS(SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{ok}'
-                            AND p.country IS NOT NULL AND trim(p.country) <> '')
-                        THEN cell END)
-                   FROM valid",
-                cell = cell_sql("gps_lat", "gps_lon"), none = NONE, ok = OK
+                 SELECT
+                   SUM(files),
+                   SUM(named),
+                   -- 이름은 있으나 온라인으로 더 정밀해질 수 있는 것
+                   SUM(CASE WHEN named > 0 AND source = '{offline}' THEN named ELSE 0 END),
+                   SUM(CASE WHEN named > 0 AND source = '{online}' THEN named ELSE 0 END),
+                   -- 아직 이름이 없고 처리할 수 있는 것 (none 만 제외)
+                   SUM(CASE WHEN status IS NULL OR status <> '{none}' THEN files - named ELSE 0 END),
+                   -- 서버가 이름 없음으로 확정한 것
+                   SUM(CASE WHEN status = '{none}' THEN files - named ELSE 0 END),
+                   COUNT(CASE WHEN (status IS NULL OR status <> '{none}') AND files > named THEN 1 END),
+                   -- 오프라인으로 풀 수 있는 자리: 아직 아무 판정이 없는 곳
+                   COUNT(CASE WHEN status IS NULL AND files > named THEN 1 END),
+                   -- 서버에만 물을 수 있는 자리: 오프라인이 이미 포기한 곳
+                   COUNT(CASE WHEN status = '{unresolved}' AND files > named THEN 1 END)
+                 FROM joined",
+                cell = cell_sql("gps_lat", "gps_lon"),
+                none = NONE, unresolved = UNRESOLVED, offline = SRC_OFFLINE, online = SRC_ONLINE
             ),
             [],
-            |r| Ok(Stats {
-                with_gps: r.get(0)?,
-                named: r.get(1)?,
-                pending_files: r.get(2)?,
-                unavailable_files: r.get(3)?,
-                cells_left: r.get(4)?,
-                network_cells_left: r.get(5)?,
-                endpoint_ready: false,
-            }),
+            |r| {
+                Ok(Stats {
+                    with_gps: r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                    named: r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    approximate_files: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                    precise_files: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                    pending_files: r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                    unavailable_files: r.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                    cells_left: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                    offline_cells_left: r.get::<_, Option<i64>>(7)?.unwrap_or(0),
+                    network_cells_left: r.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                    endpoint_ready: false,
+                })
+            },
         )
     })?;
     stats.endpoint_ready = endpoint_ready;
@@ -615,13 +700,14 @@ mod tests {
             (3, 0, 3, 0, 2),
             "같은 칸 둘은 한 번만 세고 잘못된 좌표는 대상에서 뺀다"
         );
-        assert_eq!(s.network_cells_left, 2);
+        // 아직 아무 판정이 없는 자리는 오프라인으로 풀 수 있다 — 서버가 필요 없다
+        assert_eq!((s.offline_cells_left, s.network_cells_left), (2, 0));
         assert!(!s.endpoint_ready, "기본값으로 공개 배치 서버를 쓰지 않는다");
 
         db.write(|c| c.execute("UPDATE files SET geo_country='대한민국' WHERE id IN (1,2)", []))
             .unwrap();
         let s = stats(&db).unwrap();
-        assert_eq!((s.named, s.pending_files, s.cells_left, s.network_cells_left), (2, 1, 1, 1));
+        assert_eq!((s.named, s.pending_files, s.cells_left, s.offline_cells_left), (2, 1, 1, 1));
     }
 
     /// 캐시에 있으면 묻지 않고 곧바로 사진에 붙인다 — 네트워크 없이 도는 길
@@ -643,7 +729,11 @@ mod tests {
         .unwrap();
 
         let before = stats(&db).unwrap();
-        assert_eq!((before.cells_left, before.network_cells_left), (1, 0), "성공 캐시는 서버가 필요 없다");
+        assert_eq!(
+            (before.cells_left, before.offline_cells_left, before.network_cells_left),
+            (1, 0, 0),
+            "성공 캐시가 있는 자리는 조회 없이 붙이기만 하면 된다"
+        );
 
         let p = fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
         assert_eq!((p.total, p.asked, p.files), (1, 0, 2), "묻지 않고 두 장에 붙는다");
@@ -714,7 +804,71 @@ mod tests {
             (s.with_gps, s.named, s.pending_files, s.unavailable_files, s.cells_left),
             (2, 0, 0, 2, 0)
         );
-        assert_eq!(s.network_cells_left, 0);
+        assert_eq!((s.offline_cells_left, s.network_cells_left), (0, 0));
+    }
+
+    /// unresolved 는 «다시 물을 수 있는 것»이라 none 과 달리 대상에 남는다
+    #[test]
+    fn an_unresolved_cell_stays_available_for_the_online_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
+                 INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);
+                 INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
+                   VALUES(1,1,'a.jpg',1,0,1,0,0,37.2846,127.0512);
+                 INSERT INTO places(cell,status,source,at)
+                   VALUES('37.28,127.05','unresolved','offline_geonames',0);",
+            )
+        })
+        .unwrap();
+        let s = stats(&db).unwrap();
+        assert_eq!(s.pending_files, 1, "아직 처리할 수 있는 사진이다");
+        assert_eq!(s.unavailable_files, 0, "«서버에도 없음»이 아니다");
+        assert_eq!((s.offline_cells_left, s.network_cells_left), (0, 1), "오프라인은 포기했고 서버만 남았다");
+    }
+
+    /// 캐시 기록과 파일 전파는 한 트랜잭션이다 — 둘이 어긋나면 안 된다
+    #[test]
+    fn writing_a_place_updates_the_cache_and_the_photos_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
+                 INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);
+                 INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
+                   VALUES(1,1,'a.jpg',1,0,1,0,0,37.2846,127.0512),
+                         (2,1,'b.jpg',1,0,1,0,0,37.2899,127.0599);",
+            )
+        })
+        .unwrap();
+        let place = Place {
+            country: Some("대한민국".into()),
+            admin1: Some("경기도".into()),
+            admin2: Some("수원시".into()),
+        };
+        let gps = valid_gps_sql();
+        let n = write_place(&db, "37.28,127.05", &place, OK, SRC_ONLINE, PREC_REMOTE, None, None, Some("my.server"), &gps).unwrap();
+        assert_eq!(n, 2, "그 자리의 두 장에 붙는다");
+
+        let (status, source, precision, provider): (String, String, String, String) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT status, source, precision, provider FROM places WHERE cell='37.28,127.05'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!((status.as_str(), source.as_str(), precision.as_str(), provider.as_str()),
+                   ("ok", "nominatim", "remote", "my.server"));
+
+        // 두 번 써도 행이 늘지 않고 값만 바뀐다 (ON CONFLICT DO UPDATE)
+        write_place(&db, "37.28,127.05", &place, OK, SRC_ONLINE, PREC_REMOTE, None, None, Some("other.server"), &gps).unwrap();
+        let rows: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM places", [], |r| r.get(0))).unwrap();
+        assert_eq!(rows, 1);
     }
 
     /// 칸 정중앙이 아니라 그 칸 사진들의 대표(가운데) 좌표를 묻는다 —

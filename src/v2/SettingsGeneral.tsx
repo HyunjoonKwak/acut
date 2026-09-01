@@ -292,6 +292,7 @@ function GeoRow() {
 
   const left = st?.cells_left ?? 0;
   const networkLeft = st?.network_cells_left ?? 0;
+  const offlineLeft = st?.offline_cells_left ?? 0;
   const mins = Math.ceil((networkLeft * 1.1) / 60);
   const ready = st?.endpoint_ready ?? false;
   const needsServer = networkLeft > 0;
@@ -302,8 +303,10 @@ function GeoRow() {
         st.pending_files > 0
           ? `처리할 사진 ${st.pending_files.toLocaleString()}장 · ${left.toLocaleString()}곳.${
               networkLeft > 0
-                ? ` 서버에 새로 물을 곳 ${networkLeft.toLocaleString()}곳 — 약 ${mins}분입니다.`
-                : " 모두 저장된 캐시로 바로 채울 수 있습니다."
+                ? ` 서버에 물어야 하는 곳 ${networkLeft.toLocaleString()}곳 — 약 ${mins}분입니다.`
+                : offlineLeft > 0
+                  ? ` ${offlineLeft.toLocaleString()}곳은 서버 없이 처리할 수 있습니다.`
+                  : " 모두 저장된 캐시로 바로 채울 수 있습니다."
             }`
           : "조회할 곳은 없습니다.",
         st.unavailable_files > 0

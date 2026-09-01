@@ -171,9 +171,18 @@ CREATE TABLE IF NOT EXISTS places (
     admin1  TEXT,
     admin2  TEXT,
     name    TEXT,                              -- 표시용 — 가장 좁은 단계
-    -- 'ok' 이름을 받았다 · 'none' 그 자리엔 이름이 없다(다시 묻지 않는다).
-    -- 둘을 섞으면 이름 없는 자리를 영영 다시 묻는다 (2026-09-01 리뷰)
+    -- 'ok'        쓸 수 있는 이름이 있다
+    -- 'none'      온라인 서버가 «그 자리엔 이름이 없다»고 확정했다 — 다시 묻지 않는다
+    -- 'unresolved' 오프라인으로 안전하게 정하지 못했다 — 온라인으로 다시 물을 수 있다
+    -- 셋을 섞으면 이름 없는 자리를 영영 다시 묻거나, 반대로 물어볼 것을 잃는다
     status  TEXT NOT NULL DEFAULT 'ok',
+    -- 출처와 정밀도는 status 와 따로 둔다 — «어디서 왔나»와 «믿을 만한가»는 다른 축이다
+    source  TEXT NOT NULL DEFAULT 'legacy',    -- legacy | offline_geonames | nominatim
+    precision TEXT,                            -- approximate | boundary | remote
+    distance_km REAL,                          -- 오프라인: 최근접 도시까지
+    dataset_version TEXT,                      -- 오프라인 스냅샷 판
+    provider TEXT,                             -- 온라인: 물어본 서버 호스트
+    resolved_at INTEGER,                       -- 이 값이 정해진 시각
     at      INTEGER NOT NULL                   -- 물어본 시각
 );
 CREATE INDEX IF NOT EXISTS idx_files_camera    ON files(cam_model) WHERE cam_model IS NOT NULL;

@@ -131,6 +131,30 @@ fn add_geo_levels(c: &Connection) -> rusqlite::Result<()> {
     if !has_column(c, "places", "status")? {
         c.execute_batch("ALTER TABLE places ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'")?;
     }
+    // 출처·정밀도 (2026-09-01) — 오프라인 지명이 들어오면 «어디서 온 값인지»로
+    // 덮어쓰기를 판단해야 한다. status 하나에 출처를 섞지 않는다
+    for (col, decl) in [
+        ("source", "TEXT NOT NULL DEFAULT 'legacy'"),
+        ("precision", "TEXT"),
+        ("distance_km", "REAL"),
+        ("dataset_version", "TEXT"),
+        ("provider", "TEXT"),
+        ("resolved_at", "INTEGER"),
+    ] {
+        if !has_column(c, "places", col)? {
+            c.execute_batch(&format!("ALTER TABLE places ADD COLUMN {col} {decl}"))?;
+        }
+    }
+    // 기존 캐시는 모두 온라인에서 온 것이다 — 오프라인 경로가 없던 시절의 값이다
+    c.execute_batch(
+        "UPDATE places SET source='nominatim', precision='remote',
+                resolved_at=COALESCE(resolved_at, at)
+          WHERE source='legacy' AND status='ok'
+            AND country IS NOT NULL AND trim(country) <> '';
+         UPDATE places SET source='nominatim', resolved_at=COALESCE(resolved_at, at)
+          WHERE source='legacy' AND status='none';
+         CREATE INDEX IF NOT EXISTS idx_places_status ON places(status, source);",
+    )?;
     // 첫 지명 구현은 «결과 없음»도 세 이름이 모두 NULL인 캐시 행으로 남겼다.
     // status를 단순 DEFAULT 'ok'로 더하면 그 행은 성공 캐시가 되어 다시 묻지도,
     // 파일을 완료시키지도 못한다. 이미 그 중간 빌드를 열어 status가 생긴 DB도
@@ -476,6 +500,55 @@ mod tests {
             .read(|c| c.query_row("SELECT status FROM places WHERE cell='10.00,20.00'", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(repaired, "none");
+    }
+
+    /// 출처·정밀도 칸이 없던 DB 도 열리고, 기존 성공 캐시는 온라인 결과로 표시된다
+    #[test]
+    fn place_metadata_columns_are_added_and_existing_cache_is_labelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(include_str!("schema.sql")).unwrap();
+            c.execute_batch(
+                "DROP TABLE places;
+                 CREATE TABLE places (
+                   cell TEXT PRIMARY KEY, country TEXT, admin1 TEXT, admin2 TEXT, name TEXT,
+                   status TEXT NOT NULL DEFAULT 'ok', at INTEGER NOT NULL
+                 );
+                 INSERT INTO places(cell,country,admin1,admin2,name,status,at)
+                   VALUES('37.28,127.05','대한민국','경기도','수원시','수원시','ok',111),
+                         ('10.00,20.00',NULL,NULL,NULL,NULL,'none',222);",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).expect("출처 칸이 없던 DB 도 열려야 한다");
+        let rows: Vec<(String, String, String, Option<String>, i64)> = db
+            .read(|c| {
+                let mut st = c.prepare(
+                    "SELECT cell, status, source, precision, resolved_at FROM places ORDER BY cell",
+                )?;
+                let out = st
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>();
+                out
+            })
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("10.00,20.00".into(), "none".into(), "nominatim".into(), None, 222),
+                ("37.28,127.05".into(), "ok".into(), "nominatim".into(), Some("remote".into()), 111),
+            ],
+            "기존 캐시는 값이 그대로이고 출처만 붙는다"
+        );
+        // 두 번 열어도 그대로 (멱등)
+        drop(db);
+        let again = Db::open(&path).unwrap();
+        let n: i64 = again
+            .read(|c| c.query_row("SELECT COUNT(*) FROM places WHERE source='nominatim'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(n, 2);
     }
 
     #[test]

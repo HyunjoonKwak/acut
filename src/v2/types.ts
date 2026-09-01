@@ -60,9 +60,18 @@ export type Counted = { files: number; bytes: number };
 export type GeoStats = {
   with_gps: number;
   named: number;
+  /** 이름은 붙었으나 온라인으로 더 정밀해질 수 있는 사진 (오프라인 결과) */
+  approximate_files: number;
+  /** 온라인 정밀 결과가 붙은 사진 */
+  precise_files: number;
+  /** 아직 이름이 없고 처리할 수 있는 사진 */
   pending_files: number;
+  /** 서버가 «이름 없음»으로 확정한 사진 — 더 할 일이 없다 */
   unavailable_files: number;
   cells_left: number;
+  /** 오프라인으로 풀 수 있는 자리 — 서버가 필요 없다 */
+  offline_cells_left: number;
+  /** 서버에만 물을 수 있는 자리 — 오프라인이 이미 포기했다 */
   network_cells_left: number;
   endpoint_ready: boolean;
 };

@@ -24,6 +24,21 @@ pub fn started() -> std::time::Instant {
 pub static PAGE_MS: [std::sync::atomic::AtomicU64; 2] =
     [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
 
+/// 네이티브 구간 표식(ms, run() 기준). 웹뷰가 페이지를 읽기 시작하기까지 2초가
+/// 갔는데(실측 2026-09-01: DB 871ms → 페이지 시작 2,877ms) `db_ms` 하나로는
+/// 어디서 갔는지 볼 수 없었다. 이름은 [`NATIVE_LABELS`] 와 자리를 맞춘다.
+pub static NATIVE_MS: [std::sync::atomic::AtomicU64; NATIVE_LABELS.len()] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; NATIVE_LABELS.len()];
+
+pub const NATIVE_LABELS: [&str; 5] = ["setup", "migrated", "db", "state", "setup_done"];
+
+pub fn native_mark(slot: usize) {
+    NATIVE_MS[slot].store(
+        started().elapsed().as_millis() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -53,6 +68,7 @@ pub fn run() {
             PAGE_MS[slot].store(ms, std::sync::atomic::Ordering::Relaxed);
         })
         .setup(|app| {
+            native_mark(0);
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -70,11 +86,14 @@ pub fn run() {
 
             // One-time migration from the legacy bundle identifier
             migrate_legacy_app_data(&app_data_dir);
+            native_mark(1);
 
             let v2 = db::conn::Db::open(app_data_dir.join("acut-v2.db"))
                 .expect("데이터베이스를 열 수 없습니다");
+            native_mark(2);
             app.manage(api::AppState::new(v2, app_data_dir.clone()));
             api::job::set_emitter(app.handle().clone());
+            native_mark(3);
 
             // 하루에 한 벌 — 판정·평점·태그가 든 파일이 하나뿐이라 잃으면 끝이다.
             // 별도 스레드에서. 8만 장 DB라도 몇 초지만 첫 화면을 막을 이유가 없다.
@@ -162,6 +181,7 @@ pub fn run() {
                     }
                 });
             }
+            native_mark(4);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

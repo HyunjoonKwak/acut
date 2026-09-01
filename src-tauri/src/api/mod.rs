@@ -1352,6 +1352,9 @@ pub struct StartupInfo {
     pub page_started_ms: u64,
     #[serde(default)]
     pub page_finished_ms: u64,
+    /// run() 기준 네이티브 구간 — setup 진입·이전·DB·상태·setup 끝
+    #[serde(default)]
+    pub native: serde_json::Value,
 }
 
 /// 화면이 5초마다 부른다 — 살아 있다는 신호. 뒷단의 감시 스레드가 20초 넘게
@@ -1409,12 +1412,19 @@ pub async fn startup_report(state: State<'_, AppState>, marks: serde_json::Value
         marks,
         page_started_ms: page_started,
         page_finished_ms: crate::PAGE_MS[1].load(Ordering::Relaxed),
+        native: serde_json::Value::Object(
+            crate::NATIVE_LABELS
+                .iter()
+                .zip(crate::NATIVE_MS.iter())
+                .map(|(k, v)| ((*k).to_string(), v.load(Ordering::Relaxed).into()))
+                .collect(),
+        ),
     };
     if reload {
         log::info!("웹뷰 다시 불러옴 — 페이지 기준 그리드 {}ms · {}", info.first_grid_ms, info.marks);
         crate::db::settings::set(&state.db, "startup.reload_last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
     } else {
-        log::info!("시작 — DB {}ms · 첫 화면 {}ms · {}", info.db_ms, info.first_grid_ms, info.marks);
+        log::info!("시작 — DB {}ms · 첫 화면 {}ms · 네이티브 {} · 웹뷰 {}", info.db_ms, info.first_grid_ms, info.native, info.marks);
         crate::db::settings::set(&state.db, "startup.last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
     }
     Ok(info)

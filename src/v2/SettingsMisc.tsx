@@ -59,6 +59,8 @@ export function About() {
     first_grid_ms: number;
     at: number;
     marks?: Record<string, number>;
+    native?: Record<string, number>;
+    page_started_ms?: number;
   } | null>(null);
   const [ver, setVer] = useState("");
   useEffect(() => {
@@ -75,13 +77,19 @@ export function About() {
         label="마지막 시작"
         hint={
           startup
-            ? `프로세스 시작 → DB 준비 ${startup.db_ms}ms · 첫 그리드 ${startup.first_grid_ms}ms (${fmtDateTime(startup.at)}).${
+            ? `첫 그리드까지 ${startup.first_grid_ms}ms (${fmtDateTime(startup.at)}). 프로세스 기준 — ${
+                startup.native
+                  ? Object.entries(startup.native)
+                      .map(([k, v]) => `${k} ${v}`)
+                      .join(" · ") + " · "
+                  : `DB ${startup.db_ms} · `
+              }페이지 시작 ${startup.page_started_ms ?? "—"}.${
                 startup.marks
-                  ? ` 웹뷰 기준: ${Object.entries(startup.marks)
+                  ? ` 그 뒤 웹뷰 기준: ${Object.entries(startup.marks)
                       .map(([k, v]) => `${k} ${v}`)
                       .join(" · ")}.`
                   : ""
-              } 사진이 5만 장을 넘으면 첫 그리드가 몇 초 걸립니다 — 사진 목록을 읽는 질의 자체는 1ms 안쪽이고, 시간은 웹뷰가 첫 화면을 그리는 데 듭니다.`
+              } 사진 목록을 읽는 질의 자체는 1ms 안쪽입니다.`
             : "아직 잰 적 없습니다."
         }
       >

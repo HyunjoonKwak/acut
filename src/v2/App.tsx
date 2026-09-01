@@ -180,14 +180,17 @@ export default function App() {
     const t = window.setInterval(beat, 5_000);
     return () => window.clearInterval(t);
   }, []);
-  // 첫 그리드가 그려지면 한 번 — 시작 시간을 잰다 (설정 › 정보에 보인다)
+  // 첫 그리드가 그려지면 한 번 — 시작 시간을 잰다 (설정 › 정보에 보인다).
+  // **`loading` 이 아니라 `loaded` 를 본다.** `loading` 은 처음에 `false` 라 그것만
+  // 보면 라이브러리 목록이 온 순간(아직 사진은 한 장도 안 읽은 때)이 «첫 그리드»로
+  // 기록됐다 — 그래서 «웹뷰가 느리다»로 읽혔지만 실은 libraries_list 한 호출이었다.
   const reported = useRef(false);
   useEffect(() => {
-    if (reported.current || list.loading || libs.length === 0) return;
+    if (reported.current || !list.loaded || libs.length === 0) return;
     reported.current = true;
     mark("grid");
     invoke("startup_report", { marks: startupMarks() }).catch(() => {});
-  }, [list.loading, libs.length]);
+  }, [list.loaded, libs.length]);
   const { rows, loadFirst, loadMore, markOne, markMany, patchRow } = list;
 
   const selected = useSelection((s) => s.selected);

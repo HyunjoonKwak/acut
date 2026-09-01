@@ -13,6 +13,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_faces_at(c)?;
     add_image_hash(c)?;
     add_phash(c)?;
+    add_live_count_index(c)?;
     add_done_at(c)?;
     add_geo_levels(c)?;
     add_nas_pulls(c)?;
@@ -118,6 +119,17 @@ fn add_phash(c: &Connection) -> rusqlite::Result<()> {
         c.execute_batch("ALTER TABLE files ADD COLUMN psig BLOB")?;
     }
     Ok(())
+}
+
+/// 라이브러리별 «살아 있는 사진 수»를 세는 부분 인덱스(2026-09-01).
+///
+/// `idx_files_folder` 는 `trashed_at` 을 담지 않아, 세려면 14.6만 행을 하나씩 다시
+/// 읽어야 했다. 그 한 질의가 **3.16초** — 첫 화면 2.5초의 거의 전부였다.
+/// 이 인덱스로 0.005초가 된다. 구버전 DB 에도 만들어 준다.
+fn add_live_count_index(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_files_folder_live ON files(folder_id) WHERE trashed_at IS NULL;",
+    )
 }
 
 /// «처리됨 보기»(2026-08-31) — 확정한 무리를 최근 순으로 다시 보고 무리 단위로 취소한다
@@ -364,6 +376,7 @@ mod tests {
             c.execute_batch(include_str!("schema.sql")).unwrap();
             c.execute_batch(
                 "DROP INDEX IF EXISTS idx_files_trashed;
+                 DROP INDEX IF EXISTS idx_files_folder_live;
                  ALTER TABLE files DROP COLUMN trashed_at;
                  ALTER TABLE files DROP COLUMN trash_path;
                  ALTER TABLE files DROP COLUMN trash_batch;",
@@ -376,6 +389,14 @@ mod tests {
             assert!(has_column(c, "files", "trashed_at")?);
             assert!(has_column(c, "files", "trash_path")?);
             assert!(has_column(c, "files", "trash_batch")?);
+            // 라이브러리 장수를 세는 부분 인덱스도 되살아나야 한다 — 없으면 첫 화면이
+            // 다시 3초로 돌아간다 (실측 2026-09-01)
+            let n: i64 = c.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_files_folder_live'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(n, 1, "구버전 DB 를 올린 뒤 idx_files_folder_live 가 없다");
             Ok(())
         })
         .unwrap();

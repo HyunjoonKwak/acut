@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_taken_id  ON files(taken_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_files_taken     ON files(taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_files_folder    ON files(folder_id, taken_at DESC);
+-- idx_files_folder_live 도 db/upgrade.rs 가 만든다 (trashed_at 을 참조하므로 — 같은 이유)
 CREATE INDEX IF NOT EXISTS idx_files_full_hash ON files(full_hash) WHERE full_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_files_quick     ON files(size, quick_hash);
 -- idx_files_image_hash 도 db/upgrade.rs 가 만든다 (같은 이유 — 구버전 DB 엔 컬럼이 아직 없다)

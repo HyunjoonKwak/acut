@@ -29,6 +29,10 @@ export function usePhotoList(
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
+  /// 첫 쪽이 실제로 도착했나. `loading` 은 처음에 `false` 라 그것만 보면 «아직 아무것도
+  /// 안 불렀다»와 «다 불렀다»가 같아 보인다 — 시작 시간을 그 값으로 재던 때는 첫
+  /// 그리드가 라이브러리 목록이 온 순간으로 기록됐다 (실측 2026-09-01).
+  const [loaded, setLoaded] = useState(false);
   /// rows[0]이 전체에서 몇 번째인가. 스크롤바 손잡이 위치의 기준이다.
   const [baseIndex, setBaseIndex] = useState(0);
 
@@ -79,7 +83,10 @@ export function usePhotoList(
       setDone(!p.next);
       setBaseIndex(0);
     } finally {
-      if (g === gen.current) setLoading(false);
+      if (g === gen.current) {
+        setLoading(false);
+        setLoaded(true);
+      }
       free();
     }
   }, [filter, group, take]);
@@ -153,6 +160,7 @@ export function usePhotoList(
     setRows([]);
     setCursor(null);
     setDone(false);
+    setLoaded(false);
     loadFirst();
     cb.current.onReload?.();
   }, [opts.enabled, loadFirst]);
@@ -214,6 +222,7 @@ export function usePhotoList(
   return {
     rows,
     loading,
+    loaded,
     baseIndex,
     loadFirst,
     loadMore,

@@ -669,16 +669,33 @@ export default function Cull({
             멈추기
           </button>
         ) : (
-          <button
-            onClick={() => {
-              setElapsed(0);
-              setBusy("찾는 중…");
-              invoke("cull_scan").catch((e) => setBusy(String(e)));
-            }}
-            className="h-control px-3 rounded-md text-[13.5px] text-fg-dim ring-1 ring-line-strong"
-          >
-            다시 찾기
-          </button>
+          <>
+            <button
+              onClick={() => {
+                setElapsed(0);
+                setBusy("찾는 중…");
+                invoke("cull_scan").catch((e) => setBusy(String(e)));
+              }}
+              className="h-control px-3 rounded-md text-[13.5px] text-fg-dim ring-1 ring-line-strong"
+            >
+              다시 찾기
+            </button>
+            {/* 전부 찾으면 완전 중복이 파일을 끝까지 읽어 한 시간이 걸린다.
+                「줄인 사본」은 썸네일만 읽어 31초다 — 그것 하나 보려고 기다릴 이유가 없다. */}
+            {kind >= 0 && (
+              <button
+                title={`${KINDS.find((k) => k.id === kind)?.label ?? ""}만 다시 찾습니다`}
+                onClick={() => {
+                  setElapsed(0);
+                  setBusy("찾는 중…");
+                  invoke("cull_scan_kind", { kind }).catch((e) => setBusy(String(e)));
+                }}
+                className="h-control px-3 rounded-md text-[13.5px] text-fg-mute ring-1 ring-line"
+              >
+                이 갈래만
+              </button>
+            )}
+          </>
         )}
         {scanning && (
           <span className="flex items-center gap-2 text-keep text-[13px] tabular-nums">

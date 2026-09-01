@@ -56,6 +56,67 @@ pub struct MemberRow {
     pub area: i32,
 }
 
+/// 갈래 **하나만** 다시 찾는다.
+///
+/// 전부 돌리면 완전 중복이 파일을 끝까지 읽어 한 시간이 걸린다. 「줄인 사본」은
+/// 썸네일만 읽어 31초인데(실측 14.3만 장), 그것 하나 보려고 한 시간을 기다릴
+/// 이유가 없다. 갈래끼리 앞뒤가 있긴 하지만 없어도 각자 옳게 돈다 — 완전 중복이
+/// 아직 안 돌았으면 「줄인 사본」이 그만큼 덜 걸러 낼 뿐이다.
+#[tauri::command]
+pub async fn cull_scan_kind(app: AppHandle, kind: i32) -> Result<(), String> {
+    // 모르는 갈래는 일을 시작하기 전에 바로 돌려준다 — 작업 스위치를 잡지 않게
+    if !matches!(kind, KIND_DUP | KIND_JUNK | KIND_BURST | KIND_SCENE | KIND_RESIZED) {
+        return Err(format!("모르는 갈래: {kind}"));
+    }
+    let state = app.state::<AppState>();
+    let db = Arc::clone(&state.db);
+    let cancel = Arc::clone(&state.cancel);
+    let cache_base = state.cache_base.clone();
+    let Some(guard) = job::try_start_wait(&state.running, "고르기", std::time::Duration::from_secs(20)) else {
+        return Err("다른 일이 도는 중입니다 — 끝난 뒤 다시 눌러 주세요".into());
+    };
+    cancel.store(false, Ordering::Relaxed);
+
+    std::thread::spawn(move || {
+        let _guard = guard;
+        let out: Result<(), String> = match kind {
+            KIND_JUNK => junk::scan(&db).map(|p| {
+                let _ = app.emit("cull-junk", &p);
+            }).map_err(|e| e.to_string()),
+            KIND_BURST => burst::scan(&db, burst::DEFAULT_GAP_SECS).map(|p| {
+                let _ = app.emit("cull-burst", &p);
+            }).map_err(|e| e.to_string()),
+            KIND_DUP => dedup::scan(&db, Arc::clone(&cancel), |p| {
+                let _ = app.emit("cull-dedup-progress", p);
+            })
+            .map(|p| {
+                let _ = app.emit("cull-dedup", &p);
+            })
+            .map_err(|e| e.to_string()),
+            KIND_RESIZED => phash::scan(&db, &cache_base, phash::DEFAULT_THRESHOLD, Arc::clone(&cancel), |p| {
+                let _ = app.emit("cull-phash-progress", p);
+            })
+            .map(|p| {
+                let _ = app.emit("cull-phash", &p);
+            })
+            .map_err(|e| e.to_string()),
+            KIND_SCENE => scene::scan(&db, scene::DEFAULT_THRESHOLD, Arc::clone(&cancel), |_| {}).map(|p| {
+                let _ = app.emit("cull-scene", &p);
+            }).map_err(|e| e.to_string()),
+            other => Err(format!("모르는 갈래: {other}")),
+        };
+        match out {
+            Ok(()) => {
+                let _ = app.emit("cull-done", ());
+            }
+            Err(e) => {
+                let _ = app.emit("cull-error", e);
+            }
+        }
+    });
+    Ok(())
+}
+
 /// 갈래를 순서대로 돌린다. 가벼운 것부터 — 결과가 빨리 보이게.
 #[tauri::command]
 pub async fn cull_scan(app: AppHandle) -> Result<(), String> {

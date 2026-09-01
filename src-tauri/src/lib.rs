@@ -278,6 +278,7 @@ pub fn run() {
             api::reveal_in_finder,
             api::folders_list,
             api::cull::cull_scan,
+            api::cull::cull_scan_kind,
             api::cull::cull_groups,
             api::cull::cull_members,
             api::cull::cull_set_best,

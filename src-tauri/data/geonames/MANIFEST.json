@@ -4,9 +4,11 @@
   "dataset_version": "2026-09-01",
   "source": "https://download.geonames.org/export/dump/cities15000.zip",
   "admin1_source": "https://download.geonames.org/export/dump/admin1CodesASCII.txt",
+  "korean_name_source": "https://download.geonames.org/export/dump/alternatenames/KR.zip",
+  "admin2_source": "https://download.geonames.org/export/dump/admin2Codes.txt",
   "license": "CC BY 4.0 (GeoNames)",
   "record_count": 34127,
-  "sha256": "c59edea54ff803a55049047026f0903b16e06d590fb863325d9841604228c394",
+  "sha256": "a71b6af7597abdb7e0f0f428d48c556e34a8027c8787e19df5a1dac29703a4cb",
   "fields": [
     "lat",
     "lon",
@@ -14,7 +16,10 @@
     "cc",
     "admin1_code",
     "admin1_name",
-    "admin2_code",
-    "population"
-  ]
+    "admin2_name",
+    "population",
+    "name_ko"
+  ],
+  "admin2_names": 140,
+  "korean_names": 101
 }

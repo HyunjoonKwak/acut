@@ -5,11 +5,25 @@
 
 GeoNames — 지명 데이터 (src-tauri/data/geonames/cities.tsv)
 -----------------------------------------------------------
-출처: https://www.geonames.org/ (cities15000, admin1CodesASCII)
+출처: https://www.geonames.org/
+      (cities15000, admin1CodesASCII, admin2Codes, alternatenames/KR, countryInfo)
 라이선스: Creative Commons Attribution 4.0 (CC BY 4.0)
           https://creativecommons.org/licenses/by/4.0/
 사진의 좌표를 국가·시도·시군구 이름으로 바꾸는 데 씁니다. 원본을 가공해
 필요한 필드만 남겼으며, 가공 방법은 scripts/build-geodata.mjs 에 있습니다.
+
+Natural Earth — 한국 시도 경계 (src-tauri/data/boundaries/kr_admin1.json)
+--------------------------------------------------------------------------
+출처: https://www.naturalearthdata.com/ (10m Admin 1 – States, Provinces)
+라이선스: 퍼블릭 도메인 (별도 고지 의무 없음)
+좌표가 어느 시도인지 판정하는 데 씁니다. 한국 17개 시도만 남기고 좌표를
+소수 3자리로 줄였으며, 가공 방법은 scripts/build-boundaries.mjs 에 있습니다.
+
+Unicode CLDR — 국가 이름 (src-tauri/data/boundaries/countries.tsv)
+------------------------------------------------------------------
+출처: https://cldr.unicode.org/ (Node.js Intl.DisplayNames 를 통해 추출)
+라이선스: Unicode License v3
+국가 코드를 한국어 이름으로 바꾸는 데 씁니다.
 
 OpenStreetMap — 국가 경계 (country-boundaries 크레이트)
 ------------------------------------------------------

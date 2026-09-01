@@ -1,0 +1,13 @@
+{
+  "format_version": 1,
+  "dataset": "geonames-countryinfo + cldr-ko",
+  "source": "https://download.geonames.org/export/dump/countryInfo.txt",
+  "license": "CC BY 4.0 (GeoNames) · Unicode CLDR",
+  "record_count": 252,
+  "sha256": "a0fdff2abbea5f9957ccab744643c2600a27e6933fae7b38ba505dbe92aa7709",
+  "fields": [
+    "cc",
+    "name",
+    "name_en"
+  ]
+}

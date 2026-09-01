@@ -1,0 +1,10 @@
+{
+  "format_version": 1,
+  "dataset": "natural-earth-10m-admin1-kr",
+  "source": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_1_states_provinces.geojson",
+  "license": "Public domain (Natural Earth)",
+  "region_count": 17,
+  "ring_count": 70,
+  "point_count": 4474,
+  "sha256": "9ed4343f1859b81d685146efb74dec291b16c6ef1ec17434ed0a01179c760a3d"
+}

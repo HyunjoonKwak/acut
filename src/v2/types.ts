@@ -73,6 +73,8 @@ export type GeoStats = {
   offline_cells_left: number;
   /** 서버에만 물을 수 있는 자리 — 오프라인이 이미 포기했다 */
   network_cells_left: number;
+  /** 서버에 물을 수 있는 자리 전부 — 못 채운 곳과 정밀 보강할 곳 */
+  online_cells_left: number;
   endpoint_ready: boolean;
 };
 /** 라이브러리 하나의 휴지통 — 휴지통은 라이브러리마다 따로 있다 */

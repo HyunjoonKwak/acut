@@ -87,6 +87,12 @@ export function About() {
       >
         <span />
       </Row>
+      <Row
+        label="지명 자료"
+        hint="GeoNames 도시·행정구역 (CC BY 4.0) · Natural Earth 시도 경계 (퍼블릭 도메인) · OpenStreetMap 국가 경계 (ODbL 1.0) · Unicode CLDR 국가 이름. 자세한 고지는 배포물의 NOTICE 파일에 있습니다."
+      >
+        <span />
+      </Row>
     </Section>
   );
 }

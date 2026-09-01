@@ -10,6 +10,7 @@ dependencies = [
  "chrono",
  "core-foundation 0.10.1",
  "core-foundation-sys",
+ "country-boundaries",
  "filetime",
  "futures-util",
  "glob",
@@ -726,6 +727,12 @@ checksum = "b49ba7ef1ad6107f8824dbe97de947cbaac53c44e7f9756a1fba0d37c1eec505"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "country-boundaries"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a949524fd9d83cd48e5046cd6212c1e533477d376b82570b6c0bcc4c6775625"
 
 [[package]]
 name = "cpufeatures"

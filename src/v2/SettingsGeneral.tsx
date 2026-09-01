@@ -290,64 +290,80 @@ function GeoRow() {
         .catch(() => {});
   }, [hasJob, geoRev]);
 
-  const left = st?.cells_left ?? 0;
-  const networkLeft = st?.network_cells_left ?? 0;
   const offlineLeft = st?.offline_cells_left ?? 0;
-  const mins = Math.ceil((networkLeft * 1.1) / 60);
+  const onlineLeft = st?.online_cells_left ?? 0;
   const ready = st?.endpoint_ready ?? false;
-  const needsServer = networkLeft > 0;
-  const canRun = ready || !needsServer;
-  const hint = st
-    ? [
-        `유효한 좌표가 있는 사진 ${st.with_gps.toLocaleString()}장 중 ${st.named.toLocaleString()}장에 지명이 붙어 있습니다.`,
-        st.pending_files > 0
-          ? `처리할 사진 ${st.pending_files.toLocaleString()}장 · ${left.toLocaleString()}곳.${
-              networkLeft > 0
-                ? ` 서버에 물어야 하는 곳 ${networkLeft.toLocaleString()}곳 — 약 ${mins}분입니다.`
-                : offlineLeft > 0
-                  ? ` ${offlineLeft.toLocaleString()}곳은 서버 없이 처리할 수 있습니다.`
-                  : " 모두 저장된 캐시로 바로 채울 수 있습니다."
-            }`
-          : "조회할 곳은 없습니다.",
-        st.unavailable_files > 0
-          ? `서버에서 지명을 찾지 못한 사진 ${st.unavailable_files.toLocaleString()}장은 좌표로만 표시됩니다.`
-          : "",
-        !ready && needsServer ? "새로 조회할 곳이 있어 먼저 위에 지명 서버를 설정해야 합니다." : "",
-      ]
-        .filter(Boolean)
-        .join(" ")
+
+  const start = (mode: "offline" | "online", limit: number | null, msg: string) => {
+    invoke("geo_fill_start", { limit, mode })
+      .then(() => toast(msg))
+      .catch((e) => toast(String(e), "drop"));
+  };
+
+  const summary = st
+    ? `유효한 좌표가 있는 사진 ${st.with_gps.toLocaleString()}장 중 ${st.named.toLocaleString()}장에 지명이 붙어 있습니다.` +
+      (st.unavailable_files > 0
+        ? ` 서버가 이름을 찾지 못한 ${st.unavailable_files.toLocaleString()}장은 좌표로만 표시됩니다.`
+        : "")
     : "좌표를 국가·시도·시군구 이름으로 바꿔 위치 갈래에서 이름으로 찾습니다.";
+
+  // 서버에 초당 한 건이라 남은 곳에 1.1초를 곱한다
+  const mins = Math.max(1, Math.ceil((onlineLeft * 1.1) / 60));
+
   return (
-    <Row
-      label="지명 채우기"
-      hint={hint}
-    >
-      <>
+    <>
+      <Row
+        label="지명 채우기"
+        hint={`${summary} 앱에 담긴 지명 자료로 처리하므로 인터넷도 서버 설정도 필요 없습니다.${
+          offlineLeft > 0 ? ` 처리할 곳 ${offlineLeft.toLocaleString()}곳 — 몇 초면 끝납니다.` : ""
+        }`}
+      >
         <Btn
-          disabled={hasJob || left === 0 || !canRun}
-          onClick={() => {
-            invoke("geo_fill_start", { limit: 100 })
-              .then(() => toast("최대 100곳을 채웁니다 — 진행은 위 작업 표시에서"))
-              .catch((e) => toast(String(e), "drop"));
-          }}
+          disabled={hasJob || offlineLeft === 0}
+          onClick={() =>
+            start("offline", null, "지명을 채웁니다 — 진행은 위 작업 표시에서")
+          }
         >
-          {!canRun && left > 0
-            ? "서버 설정 필요"
-            : left > 0
-              ? `${Math.min(100, left)}곳 채우기`
-              : "처리 완료"}
+          {offlineLeft > 0 ? `${offlineLeft.toLocaleString()}곳 채우기` : "처리 완료"}
         </Btn>
-        <Btn
-          disabled={hasJob || left === 0 || !canRun}
-          onClick={() => {
-            invoke("geo_fill_start", { limit: null })
-              .then(() => toast("남은 곳을 모두 채웁니다 — 멈추면 채운 것은 남습니다"))
-              .catch((e) => toast(String(e), "drop"));
-          }}
-        >
-          전부
-        </Btn>
-      </>
-    </Row>
+      </Row>
+      <Row
+        label="정밀 보강"
+        hint={
+          onlineLeft === 0
+            ? "서버에 더 물어볼 곳이 없습니다."
+            : `지명 서버에 물어 ${
+                st && st.approximate_files > 0
+                  ? `근사로 붙은 사진 ${st.approximate_files.toLocaleString()}장을 `
+                  : ""
+              }더 좁은 단위까지 채웁니다. 남은 곳 ${onlineLeft.toLocaleString()}곳 — 초당 한 건이라 약 ${mins}분입니다.${
+                ready ? "" : " 먼저 위에 지명 서버를 설정해 주세요."
+              }`
+        }
+      >
+        <>
+          <Btn
+            disabled={hasJob || onlineLeft === 0 || !ready}
+            onClick={() =>
+              start("online", 100, "최대 100곳을 보강합니다 — 진행은 위 작업 표시에서")
+            }
+          >
+            {!ready && onlineLeft > 0
+              ? "서버 설정 필요"
+              : onlineLeft > 0
+                ? `${Math.min(100, onlineLeft).toLocaleString()}곳 보강`
+                : "보강 완료"}
+          </Btn>
+          <Btn
+            disabled={hasJob || onlineLeft === 0 || !ready}
+            onClick={() =>
+              start("online", null, "남은 곳을 모두 보강합니다 — 멈추면 채운 것은 남습니다")
+            }
+          >
+            전부
+          </Btn>
+        </>
+      </Row>
+    </>
   );
 }

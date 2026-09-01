@@ -13,13 +13,21 @@ pub async fn geo_stats(state: State<'_, AppState>) -> Result<geo::Stats, String>
 }
 
 /// 이름 채우기를 시작한다. 진행은 `geo-progress`, 끝나면 `geo-done`.
-/// 초당 한 건씩 물으므로 오래 걸린다 — 멈추기는 다른 긴 일과 같은 스위치를 쓴다.
+///
+/// `mode` 가 «offline» 이면 내장 자료로 곧바로 채운다 — 망도 설정도 필요 없고
+/// 몇 초면 끝난다. «online» 이면 서버에 초당 한 건씩 물어 정밀하게 만든다.
+/// 멈추기는 다른 긴 일과 같은 스위치를 쓴다.
 #[tauri::command]
-pub async fn geo_fill_start(app: AppHandle, limit: Option<usize>) -> Result<(), String> {
+pub async fn geo_fill_start(app: AppHandle, limit: Option<usize>, mode: Option<geo::Mode>) -> Result<(), String> {
     let state = app.state::<AppState>();
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
-    let Some(guard) = job::try_start_wait(&state.running, "에이컷 지명", std::time::Duration::from_secs(20)) else {
+    let mode = mode.unwrap_or(geo::Mode::Offline);
+    let label = match mode {
+        geo::Mode::Offline => "에이컷 지명 채우기",
+        geo::Mode::Online => "에이컷 지명 정밀 보강",
+    };
+    let Some(guard) = job::try_start_wait(&state.running, label, std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 아직 도는 중입니다 — 툴바의 작업 표시가 사라진 뒤 다시 눌러 주세요".into());
     };
     cancel.store(false, Ordering::Relaxed);
@@ -27,13 +35,17 @@ pub async fn geo_fill_start(app: AppHandle, limit: Option<usize>) -> Result<(), 
     std::thread::spawn(move || {
         let _guard = guard;
         let handle = app.clone();
-        let r = geo::fill(&db, &cancel, limit, |p| {
+        let report = |p: &geo::Progress| {
             let _ = handle.emit("geo-progress", p);
-        });
+        };
+        let r = match mode {
+            geo::Mode::Offline => geo::fill_offline(&db, &cancel, limit, report),
+            geo::Mode::Online => geo::fill(&db, &cancel, limit, report),
+        };
         match r {
             Ok(p) => {
                 log::info!(
-                    "지명 — 자리 {}곳 · 물어본 {}건 · 사진 {}장 · 이름 없음 {}곳{}",
+                    "{label} — 자리 {}곳 · 물어본 {}건 · 사진 {}장 · 이름 없음 {}곳{}",
                     p.done, p.asked, p.files, p.empty,
                     p.stopped.as_deref().map(|s| format!(" · 멈춤: {s}")).unwrap_or_default()
                 );

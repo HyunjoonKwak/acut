@@ -3,11 +3,13 @@
 //! 스캔은 오래 걸릴 수 있으므로(완전 중복은 파일을 읽는다) 별도 스레드에서 돌고
 //! 진행 상황을 이벤트로 흘린다. 조회는 즉시 돌아온다.
 
+use super::job;
 use crate::api::{err, AppState};
 use crate::cull::{apply, burst, dedup, folders, junk, phash, scene};
-use super::job;
+use crate::db::conn::Db;
 use serde::Serialize;
-use std::sync::atomic::Ordering;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -56,18 +58,105 @@ pub struct MemberRow {
     pub area: i32,
 }
 
-/// 갈래 **하나만** 다시 찾는다.
+const FULL_PLAN: &[i32] = &[KIND_JUNK, KIND_BURST, KIND_DUP, KIND_RESIZED, KIND_SCENE];
+
+/// 한 갈래를 바꾸면 그 결과를 제외 조건으로 쓰는 후속 갈래도 함께 바꾼다.
+/// 그렇지 않으면 한 파일이 서로 다른 대표를 가진 옛·새 그룹에 동시에 남는다.
+fn scan_plan(kind: i32) -> Option<&'static [i32]> {
+    match kind {
+        KIND_JUNK => Some(&[KIND_JUNK]),
+        KIND_BURST => Some(&[KIND_BURST, KIND_SCENE]),
+        KIND_DUP => Some(&[KIND_DUP, KIND_RESIZED, KIND_SCENE]),
+        KIND_RESIZED => Some(&[KIND_RESIZED, KIND_SCENE]),
+        KIND_SCENE => Some(&[KIND_SCENE]),
+        _ => None,
+    }
+}
+
+fn scan_one(
+    app: &AppHandle,
+    db: &Db,
+    cache_base: &Path,
+    cancel: &Arc<AtomicBool>,
+    kind: i32,
+) -> Result<(), String> {
+    match kind {
+        KIND_JUNK => junk::scan(db)
+            .map(|p| {
+                let _ = app.emit("cull-junk", &p);
+            })
+            .map_err(|e| e.to_string()),
+        KIND_BURST => burst::scan(db, burst::DEFAULT_GAP_SECS)
+            .map(|p| {
+                let _ = app.emit("cull-burst", &p);
+            })
+            .map_err(|e| e.to_string()),
+        KIND_DUP => dedup::scan(db, Arc::clone(cancel), |p| {
+            let _ = app.emit("cull-dedup-progress", p);
+        })
+        .map(|p| {
+            let _ = app.emit("cull-dedup", &p);
+        })
+        .map_err(|e| e.to_string()),
+        KIND_RESIZED => phash::scan(
+            db,
+            cache_base,
+            phash::DEFAULT_THRESHOLD,
+            Arc::clone(cancel),
+            |p| {
+                let _ = app.emit("cull-phash-progress", p);
+            },
+        )
+        .map(|p| {
+            let _ = app.emit("cull-phash", &p);
+        })
+        .map_err(|e| e.to_string()),
+        KIND_SCENE => scene::scan(db, scene::DEFAULT_THRESHOLD, Arc::clone(cancel), |_| {})
+            .map(|p| {
+                let _ = app.emit("cull-scene", &p);
+            })
+            .map_err(|e| e.to_string()),
+        other => Err(format!("모르는 갈래: {other}")),
+    }
+}
+
+fn run_plan(
+    app: &AppHandle,
+    db: &Db,
+    cache_base: &Path,
+    cancel: &Arc<AtomicBool>,
+    plan: &[i32],
+) -> Result<(), String> {
+    for &kind in plan {
+        // 선택 실행은 갈래마다 다음 단계가 다르다. 완료 이벤트로 다음 일을 추측하면
+        // 화면이 실제로는 장면을 찾으면서 «중복 확인 중»이라고 보일 수 있다.
+        let _ = app.emit("cull-stage", kind);
+        scan_one(app, db, cache_base, cancel, kind)?;
+    }
+    Ok(())
+}
+
+fn emit_scan_result(app: &AppHandle, out: Result<(), String>) {
+    match out {
+        Ok(()) => {
+            let _ = app.emit("cull-done", ());
+        }
+        Err(e) => {
+            let _ = app.emit("cull-error", e);
+        }
+    }
+}
+
+/// 고른 갈래와 그 결과에 의존하는 후속 갈래만 다시 찾는다.
 ///
-/// 전부 돌리면 완전 중복이 파일을 끝까지 읽어 한 시간이 걸린다. 「줄인 사본」은
-/// 썸네일만 읽어 31초인데(실측 14.3만 장), 그것 하나 보려고 한 시간을 기다릴
-/// 이유가 없다. 갈래끼리 앞뒤가 있긴 하지만 없어도 각자 옳게 돈다 — 완전 중복이
-/// 아직 안 돌았으면 「줄인 사본」이 그만큼 덜 걸러 낼 뿐이다.
+/// 전부 돌리면 완전 중복이 파일을 끝까지 읽어 한 시간이 걸린다. 「줄인 사본」부터
+/// 갱신하면 썸네일 기반 판정과 비슷한 장면만 이어서 돌고, 비싼 완전 중복은 건너뛴다.
 #[tauri::command]
 pub async fn cull_scan_kind(app: AppHandle, kind: i32) -> Result<(), String> {
     // 모르는 갈래는 일을 시작하기 전에 바로 돌려준다 — 작업 스위치를 잡지 않게
-    if !matches!(kind, KIND_DUP | KIND_JUNK | KIND_BURST | KIND_SCENE | KIND_RESIZED) {
+    let Some(plan) = scan_plan(kind) else {
         return Err(format!("모르는 갈래: {kind}"));
-    }
+    };
     let state = app.state::<AppState>();
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
@@ -79,40 +168,8 @@ pub async fn cull_scan_kind(app: AppHandle, kind: i32) -> Result<(), String> {
 
     std::thread::spawn(move || {
         let _guard = guard;
-        let out: Result<(), String> = match kind {
-            KIND_JUNK => junk::scan(&db).map(|p| {
-                let _ = app.emit("cull-junk", &p);
-            }).map_err(|e| e.to_string()),
-            KIND_BURST => burst::scan(&db, burst::DEFAULT_GAP_SECS).map(|p| {
-                let _ = app.emit("cull-burst", &p);
-            }).map_err(|e| e.to_string()),
-            KIND_DUP => dedup::scan(&db, Arc::clone(&cancel), |p| {
-                let _ = app.emit("cull-dedup-progress", p);
-            })
-            .map(|p| {
-                let _ = app.emit("cull-dedup", &p);
-            })
-            .map_err(|e| e.to_string()),
-            KIND_RESIZED => phash::scan(&db, &cache_base, phash::DEFAULT_THRESHOLD, Arc::clone(&cancel), |p| {
-                let _ = app.emit("cull-phash-progress", p);
-            })
-            .map(|p| {
-                let _ = app.emit("cull-phash", &p);
-            })
-            .map_err(|e| e.to_string()),
-            KIND_SCENE => scene::scan(&db, scene::DEFAULT_THRESHOLD, Arc::clone(&cancel), |_| {}).map(|p| {
-                let _ = app.emit("cull-scene", &p);
-            }).map_err(|e| e.to_string()),
-            other => Err(format!("모르는 갈래: {other}")),
-        };
-        match out {
-            Ok(()) => {
-                let _ = app.emit("cull-done", ());
-            }
-            Err(e) => {
-                let _ = app.emit("cull-error", e);
-            }
-        }
+        let out = run_plan(&app, &db, &cache_base, &cancel, plan);
+        emit_scan_result(&app, out);
     });
     Ok(())
 }
@@ -123,7 +180,7 @@ pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
-    let state_cache_base = state.cache_base.clone();
+    let cache_base = state.cache_base.clone();
     // 스캔·벡터와 같은 스위치 — 같이 돌면 DB와 디스크를 다툰다. 상태바에 보이고
     // 창이 뒤로 가도 App Nap에 걸리지 않는다 (해시는 한 시간도 걸린다).
     let Some(guard) = job::try_start_wait(&state.running, "고르기", std::time::Duration::from_secs(20)) else {
@@ -133,64 +190,8 @@ pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
 
     std::thread::spawn(move || {
         let _guard = guard;
-        // 1. 잡동사니 — 파일을 열지 않는다. 즉시 끝난다
-        match junk::scan(&db) {
-            Ok(p) => {
-                let _ = app.emit("cull-junk", &p);
-            }
-            Err(e) => {
-                let _ = app.emit("cull-error", e.to_string());
-                return;
-            }
-        }
-        // 2. 같은 순간 — 역시 파일을 열지 않는다
-        match burst::scan(&db, burst::DEFAULT_GAP_SECS) {
-            Ok(p) => {
-                let _ = app.emit("cull-burst", &p);
-            }
-            Err(e) => {
-                let _ = app.emit("cull-error", e.to_string());
-                return;
-            }
-        }
-        // 3. 완전 중복 — 해시를 읽으므로 가장 오래 걸린다
-        let r = dedup::scan(&db, Arc::clone(&cancel), |p| {
-            let _ = app.emit("cull-dedup-progress", p);
-        });
-        match r {
-            Ok(p) => {
-                let _ = app.emit("cull-dedup", &p);
-            }
-            Err(e) => {
-                let _ = app.emit("cull-error", e.to_string());
-                return;
-            }
-        }
-        // 4. 크기만 줄인 사본 — 썸네일을 읽어 지각 해시를 채운 뒤 묶는다.
-        //    «비슷한 장면»보다 먼저다: 같은 그림이라는 더 또렷한 판정이므로,
-        //    여기서 묶인 짝은 저기서 다시 보여 주지 않는다.
-        let cache_base = state_cache_base.clone();
-        match phash::scan(&db, &cache_base, phash::DEFAULT_THRESHOLD, Arc::clone(&cancel), |p| {
-            let _ = app.emit("cull-phash-progress", p);
-        }) {
-            Ok(p) => {
-                let _ = app.emit("cull-phash", &p);
-            }
-            Err(e) => {
-                let _ = app.emit("cull-error", e.to_string());
-                return;
-            }
-        }
-        // 5. 비슷한 장면 — 벡터가 있는 사진만. 없으면 photos 0으로 곧 끝난다.
-        match scene::scan(&db, scene::DEFAULT_THRESHOLD, cancel, |_| {}) {
-            Ok(p) => {
-                let _ = app.emit("cull-scene", &p);
-                let _ = app.emit("cull-done", ());
-            }
-            Err(e) => {
-                let _ = app.emit("cull-error", e.to_string());
-            }
-        }
+        let out = run_plan(&app, &db, &cache_base, &cancel, FULL_PLAN);
+        emit_scan_result(&app, out);
     });
     Ok(())
 }
@@ -599,7 +600,21 @@ pub async fn cull_summary(
 
 #[cfg(test)]
 mod tests {
+    use super::{scan_plan, KIND_BURST, KIND_DUP, KIND_JUNK, KIND_RESIZED, KIND_SCENE};
     use crate::db::conn::Db;
+
+    #[test]
+    fn selective_scan_refreshes_every_dependent_kind() {
+        assert_eq!(scan_plan(KIND_JUNK), Some(&[KIND_JUNK][..]));
+        assert_eq!(scan_plan(KIND_BURST), Some(&[KIND_BURST, KIND_SCENE][..]));
+        assert_eq!(
+            scan_plan(KIND_DUP),
+            Some(&[KIND_DUP, KIND_RESIZED, KIND_SCENE][..])
+        );
+        assert_eq!(scan_plan(KIND_RESIZED), Some(&[KIND_RESIZED, KIND_SCENE][..]));
+        assert_eq!(scan_plan(KIND_SCENE), Some(&[KIND_SCENE][..]));
+        assert_eq!(scan_plan(99), None);
+    }
 
     /// 그룹 하나를 만들고 apply가 플래그를 어떻게 바꾸는지 본다.
     fn seed(kind: i32) -> (tempfile::TempDir, Db) {

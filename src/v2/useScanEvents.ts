@@ -112,12 +112,16 @@ export function useScanEvents(cb: {
     });
     // 고르기 — 잡동사니·같은 순간은 순식간, 완전 중복의 전체 해시가 오래 걸린다.
     // 고르기 화면을 닫아도 상태바에 남아 «아직 도는 중»을 알린다.
-    on("cull-junk", () =>
-      job().progress({ label: "고르기 — 같은 순간 찾는 중", done: 0, total: 0 }),
-    );
-    on("cull-burst", () =>
-      job().progress({ label: "고르기 — 중복 후보 찾는 중", done: 0, total: 0 }),
-    );
+    on<number>("cull-stage", (kind) => {
+      const labels: Record<number, string> = {
+        0: "완전 중복",
+        1: "잡동사니",
+        2: "같은 순간",
+        3: "비슷한 장면",
+        4: "줄인 사본",
+      };
+      job().progress({ label: `고르기 — ${labels[kind] ?? "분석"}`, done: 0, total: 0 });
+    });
     on<{
       phase: string;
       hashed: number;
@@ -135,8 +139,17 @@ export function useScanEvents(cb: {
             : { label: "고르기 — 빠른 해시", done: p.hashed, total: p.candidates },
       ),
     );
-    on("cull-dedup", () =>
-      job().progress({ label: "고르기 — 비슷한 장면 찾는 중", done: 0, total: 0 }),
+    on<{
+      phase: string;
+      fill_done: number;
+      fill_total: number;
+      photos: number;
+    }>("cull-phash-progress", (p) =>
+      job().progress(
+        p.phase === "fill"
+          ? { label: "고르기 — 줄인 사본 그림 해시", done: p.fill_done, total: p.fill_total }
+          : { label: "고르기 — 줄인 사본 묶는 중", done: 0, total: p.photos },
+      ),
     );
     on("cull-done", () => job().clear());
     on("cull-error", () => job().clear());

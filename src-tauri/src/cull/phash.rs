@@ -20,7 +20,9 @@
 //!      비둘기집 원리로 성한 밴드가 반드시 하나 남는다.
 //!
 //! **해시만으로는 부족하다.** 64비트는 «닮은 사진»과 «같은 사진»을 다 잡는다. 그래서
-//! 이은 짝마다 **화소를 직접 견준다** — 16×16 회색조의 평균 절대 차(MAD). 실측
+//! 이은 짝마다 **화소를 직접 견준다** — 16×16 밝기와 8×8 색차의 평균 절대 차(MAD).
+//! 밝기만 보면 휘도가 같은 서로 다른 색 편집본을 같은 사진으로 오인하므로 색차가 마지막
+//! 안전판이다. 밝기 쪽 실측
 //! (2026-09-01, 실제 라이브러리):
 //!
 //! ```text
@@ -77,11 +79,19 @@ const MIN_GROUP: usize = 2;
 const AR_TOLERANCE: f64 = 0.02;
 /// DB 에 쓰는 단위
 const CHUNK: usize = 512;
-/// 화소 서명 한 변 — 16×16 회색조 256바이트. 14.3만 장에 37MB.
+/// 밝기 서명 한 변 — 16×16 256바이트.
 const SIG: usize = 16;
+/// 색차 서명 한 변 — Cb·Cr 8×8씩 128바이트. 밝기와 합쳐 14.3만 장에 약 55MB.
+const CHROMA_SIG: usize = 8;
+const SIGNATURE_VERSION: u8 = 1;
+const LUMA_BYTES: usize = SIG * SIG;
+const CHROMA_BYTES: usize = CHROMA_SIG * CHROMA_SIG * 2;
+const SIG_BYTES: usize = 1 + LUMA_BYTES + CHROMA_BYTES;
 /// 같은 그림으로 볼 평균 절대 차의 상한. 위 실측에서 사본은 3.1 아래, 연사는 4.4 위였다.
 /// 3.5 는 그 사이다 — 넉넉히 잡으면 연사가 섞이고, 좁히면 크게 줄인 사본을 놓친다.
 const MAX_MAD: f64 = 3.5;
+/// 재압축·축소 때 색차가 밝기보다 조금 더 흔들리는 것을 허용하되 색 편집본은 막는다.
+const MAX_CHROMA_MAD: f64 = 8.0;
 
 /// `cos[u][x] = cos(pi * (2x+1) * u / 2N)` — 우리가 쓰는 8개 계수만.
 static COS: LazyLock<[[f64; N]; LOW]> = LazyLock::new(|| {
@@ -132,7 +142,27 @@ pub fn signature_of(path: &Path) -> Option<(u64, Vec<u8>)> {
     // 회색조로 바꾼 **뒤** 줄인다 — 사진관(PIL)의 차례와 같게
     let gray = image::imageops::resize(&img.to_luma8(), N as u32, N as u32, FilterType::Lanczos3);
     let px = gray.as_raw();
-    Some((phash_of_gray(px), shrink_to_signature(px)))
+    let mut sig = Vec::with_capacity(SIG_BYTES);
+    sig.push(SIGNATURE_VERSION);
+    sig.extend(shrink_to_signature(px));
+
+    // pHash 후보는 사진관과 맞추기 위해 회색조 그대로 두되, 최종 확인에는 색을 남긴다.
+    // RGB 자체보다 Cb·Cr가 밝기 변화와 색 변화를 갈라 주므로 작은 8×8이면 충분하다.
+    let rgb = image::imageops::resize(
+        &img.to_rgb8(),
+        CHROMA_SIG as u32,
+        CHROMA_SIG as u32,
+        FilterType::Lanczos3,
+    );
+    for p in rgb.pixels() {
+        let [r, g, b] = p.0.map(f64::from);
+        let cb = 128.0 - 0.168_736 * r - 0.331_264 * g + 0.5 * b;
+        let cr = 128.0 + 0.5 * r - 0.418_688 * g - 0.081_312 * b;
+        sig.push(cb.round().clamp(0.0, 255.0) as u8);
+        sig.push(cr.round().clamp(0.0, 255.0) as u8);
+    }
+    debug_assert_eq!(sig.len(), SIG_BYTES);
+    Some((phash_of_gray(px), sig))
 }
 
 /// 32×32 → 16×16. 2×2 네 칸의 평균.
@@ -157,6 +187,22 @@ fn mad(a: &[u8], b: &[u8]) -> f64 {
     }
     let sum: u32 = a.iter().zip(b).map(|(&x, &y)| x.abs_diff(y) as u32).sum();
     sum as f64 / a.len() as f64
+}
+
+/// 버전이 맞는 밝기·색차 서명인가. 옛 256바이트 회색조 서명은 여기서 거절하며
+/// `jobs`가 다시 계산한다.
+fn signatures_alike(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != SIG_BYTES
+        || b.len() != SIG_BYTES
+        || a[0] != SIGNATURE_VERSION
+        || b[0] != SIGNATURE_VERSION
+    {
+        return false;
+    }
+    let luma = 1..1 + LUMA_BYTES;
+    let chroma = 1 + LUMA_BYTES..SIG_BYTES;
+    mad(&a[luma.clone()], &b[luma]) <= MAX_MAD
+        && mad(&a[chroma.clone()], &b[chroma]) <= MAX_CHROMA_MAD
 }
 
 /// 32×32 회색조 화소(행 우선)에서 해시를 낸다 — 시험이 그림 없이 부를 수 있게 갈랐다.
@@ -215,11 +261,15 @@ fn jobs(db: &Db, cache_base: &Path) -> Result<Vec<Job>> {
                FROM files fi
                JOIN folders fo ON fo.id = fi.folder_id
                JOIN thumbs t ON t.file_id = fi.id AND t.state = 1
-              WHERE (fi.phash IS NULL OR fi.psig IS NULL) AND fi.kind <> 1
+              WHERE (fi.phash IS NULL OR fi.psig IS NULL
+                     OR length(fi.psig) <> ?1 OR substr(fi.psig,1,1) <> X'01')
+                AND fi.kind <> 1
                 AND fi.trashed_at IS NULL
+                AND t.src_size = fi.size
+                AND t.src_mtime = COALESCE(fi.modified_at, 0)
                 AND t.rel_path IS NOT NULL",
         )?;
-        let it = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let it = st.query_map([SIG_BYTES as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
     Ok(rows
@@ -277,7 +327,7 @@ struct Row {
     sharpness: Option<f64>,
     /// 폴더의 영역 — 내사진·공용에 있는 것이 대표가 된다
     area: i32,
-    /// 16×16 회색조 — 이은 짝이 정말 같은 그림인지 견주는 데 쓴다
+    /// 버전 + 16×16 밝기 + 8×8 CbCr — 정말 같은 그림인지 견주는 데 쓴다
     sig: Vec<u8>,
 }
 
@@ -311,10 +361,11 @@ fn load(db: &Db, skip: &HashSet<i64>) -> Result<Vec<Row>> {
                FROM files fi JOIN folders fo ON fo.id = fi.folder_id
               WHERE fi.phash IS NOT NULL AND fi.psig IS NOT NULL AND fi.kind <> 1
                 AND fi.trashed_at IS NULL
+                AND length(fi.psig) = ?1 AND substr(fi.psig,1,1) = X'01'
                 AND fi.width > 0 AND fi.height > 0
               ORDER BY fi.id",
         )?;
-        let it = st.query_map([], |r| {
+        let it = st.query_map([SIG_BYTES as i64], |r| {
             Ok(Row {
                 id: r.get(0)?,
                 folder_id: r.get(1)?,
@@ -396,7 +447,7 @@ fn cluster_around_seeds(rows: &[Row], mut idxs: Vec<usize>) -> Vec<Vec<usize>> {
                 continue;
             }
             let c = idxs[j];
-            if same_aspect(&rows[seed], &rows[c]) && mad(&rows[seed].sig, &rows[c].sig) <= MAX_MAD {
+            if same_aspect(&rows[seed], &rows[c]) && signatures_alike(&rows[seed].sig, &rows[c].sig) {
                 used[j] = true;
                 m.push(c);
             }
@@ -407,6 +458,15 @@ fn cluster_around_seeds(rows: &[Row], mut idxs: Vec<usize>) -> Vec<Vec<usize>> {
         i += 1;
     }
     out
+}
+
+fn clear_groups(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute(
+        "DELETE FROM group_members WHERE group_id IN (SELECT id FROM groups WHERE kind = ?1)",
+        [KIND],
+    )?;
+    tx.execute("DELETE FROM groups WHERE kind = ?1", [KIND])?;
+    Ok(())
 }
 
 /// 해시를 채우고 묶는다. 결과는 `groups` (kind 4).
@@ -432,6 +492,9 @@ pub fn scan(
         on_progress(&p.clone());
     }
     if rows.len() < MIN_GROUP {
+        // 대상이 사라진 것도 새 결과다. 여기서 옛 그룹을 두면 휴지통 이동·삭제 뒤
+        // «다시 찾기»가 끝나도 유령 그룹이 남는다.
+        db.transaction(clear_groups)?;
         return Ok(progress.into_inner().unwrap());
     }
 
@@ -491,7 +554,7 @@ pub fn scan(
     // 화소 서명(MAD)이 정한다 — 이것이 없으면 연사 프레임이 사본으로 묶인다
     // (실측: 하와이 106장, 대부도 0059~0065).
     let mut uf = UnionFind::new(rows.len());
-    let alike = |a: usize, b: usize| mad(&rows[a].sig, &rows[b].sig) <= MAX_MAD;
+    let alike = |a: usize, b: usize| signatures_alike(&rows[a].sig, &rows[b].sig);
     // 해시가 같아도 그림까지 같아야 잇는다. 한 자리에 여럿이면 앞선 대표들과만
     // 견준다 — 짝을 다 보면 제곱이 되고, 같은 그림끼리는 어차피 한 대표로 모인다.
     for idxs in by_hash.values() {
@@ -540,11 +603,7 @@ pub fn scan(
     let mut reclaimable = 0i64;
     let mut n_members = 0usize;
     db.transaction(|tx| {
-        tx.execute(
-            "DELETE FROM group_members WHERE group_id IN (SELECT id FROM groups WHERE kind = ?1)",
-            [KIND],
-        )?;
-        tx.execute("DELETE FROM groups WHERE kind = ?1", [KIND])?;
+        clear_groups(tx)?;
         let mut ins_g = tx.prepare(
             "INSERT INTO groups(kind, reason, size_bytes, state, created_at)
              VALUES(?1, ?2, ?3, 0, strftime('%s','now'))",
@@ -635,13 +694,41 @@ mod tests {
         let (big, small) = (d.path().join("big.png"), d.path().join("small.png"));
         save(&big, 800, 600);
         save(&small, 200, 150); // 같은 그림을 1/4 로
-        let a = phash_of(&big).unwrap();
-        let b = phash_of(&small).unwrap();
+        let (a, sa) = signature_of(&big).unwrap();
+        let (b, sb) = signature_of(&small).unwrap();
         assert!(
             hamming(a, b) <= DEFAULT_THRESHOLD,
             "줄인 사본인데 {}비트나 달랐다 ({a:016x} vs {b:016x})",
             hamming(a, b)
         );
+        assert!(signatures_alike(&sa, &sb), "줄인 사본의 색차 안전판이 너무 좁다");
+    }
+
+    #[test]
+    fn equal_luminance_but_different_colours_are_not_the_same_picture() {
+        let luma = |rgb: image::Rgb<u8>| {
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(1, 1, rgb))
+                .to_luma8()
+                .get_pixel(0, 0)[0]
+        };
+        let red = image::Rgb([255, 0, 0]);
+        let target = luma(red);
+        // image 크레이트가 정확히 같은 밝기로 바꾸는 초록색을 고른다. 밝기 서명만
+        // 있었다면 두 평면은 MAD 0으로 반드시 통과했다.
+        let green = (0..=255)
+            .map(|g| image::Rgb([0, g, 0]))
+            .find(|&rgb| luma(rgb) == target)
+            .expect("붉은색과 같은 밝기의 초록색");
+        assert_ne!(red, green);
+
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("red.png"), d.path().join("green.png"));
+        image::RgbImage::from_pixel(64, 64, red).save(&a).unwrap();
+        image::RgbImage::from_pixel(64, 64, green).save(&b).unwrap();
+        let (_, sa) = signature_of(&a).unwrap();
+        let (_, sb) = signature_of(&b).unwrap();
+        assert_eq!(mad(&sa[1..1 + LUMA_BYTES], &sb[1..1 + LUMA_BYTES]), 0.0);
+        assert!(!signatures_alike(&sa, &sb), "색차가 큰 편집본을 같은 사진으로 봤다");
     }
 
     #[test]
@@ -681,8 +768,14 @@ mod tests {
 
     /// 그림 하나를 나타내는 서명 — 밝기만 다른 평면. 다른 `pic` 끼리는 MAD 가
     /// 40 이상 벌어져 문턱(3.5)을 훌쩍 넘는다.
+    fn flat_sig(value: u8) -> Vec<u8> {
+        let mut sig = vec![value; SIG_BYTES];
+        sig[0] = SIGNATURE_VERSION;
+        sig
+    }
+
     fn sig_of(pic: u8) -> Vec<u8> {
-        vec![pic.saturating_mul(40); SIG * SIG]
+        flat_sig(pic.saturating_mul(40))
     }
 
     fn seed(db: &Db, items: &[SeedItem]) {
@@ -810,6 +903,65 @@ mod tests {
     }
 
     #[test]
+    fn rerunning_with_fewer_than_two_photos_clears_old_groups() {
+        let (_d, db) = db();
+        seed(&db, &[(1, H, 500, 400, 300, 0, 1), (2, H ^ 1, 4000, 1600, 1200, 0, 1)]);
+        assert_eq!(run(&db).groups, 1);
+        db.write(|c| c.execute("UPDATE files SET trashed_at=1 WHERE id=2", [])).unwrap();
+        let p = run(&db);
+        assert_eq!((p.groups, p.members), (0, 0));
+        assert!(members_of(&db).is_empty(), "대상이 한 장뿐인데 이전 그룹이 남았다");
+    }
+
+    #[test]
+    fn an_old_grayscale_signature_is_scheduled_for_recalculation() {
+        let (d, db) = db();
+        seed(&db, &[(1, H, 500, 400, 300, 0, 1)]);
+        db.transaction(|tx| {
+            tx.execute(
+                "INSERT INTO libraries(id,volume_uuid,rel_path,name,area) VALUES(9,'V','','t',0)",
+                [],
+            )?;
+            tx.execute("UPDATE folders SET library_id=9", [])?;
+            tx.execute("UPDATE files SET psig=?1 WHERE id=1", [vec![42u8; SIG * SIG]])?;
+            tx.execute(
+                "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state)
+                 VALUES(1,'old.jpg',500,0,1)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(jobs(&db, d.path()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_stale_thumbnail_is_never_used_to_recalculate_the_signature() {
+        let (d, db) = db();
+        seed(&db, &[(1, H, 500, 400, 300, 0, 1)]);
+        db.transaction(|tx| {
+            tx.execute(
+                "INSERT INTO libraries(id,volume_uuid,rel_path,name,area) VALUES(9,'V','','t',0)",
+                [],
+            )?;
+            tx.execute("UPDATE folders SET library_id=9", [])?;
+            tx.execute("UPDATE files SET phash=NULL, psig=NULL, modified_at=20 WHERE id=1", [])?;
+            tx.execute(
+                "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state)
+                 VALUES(1,'stale.jpg',500,10,1)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(jobs(&db, d.path()).unwrap().is_empty());
+
+        db.write(|c| c.execute("UPDATE thumbs SET src_mtime=20 WHERE file_id=1", []))
+            .unwrap();
+        assert_eq!(jobs(&db, d.path()).unwrap().len(), 1);
+    }
+
+    #[test]
     fn the_reason_says_what_is_kept_and_how_many_are_smaller() {
         let (_d, db) = db();
         seed(&db, &[(1, H, 500, 400, 300, 0, 1), (2, H ^ 1, 4000, 1600, 1200, 0, 1)]);
@@ -901,8 +1053,8 @@ mod tests {
         // 서명 40 · 43 · 46 — 이웃끼리는 3(문턱 3.5 안), 양 끝은 6(밖)
         seed(&db, &[(1, H, 4000, 1600, 1200, 0, 1), (2, H, 500, 800, 600, 0, 1), (3, H, 300, 400, 300, 0, 1)]);
         db.transaction(|tx| {
-            tx.execute("UPDATE files SET psig = ?1 WHERE id = 2", [vec![43u8; SIG * SIG]])?;
-            tx.execute("UPDATE files SET psig = ?1 WHERE id = 3", [vec![46u8; SIG * SIG]])?;
+            tx.execute("UPDATE files SET psig = ?1 WHERE id = 2", [flat_sig(43)])?;
+            tx.execute("UPDATE files SET psig = ?1 WHERE id = 3", [flat_sig(46)])?;
             Ok(())
         })
         .unwrap();

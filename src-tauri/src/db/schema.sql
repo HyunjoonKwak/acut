@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS files (
     full_hash   TEXT,                          -- SHA-256, 전체
     image_hash  TEXT,                          -- SHA-256, JPEG 그림 데이터만(EXIF·XMP 등 머리 제외)
     phash       INTEGER,                       -- 64비트 지각 해시(i64로 담음) — 크기만 줄인 사본 찾기
-    psig        BLOB,                          -- 16×16 회색조 256B — 그 짝이 정말 같은 그림인지 견주는 서명
+    psig        BLOB,                          -- 버전+16×16 밝기+8×8 색차 — 같은 그림인지 견주는 서명
 
     -- 이미지 속성 -------------------------------------------------------
     width       INTEGER,

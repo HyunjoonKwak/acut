@@ -1,21 +1,16 @@
-//! 새 판이 나왔는지 살피고, 받아서 열어 준다.
+//! 새 판이 나왔는지 살피고 공식 릴리스 페이지를 열어 준다.
 //!
 //! 이 앱은 오프라인이 기본이라 바깥과 말을 섞는 자리가 적다. 여기는 그 몇 안 되는
 //! 곳이므로 규칙을 좁게 둔다: 주소는 우리 저장소로 못 박고, 사용자가 누르거나
-//! 하루 한 번만 살피며, 받는 파일 이름과 크기를 믿지 않고 직접 확인한다.
-//!
-//! 받은 dmg 를 앱 안에서 여는 이유: 브라우저로 내려받으면 격리 표시(quarantine)가
-//! 붙어, 자체 서명한 앱이 «손상되었다»며 열리지 않는다.
+//! 하루 한 번만 살핀다. 앱이 DMG를 직접 받지는 않는다 — 설치 파일은 macOS의
+//! Gatekeeper와 릴리스 쪽 서명·공증 검사를 그대로 거쳐야 한다.
 
 use crate::api::{err, AppState};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, State};
 
 const REPO: &str = "HyunjoonKwak/photo_desk";
 const UA: &str = concat!("photo-desk/", env!("CARGO_PKG_VERSION"), " (github.com/HyunjoonKwak/photo_desk)");
-/// 이보다 큰 파일은 우리 dmg 가 아니다 — 받다가 디스크를 채우지 않는다
-const MAX_BYTES: u64 = 500 * 1024 * 1024;
 /// 자동 살피기는 하루 한 번. 오프라인 우선 앱이 바깥을 자주 두드리면 안 된다.
 const AUTO_GAP_SECS: i64 = 24 * 60 * 60;
 const LAST_CHECK_KEY: &str = "update.last_check";
@@ -26,36 +21,13 @@ pub struct UpdateInfo {
     pub current: String,
     pub latest: String,
     pub newer: bool,
-    pub notes: String,
     pub page_url: String,
-    pub published_at: Option<String>,
-    pub asset_name: Option<String>,
-    pub asset_url: Option<String>,
-    pub asset_size: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct Progress {
-    done: u64,
-    total: u64,
-    percent: u8,
-}
-
-#[derive(Debug, Deserialize)]
-struct Asset {
-    name: String,
-    browser_download_url: String,
-    size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 struct Release {
     tag_name: String,
     html_url: String,
-    body: Option<String>,
-    published_at: Option<String>,
-    #[serde(default)]
-    assets: Vec<Asset>,
 }
 
 /// 판 번호를 숫자 세 칸으로. 자리가 모자라면 0 으로 채운다 —
@@ -75,18 +47,6 @@ fn parts(version: &str) -> [u64; 3] {
 
 fn is_newer(latest: &str, current: &str) -> bool {
     parts(latest) > parts(current)
-}
-
-/// 받아도 되는 파일 이름인가 — 경로를 벗어나는 이름은 거절한다
-fn safe_asset_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 200
-        && name.ends_with(".dmg")
-        && !name.contains('/')
-        && !name.contains('\\')
-        && !name.contains("..")
-        && !name.contains('\0')
-        && !name.starts_with('.')
 }
 
 fn client() -> Result<reqwest::Client, String> {
@@ -125,29 +85,14 @@ async fn fetch_latest(app: &AppHandle) -> Result<UpdateInfo, String> {
     Ok(to_info(release, &current))
 }
 
-/// 받아도 되는 자산 하나 — 우리가 올린 dmg 만. 이름과 주소를 둘 다 본다.
-fn pick_asset(release: &Release) -> Option<&Asset> {
-    let prefix = format!("https://github.com/{REPO}/releases/download/");
-    release
-        .assets
-        .iter()
-        .find(|a| safe_asset_name(&a.name) && a.browser_download_url.starts_with(&prefix) && a.size <= MAX_BYTES)
-}
-
 /// 받은 릴리스를 화면이 쓸 모양으로. 네트워크와 떼어 두어 시험할 수 있게 한다.
 fn to_info(release: Release, current: &str) -> UpdateInfo {
     let latest = release.tag_name.trim_start_matches(['v', 'V']).to_string();
-    let dmg = pick_asset(&release);
     UpdateInfo {
         newer: is_newer(&latest, current),
         current: current.to_string(),
         latest,
-        asset_name: dmg.map(|a| a.name.clone()),
-        asset_url: dmg.map(|a| a.browser_download_url.clone()),
-        asset_size: dmg.map(|a| a.size),
-        notes: release.body.unwrap_or_default(),
         page_url: release.html_url,
-        published_at: release.published_at,
     }
 }
 
@@ -194,89 +139,15 @@ pub async fn update_check_auto(app: AppHandle, state: State<'_, AppState>) -> Re
     }
 }
 
-/// dmg 를 내려받아 연다. 진행은 `update-progress`.
-#[tauri::command]
-pub async fn update_download(app: AppHandle, asset_url: String, asset_name: String) -> Result<String, String> {
-    let prefix = format!("https://github.com/{REPO}/releases/download/");
-    if !asset_url.starts_with(&prefix) {
-        return Err("우리 저장소의 파일이 아닙니다".into());
-    }
-    if !safe_asset_name(&asset_name) {
-        return Err("받을 수 없는 파일 이름입니다".into());
-    }
-
-    let dir = app
-        .path()
-        .download_dir()
-        .map_err(|e| format!("다운로드 폴더를 찾지 못했습니다: {e}"))?;
-    let target = dir.join(&asset_name);
-
-    let mut res = client()?
-        .get(&asset_url)
-        .send()
-        .await
-        .map_err(|e| format!("내려받지 못했습니다: {}", e.without_url()))?;
-    if !res.status().is_success() {
-        return Err(format!("내려받지 못했습니다 — 서버가 {} 로 답했습니다", res.status()));
-    }
-    let total = res.content_length().unwrap_or(0);
-    if total > MAX_BYTES {
-        return Err("파일이 너무 큽니다".into());
-    }
-
-    // 받다 만 파일을 그대로 두면 다음에 «이미 있다»고 오해하기 쉽다 —
-    // 임시 이름으로 받고 다 받았을 때만 제 이름을 준다.
-    let temp = dir.join(format!("{asset_name}.part"));
-    let mut file = std::fs::File::create(&temp).map_err(|e| format!("파일을 만들지 못했습니다: {e}"))?;
-    let mut done: u64 = 0;
-    let mut last_percent = u8::MAX;
-
-    loop {
-        let chunk = match res.chunk().await {
-            Ok(Some(c)) => c,
-            Ok(None) => break,
-            Err(e) => {
-                let _ = std::fs::remove_file(&temp);
-                return Err(format!("받는 중에 끊겼습니다: {}", e.without_url()));
-            }
-        };
-        done += chunk.len() as u64;
-        if done > MAX_BYTES {
-            let _ = std::fs::remove_file(&temp);
-            return Err("파일이 너무 큽니다".into());
-        }
-        if let Err(e) = file.write_all(&chunk) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(format!("파일을 쓰지 못했습니다: {e}"));
-        }
-        if total > 0 {
-            let percent = ((done * 100) / total) as u8;
-            if percent != last_percent {
-                last_percent = percent;
-                let _ = app.emit("update-progress", Progress { done, total, percent });
-            }
-        }
-    }
-    file.flush().map_err(|e| format!("파일을 쓰지 못했습니다: {e}"))?;
-    drop(file);
-    if total > 0 && done != total {
-        let _ = std::fs::remove_file(&temp);
-        return Err("받은 크기가 알려진 크기와 다릅니다 — 다시 시도해 주세요".into());
-    }
-    std::fs::rename(&temp, &target).map_err(|e| format!("파일 이름을 바꾸지 못했습니다: {e}"))?;
-
-    // 열어 두면 사용자가 앱을 응용 프로그램 폴더로 끌어다 놓을 수 있다
-    std::process::Command::new("/usr/bin/open")
-        .arg(&target)
-        .spawn()
-        .map_err(|e| format!("받은 파일을 열지 못했습니다: {e}"))?;
-    Ok(target.to_string_lossy().to_string())
+/// 릴리스 쪽지를 브라우저로 연다
+fn is_release_page(url: &str) -> bool {
+    let base = format!("https://github.com/{REPO}/releases");
+    url == base || url.starts_with(&format!("{base}/"))
 }
 
-/// 릴리스 쪽지를 브라우저로 연다
 #[tauri::command]
 pub async fn update_open_page(url: String) -> Result<(), String> {
-    if !url.starts_with(&format!("https://github.com/{REPO}/releases")) {
+    if !is_release_page(&url) {
         return Err("우리 저장소의 주소가 아닙니다".into());
     }
     std::process::Command::new("/usr/bin/open")
@@ -313,51 +184,31 @@ mod tests {
         let info = to_info(real(), "0.6.0");
         assert_eq!(info.latest, "0.6.0", "v 는 떼어 낸다");
         assert!(!info.newer, "같은 판이면 새 판이 아니다");
-        assert_eq!(info.asset_name.as_deref(), Some("_0.6.0_aarch64.dmg"));
-        assert_eq!(info.asset_size, Some(19922944));
         assert!(info.page_url.ends_with("/v0.6.0"));
-        assert!(info.notes.starts_with("## 사진이"));
-        assert_eq!(info.published_at.as_deref(), Some("2026-09-01T05:08:04Z"));
 
         // 옛 판을 쓰고 있으면 새 판이라고 알려 준다
         let info = to_info(real(), "0.5.4");
         assert!(info.newer);
-        assert!(info.asset_url.is_some());
-    }
-
-    /// 자산이 없거나 우리 것이 아니면 «받기»를 내밀지 않는다 — 주소를 그대로 믿지 않는다
-    #[test]
-    fn it_never_offers_a_download_it_should_not() {
-        let none: Release = serde_json::from_str(r#"{"tag_name":"v9.0.0","html_url":"x","assets":[]}"#).unwrap();
-        assert!(pick_asset(&none).is_none(), "자산이 없다");
-
-        let elsewhere: Release = serde_json::from_str(
-            r#"{"tag_name":"v9.0.0","html_url":"x","assets":[{"name":"a.dmg","browser_download_url":"https://evil.example/a.dmg","size":10}]}"#,
-        )
-        .unwrap();
-        assert!(pick_asset(&elsewhere).is_none(), "우리 저장소가 아닌 주소");
-
-        let huge: Release = serde_json::from_str(
-            r#"{"tag_name":"v9.0.0","html_url":"x","assets":[{"name":"a.dmg","browser_download_url":"https://github.com/HyunjoonKwak/photo_desk/releases/download/v9/a.dmg","size":999999999999}]}"#,
-        )
-        .unwrap();
-        assert!(pick_asset(&huge).is_none(), "너무 큰 파일");
-
-        let script: Release = serde_json::from_str(
-            r#"{"tag_name":"v9.0.0","html_url":"x","assets":[{"name":"run.sh","browser_download_url":"https://github.com/HyunjoonKwak/photo_desk/releases/download/v9/run.sh","size":10}]}"#,
-        )
-        .unwrap();
-        assert!(pick_asset(&script).is_none(), "dmg 가 아닌 것");
     }
 
     /// 답에 없는 칸이 있어도 살아남아야 한다 — 없는 것과 못 읽는 것은 다르다
     #[test]
-    fn a_release_without_notes_or_assets_still_reads() {
+    fn a_release_with_only_required_fields_still_reads() {
         let bare: Release = serde_json::from_str(r#"{"tag_name":"v0.7.0","html_url":"u"}"#).unwrap();
         let info = to_info(bare, "0.6.0");
         assert!(info.newer);
-        assert_eq!(info.notes, "");
-        assert_eq!(info.asset_url, None, "받을 것이 없으면 내밀지 않는다");
+    }
+
+    #[test]
+    fn only_the_exact_release_path_can_be_opened() {
+        assert!(is_release_page("https://github.com/HyunjoonKwak/photo_desk/releases"));
+        assert!(is_release_page(
+            "https://github.com/HyunjoonKwak/photo_desk/releases/tag/v0.8.0"
+        ));
+        assert!(!is_release_page(
+            "https://github.com/HyunjoonKwak/photo_desk/releasesevil/tag/v0.8.0"
+        ));
+        assert!(!is_release_page("https://evil.example/HyunjoonKwak/photo_desk/releases"));
     }
 
     #[test]
@@ -381,18 +232,4 @@ mod tests {
         assert_eq!(parts("1.2.3.4"), [1, 2, 3], "네 번째 자리는 보지 않는다");
     }
 
-    /// 받는 파일 이름은 우리가 정하지 않는다 — 저장소에서 온 값이므로 믿지 않는다
-    #[test]
-    fn a_file_name_can_never_escape_the_downloads_folder() {
-        assert!(safe_asset_name("에이컷_0.6.0_aarch64.dmg"), "한글 이름은 정상이다");
-        assert!(safe_asset_name("A-Cut_0.4.1_aarch64.dmg"));
-        assert!(!safe_asset_name("../../etc/passwd.dmg"));
-        assert!(!safe_asset_name("a/b.dmg"));
-        assert!(!safe_asset_name("a\\b.dmg"));
-        assert!(!safe_asset_name(".hidden.dmg"));
-        assert!(!safe_asset_name("no-extension"));
-        assert!(!safe_asset_name("script.sh"));
-        assert!(!safe_asset_name(""));
-        assert!(!safe_asset_name(&format!("{}.dmg", "a".repeat(300))));
-    }
 }

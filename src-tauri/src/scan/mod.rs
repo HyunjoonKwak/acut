@@ -218,6 +218,10 @@ pub fn scan_folder(
                     AND files.modified_at IS excluded.modified_at THEN files.full_hash END,
                 image_hash=CASE WHEN files.size=excluded.size
                     AND files.modified_at IS excluded.modified_at THEN files.image_hash END,
+                phash=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.phash END,
+                psig=CASE WHEN files.size=excluded.size
+                    AND files.modified_at IS excluded.modified_at THEN files.psig END,
                 size=excluded.size, taken_at=excluded.taken_at,
                 taken_at_source=excluded.taken_at_source,
                 ext=excluded.ext, kind=excluded.kind,
@@ -731,7 +735,8 @@ mod tests {
         db.write(|c| c.execute(
             "UPDATE files SET cam_model='old camera', orientation=6,
                 gps_lat=37.5, gps_lon=127.0, geo_name='old place',
-                sharpness=1.0, exposure=2.0, embedding=X'01', faces_at=123",
+                sharpness=1.0, exposure=2.0, embedding=X'01', faces_at=123,
+                phash=456, psig=X'0102'",
             [],
         )).unwrap();
 
@@ -740,7 +745,8 @@ mod tests {
         let stale: i64 = db.read(|c| c.query_row(
             "SELECT COUNT(*) FROM files WHERE cam_model IS NOT NULL OR orientation IS NOT NULL
                 OR gps_lat IS NOT NULL OR geo_name IS NOT NULL OR sharpness IS NOT NULL
-                OR exposure IS NOT NULL OR embedding IS NOT NULL OR faces_at IS NOT NULL",
+                OR exposure IS NOT NULL OR embedding IS NOT NULL OR faces_at IS NOT NULL
+                OR phash IS NOT NULL OR psig IS NOT NULL",
             [],
             |r| r.get(0),
         )).unwrap();

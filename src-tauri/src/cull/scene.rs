@@ -180,7 +180,18 @@ pub fn scan(
     let rows = &loaded.rows;
     let mut progress = SceneProgress { photos: rows.len(), ..Default::default() };
     on_progress(&progress);
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(progress);
+    }
     if rows.len() < MIN_GROUP {
+        db.transaction(|tx| {
+            tx.execute(
+                "DELETE FROM group_members WHERE group_id IN (SELECT id FROM groups WHERE kind = ?1)",
+                [KIND],
+            )?;
+            tx.execute("DELETE FROM groups WHERE kind = ?1", [KIND])?;
+            Ok(())
+        })?;
         return Ok(progress);
     }
     let taken = taken(db)?;
@@ -420,6 +431,18 @@ mod tests {
         let p = run(&db);
         assert_eq!(p.groups, 1);
         assert_eq!(members_of(&db).len(), 2);
+    }
+
+    #[test]
+    fn rerunning_with_fewer_than_two_photos_clears_old_groups() {
+        let (_d, db) = db();
+        seed(&db, &[(1, 1000, 100, None, near(1.0)), (2, 1100, 100, None, near(0.99))]);
+        assert_eq!(run(&db).groups, 1);
+        db.write(|c| c.execute("UPDATE files SET trashed_at=1 WHERE id=2", []))
+            .unwrap();
+        let p = run(&db);
+        assert_eq!((p.groups, p.members), (0, 0));
+        assert!(members_of(&db).is_empty(), "대상이 한 장뿐인데 이전 그룹이 남았다");
     }
 
     #[test]

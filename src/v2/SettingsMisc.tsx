@@ -8,19 +8,13 @@ import { toast } from "./toastStore";
 import { Btn } from "./ui";
 import { useUi } from "./uiStore";
 import { Section, Row } from "./settingsUi";
-import { listen } from "@tauri-apps/api/event";
 
 /** 백엔드가 알려 주는 새 판 정보 — src-tauri/src/api/update.rs 와 짝이다 */
 type UpdateInfo = {
   current: string;
   latest: string;
   newer: boolean;
-  notes: string;
   page_url: string;
-  published_at: string | null;
-  asset_name: string | null;
-  asset_url: string | null;
-  asset_size: number | null;
 };
 
 export function Advanced() {
@@ -121,89 +115,57 @@ export function About() {
 }
 
 /**
- * 새 판 확인과 내려받기.
+ * 새 판을 확인하고 공식 릴리스 페이지를 연다.
  *
- * 브라우저 대신 앱 안에서 받는 이유: 브라우저로 받으면 격리 표시가 붙어
- * 자체 서명한 앱이 «손상되었다»며 열리지 않는다.
+ * 설치 파일은 앱이 직접 받지 않는다. 브라우저로 받은 파일이어야 macOS의
+ * Gatekeeper가 서명·공증 여부를 검사할 수 있다.
  */
 function UpdateRow() {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
-  const [busy, setBusy] = useState<"check" | "download" | null>(null);
-  const [percent, setPercent] = useState(0);
+  const [busy, setBusy] = useState(false);
   const [auto, setAuto] = useState(true);
 
   useEffect(() => {
     invoke<string | null>("settings_get", { key: "update.auto" })
       .then((v) => setAuto(v !== "off"))
       .catch(() => {});
-    const un = listen<{ percent: number }>("update-progress", (e) =>
-      setPercent(e.payload.percent),
-    );
-    return () => {
-      void un.then((f) => f());
-    };
   }, []);
 
   const check = () => {
-    setBusy("check");
+    setBusy(true);
     invoke<UpdateInfo>("update_check")
       .then((v) => {
         setInfo(v);
         if (!v.newer) toast(`최신판입니다 (${v.current})`);
       })
       .catch((e) => toast(String(e), "drop"))
-      .finally(() => setBusy(null));
+      .finally(() => setBusy(false));
   };
 
-  const download = () => {
-    if (!info?.asset_url || !info.asset_name) return;
-    setBusy("download");
-    setPercent(0);
-    invoke<string>("update_download", {
-      assetUrl: info.asset_url,
-      assetName: info.asset_name,
-    })
-      .then(() => toast("받았습니다 — 열린 창에서 앱을 «응용 프로그램»으로 끌어다 놓으세요"))
-      .catch((e) => toast(String(e), "drop"))
-      .finally(() => setBusy(null));
-  };
-
-  const size = info?.asset_size ? ` · ${(info.asset_size / 1048576).toFixed(0)}MB` : "";
-  const hint = busy === "download"
-    ? `받는 중 ${percent}%${size}`
-    : info === null
+  const hint = info === null
       ? "GitHub 릴리스에서 새 판이 있는지 살펴봅니다."
       : info.newer
-        ? `${info.latest} 이 나왔습니다 (지금 ${info.current})${size}. 받으면 열리는 창에서 앱을 «응용 프로그램»으로 끌어다 놓으세요.`
+        ? `${info.latest} 이 나왔습니다 (지금 ${info.current}). 공식 릴리스 페이지에서 서명·공증된 설치 파일을 받으세요.`
         : `최신판입니다 (${info.current}).`;
 
   return (
     <>
       <Row label="업데이트" hint={hint}>
         <>
-          {info?.newer && info.asset_url && (
-            <Btn
-              disabled={busy !== null}
-              onClick={download}
-              title="앱 안에서 받습니다 — 브라우저로 받으면 «손상됨»으로 열리지 않습니다"
-            >
-              {busy === "download" ? `${percent}%` : `${info.latest} 받기`}
-            </Btn>
-          )}
           {info?.newer && (
             <Btn
-              disabled={busy !== null}
+              disabled={busy}
               onClick={() =>
                 invoke("update_open_page", { url: info.page_url }).catch((e) =>
                   toast(String(e), "drop"),
                 )
               }
             >
-              무엇이 바뀌었나
+              릴리스 페이지
             </Btn>
           )}
-          <Btn disabled={busy !== null} onClick={check}>
-            {busy === "check" ? "살피는 중…" : "확인"}
+          <Btn disabled={busy} onClick={check}>
+            {busy ? "살피는 중…" : "확인"}
           </Btn>
         </>
       </Row>

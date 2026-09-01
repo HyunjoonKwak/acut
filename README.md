@@ -29,11 +29,9 @@ NAS 1차 구역(폰 백업본)을 분류·정리해 공용·내사진 구역으�
 
 [Releases](https://github.com/HyunjoonKwak/photo_desk/releases)에서 최신 `.dmg`를 받아 설치합니다.
 
-앱은 ad-hoc 서명되어 있어 다운로드 직후 "손상됨" 경고가 뜰 수 있습니다. 터미널에서 한 번만 실행해 주세요:
-
-```bash
-xattr -cr '/Applications/Photo Desk.app'
-```
+공개 릴리스는 Developer ID로 서명하고 Apple 공증을 마친 번들만 게시합니다. 앱 안의
+업데이트 알림도 설치 파일을 직접 열지 않고 이 릴리스 페이지로 이동합니다. macOS가
+서명 또는 공증 오류를 표시하면 격리 속성을 지우지 말고 해당 릴리스를 설치하지 마세요.
 
 > 기존 "스마트 폴더" 사용자: 첫 실행 시 라이브러리(DB·설정)가 자동으로 이전됩니다.
 

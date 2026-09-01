@@ -114,7 +114,7 @@ fn add_phash(c: &Connection) -> rusqlite::Result<()> {
     if !has_column(c, "files", "phash")? {
         c.execute_batch("ALTER TABLE files ADD COLUMN phash INTEGER")?;
     }
-    // 16×16 회색조 256바이트 — 해시가 이은 짝이 정말 같은 그림인지 견준다
+    // 버전+16×16 밝기+8×8 색차 — 해시가 이은 짝이 정말 같은 그림인지 견준다
     if !has_column(c, "files", "psig")? {
         c.execute_batch("ALTER TABLE files ADD COLUMN psig BLOB")?;
     }

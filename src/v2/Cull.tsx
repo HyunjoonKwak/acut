@@ -359,13 +359,16 @@ export default function Cull({
     };
     // 갈래 하나가 끝날 때마다 위의 숫자와 목록을 새로 읽는다 — 안 그러면 전체
     // 해시를 읽는 한 시간 동안 «같은 순간 0»으로 보여 아무것도 못 찾은 줄 안다.
-    const stage = (msg: string) => {
-      setBusy(msg);
+    const stage = () => {
       loadSummary();
       loadGroups(kindRef.current);
     };
-    on("cull-junk", () => stage("잡동사니 완료 — 같은 순간 찾는 중"));
-    on("cull-burst", () => stage("같은 순간 완료 — 중복 확인 중"));
+    on<number>("cull-stage", (next) => {
+      const label = KINDS.find((item) => item.id === next)?.label ?? "고르기";
+      setBusy(`${label} 찾는 중…`);
+    });
+    on("cull-junk", stage);
+    on("cull-burst", stage);
     on<{
       phase: string;
       hashed: number;
@@ -385,7 +388,7 @@ export default function Cull({
             : `중복 확인 — 빠른 해시 ${p.hashed.toLocaleString()}/${p.candidates.toLocaleString()}`,
       );
     });
-    on("cull-dedup", () => stage("중복 완료 — 줄인 사본 찾는 중"));
+    on("cull-dedup", stage);
     on<{
       phase: string;
       fill_total: number;
@@ -399,7 +402,7 @@ export default function Cull({
           : `줄인 사본 — 묶는 중 (${p.photos.toLocaleString()}장)`,
       );
     });
-    on("cull-phash", () => stage("줄인 사본 완료 — 비슷한 장면 찾는 중"));
+    on("cull-phash", stage);
     on<{ photos: number; groups: number }>("cull-scene", (p) =>
       setBusy(
         p.photos === 0
@@ -411,6 +414,12 @@ export default function Cull({
       setBusy("");
       // 다시 찾기가 무리를 새로 만들면 id 가 재사용될 수 있다 — 옛 «확정 취소»는 버린다
       setUndoStack([]);
+      loadSummary();
+      loadGroups(kindRef.current);
+    });
+    on<string>("cull-error", (message) => {
+      setBusy("");
+      toast(message, "drop");
       loadSummary();
       loadGroups(kindRef.current);
     });
@@ -674,7 +683,10 @@ export default function Cull({
               onClick={() => {
                 setElapsed(0);
                 setBusy("찾는 중…");
-                invoke("cull_scan").catch((e) => setBusy(String(e)));
+                invoke("cull_scan").catch((e) => {
+                  setBusy("");
+                  toast(String(e), "drop");
+                });
               }}
               className="h-control px-3 rounded-md text-[13.5px] text-fg-dim ring-1 ring-line-strong"
             >
@@ -684,15 +696,18 @@ export default function Cull({
                 「줄인 사본」은 썸네일만 읽어 31초다 — 그것 하나 보려고 기다릴 이유가 없다. */}
             {kind >= 0 && (
               <button
-                title={`${KINDS.find((k) => k.id === kind)?.label ?? ""}만 다시 찾습니다`}
+                title={`${KINDS.find((k) => k.id === kind)?.label ?? ""}부터 다시 찾고 필요한 후속 갈래도 갱신합니다`}
                 onClick={() => {
                   setElapsed(0);
                   setBusy("찾는 중…");
-                  invoke("cull_scan_kind", { kind }).catch((e) => setBusy(String(e)));
+                  invoke("cull_scan_kind", { kind }).catch((e) => {
+                    setBusy("");
+                    toast(String(e), "drop");
+                  });
                 }}
                 className="h-control px-3 rounded-md text-[13.5px] text-fg-mute ring-1 ring-line"
               >
-                이 갈래만
+                이 갈래 갱신
               </button>
             )}
           </>

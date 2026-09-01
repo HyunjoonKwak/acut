@@ -258,7 +258,6 @@ pub fn run() {
             api::files_facets,
             api::update::update_check,
             api::update::update_check_auto,
-            api::update::update_download,
             api::update::update_open_page,
             api::geo::geo_stats,
             api::geo::geo_fill_start,

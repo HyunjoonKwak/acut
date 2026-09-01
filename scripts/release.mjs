@@ -51,10 +51,16 @@ function auditCrates() {
   run("취약점 점검", "cargo", ["audit", "--file", "src-tauri/Cargo.lock"]);
 }
 
+/** 앱에 실리는 npm 의존성에는 high 이상 취약점이 없어야 한다. */
+function auditFrontend() {
+  run("프론트 의존성 취약점 점검", "npm", ["audit", "--omit=dev", "--audit-level=high"]);
+}
+
 function main() {
   run("버전 일치", "node", ["scripts/check-versions.mjs"]);
   run("최소 러스트 버전", "node", ["scripts/check-msrv.mjs"]);
   auditCrates();
+  auditFrontend();
   run("프론트 테스트", "npm", ["test"]);
   run("린트", "npm", ["run", "lint"]);
   run("프론트 빌드", "npm", ["run", "build"]);
@@ -69,6 +75,7 @@ function main() {
   run("버전 올리기", "node", ["scripts/bump-version.mjs", type]);
   run("앱 빌드", "npx", ["tauri", "build"]);
   checkNotice();
+  checkMacDistribution();
 }
 
 /**
@@ -97,6 +104,27 @@ function checkNotice() {
       throw new Error(`${app} 안의 NOTICE 가 루트의 것과 다릅니다: ${path}`);
     }
     console.log(`  ${app}/Contents/Resources/NOTICE — 루트와 같음`);
+  }
+}
+
+/**
+ * 공개 배포물이 Gatekeeper가 신뢰하는 서명과 공증 티켓을 모두 가졌는지 확인한다.
+ *
+ * ad-hoc 서명도 `codesign --verify`만은 통과하므로 그것만 봐서는 안 된다. 실제
+ * Gatekeeper 평가와 stapler 검증까지 통과해야 릴리스가 끝난다. 인증서·공증 환경이
+ * 없는 개발자는 `npm run tauri:build`로 로컬 번들을 만들 수 있지만 `npm run release`는
+ * 공개 릴리스로 가장하지 않고 여기서 멈춘다.
+ */
+function checkMacDistribution() {
+  console.log("\n=== macOS 서명·공증 확인");
+  const macos = resolve(root, "src-tauri/target/release/bundle/macos");
+  const apps = existsSync(macos) ? readdirSync(macos).filter((n) => n.endsWith(".app")) : [];
+  if (!apps.length) throw new Error(`${macos} 안에 .app 이 없습니다.`);
+  for (const app of apps) {
+    const path = join(macos, app);
+    run("코드 서명 확인", "codesign", ["--verify", "--deep", "--strict", path]);
+    run("Gatekeeper 확인", "spctl", ["--assess", "--type", "execute", "--verbose=2", path]);
+    run("공증 티켓 확인", "xcrun", ["stapler", "validate", path]);
   }
 }
 

@@ -1,7 +1,5 @@
-use std::io::Write;
-
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
 
 const GITHUB_REPO: &str = "HyunjoonKwak/acut";
 const HTTP_USER_AGENT: &str = "acut-updater";
@@ -17,13 +15,6 @@ pub struct UpdateInfo {
     pub asset_name: Option<String>,
     pub asset_url: Option<String>,
     pub asset_size: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct UpdateDownloadProgress {
-    downloaded: u64,
-    total: u64,
-    percent: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,10 +77,7 @@ pub async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
         .await
         .map_err(|e| format!("Invalid release data: {}", e))?;
 
-    let latest_version = release
-        .tag_name
-        .trim_start_matches(['v', 'V'])
-        .to_string();
+    let latest_version = release.tag_name.trim_start_matches(['v', 'V']).to_string();
     let dmg = release.assets.iter().find(|a| a.name.ends_with(".dmg"));
 
     Ok(UpdateInfo {
@@ -105,95 +93,31 @@ pub async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
     })
 }
 
-/// Downloads the release dmg into ~/Downloads and opens it. Downloading
-/// in-app keeps the file free of the quarantine xattr, so the ad-hoc
-/// signed app inside is not flagged as damaged by Gatekeeper.
+/// v1 호환용 명령 이름만 남긴다. 설치 파일을 앱이 직접 받으면 macOS의 다운로드
+/// 검증 경로를 우회할 수 있으므로 의도적으로 거부한다.
 #[tauri::command]
 pub async fn download_update(
-    app: AppHandle,
-    asset_url: String,
-    asset_name: String,
+    _app: AppHandle,
+    _asset_url: String,
+    _asset_name: String,
 ) -> Result<String, String> {
-    let allowed_prefix = format!("https://github.com/{GITHUB_REPO}/releases/download/");
-    if !asset_url.starts_with(&allowed_prefix) {
-        return Err("Unexpected download URL".to_string());
-    }
-    if asset_name.contains('/') || asset_name.contains("..") {
-        return Err("Unexpected asset name".to_string());
-    }
+    Err(
+        "앱 안에서 설치 파일을 직접 받지 않습니다. 공식 릴리스 페이지에서 내려받아 주세요."
+            .to_string(),
+    )
+}
 
-    let download_dir = app
-        .path()
-        .download_dir()
-        .map_err(|e| format!("Downloads folder not found: {}", e))?;
-    let target_path = download_dir.join(&asset_name);
-
-    let mut response = reqwest::Client::new()
-        .get(&asset_url)
-        .header("User-Agent", HTTP_USER_AGENT)
-        .send()
-        .await
-        .map_err(|e| format!("Download failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!("Download failed: HTTP {}", response.status()));
-    }
-
-    let total = response.content_length().unwrap_or(0);
-    let mut downloaded: u64 = 0;
-    let mut last_percent: u8 = 0;
-
-    let mut file = std::fs::File::create(&target_path)
-        .map_err(|e| format!("Cannot write file: {}", e))?;
-
-    loop {
-        let chunk = match response.chunk().await {
-            Ok(Some(chunk)) => chunk,
-            Ok(None) => break,
-            Err(e) => {
-                let _ = std::fs::remove_file(&target_path);
-                return Err(format!("Download interrupted: {}", e));
-            }
-        };
-        if let Err(e) = file.write_all(&chunk) {
-            let _ = std::fs::remove_file(&target_path);
-            return Err(format!("Cannot write file: {}", e));
-        }
-        downloaded += chunk.len() as u64;
-        if total > 0 {
-            let percent = ((downloaded * 100) / total) as u8;
-            if percent != last_percent {
-                last_percent = percent;
-                let _ = app.emit(
-                    "update-download-progress",
-                    UpdateDownloadProgress {
-                        downloaded,
-                        total,
-                        percent,
-                    },
-                );
-            }
-        }
-    }
-    file.flush().map_err(|e| format!("Cannot write file: {}", e))?;
-    drop(file);
-
-    // Mount the dmg so the user can drag the app into Applications
-    std::process::Command::new("open")
-        .arg(&target_path)
-        .spawn()
-        .map_err(|e| format!("Failed to open the downloaded file: {}", e))?;
-
-    Ok(target_path.to_string_lossy().to_string())
+fn is_release_page(url: &str) -> bool {
+    let base = format!("https://github.com/{GITHUB_REPO}/releases");
+    url == base || url.starts_with(&format!("{base}/"))
 }
 
 #[tauri::command]
 pub async fn open_release_page(url: String) -> Result<(), String> {
-    let allowed_prefix = format!("https://github.com/{GITHUB_REPO}/releases");
-    if !url.starts_with(&allowed_prefix) {
+    if !is_release_page(&url) {
         return Err("Unexpected release URL".to_string());
     }
-    std::process::Command::new("open")
+    std::process::Command::new("/usr/bin/open")
         .arg(&url)
         .spawn()
         .map_err(|e| format!("Failed to open browser: {}", e))?;

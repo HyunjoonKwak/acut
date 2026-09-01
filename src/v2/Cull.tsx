@@ -59,6 +59,7 @@ const KINDS = [
   { id: -3, label: "폴더 비교", hint: "내용이 완전히 같은 폴더들 — 하나만 남기고 나머지는 제외" },
   { id: -4, label: "두 폴더 비교", hint: "내가 고른 두 폴더 아래를 견준다 — 후보1번/연도별 ⇔ 후보2번" },
   { id: 0, label: "개별 비교", hint: "같은 사진 무리(메타데이터만 다른 사본 포함) — 한 장씩 보며" },
+  { id: 4, label: "줄인 사본", hint: "같은 사진을 크기만 줄이거나 다시 저장한 것" },
   { id: 2, label: "같은 순간", hint: "연달아 찍은 것" },
   { id: 1, label: "잡동사니", hint: "스크린샷·다운로드본" },
   { id: 3, label: "비슷한 장면", hint: "AI가 본 닮은 사진 (벡터 필요)" },
@@ -384,7 +385,21 @@ export default function Cull({
             : `중복 확인 — 빠른 해시 ${p.hashed.toLocaleString()}/${p.candidates.toLocaleString()}`,
       );
     });
-    on("cull-dedup", () => stage("중복 완료 — 비슷한 장면 찾는 중"));
+    on("cull-dedup", () => stage("중복 완료 — 줄인 사본 찾는 중"));
+    on<{
+      phase: string;
+      fill_total: number;
+      fill_done: number;
+      photos: number;
+    }>("cull-phash-progress", (p) => {
+      // 해시는 썸네일에서 재므로 빠르지만 14만 장이면 몇 분이다 — 장수를 보인다
+      setBusy(
+        p.phase === "fill"
+          ? `줄인 사본 — 그림 해시 ${p.fill_done.toLocaleString()}/${p.fill_total.toLocaleString()}`
+          : `줄인 사본 — 묶는 중 (${p.photos.toLocaleString()}장)`,
+      );
+    });
+    on("cull-phash", () => stage("줄인 사본 완료 — 비슷한 장면 찾는 중"));
     on<{ photos: number; groups: number }>("cull-scene", (p) =>
       setBusy(
         p.photos === 0

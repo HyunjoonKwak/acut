@@ -12,6 +12,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_trash_columns(c)?;
     add_faces_at(c)?;
     add_image_hash(c)?;
+    add_phash(c)?;
     add_done_at(c)?;
     add_geo_levels(c)?;
     add_nas_pulls(c)?;
@@ -103,6 +104,20 @@ fn add_image_hash(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_files_image_hash ON files(image_hash) WHERE image_hash IS NOT NULL;",
     )
+}
+
+/// 크기만 줄인 사본을 찾는 지각 해시(2026-09-01). 64비트를 i64 로 담는다 —
+/// SQLite 정수가 부호 있는 64비트라 u64 를 그대로는 못 넣는다. 읽을 때 되돌린다.
+/// 색인은 두지 않는다 — 같은 값 찾기가 아니라 전량을 메모리로 올려 견주기 때문이다.
+fn add_phash(c: &Connection) -> rusqlite::Result<()> {
+    if !has_column(c, "files", "phash")? {
+        c.execute_batch("ALTER TABLE files ADD COLUMN phash INTEGER")?;
+    }
+    // 16×16 회색조 256바이트 — 해시가 이은 짝이 정말 같은 그림인지 견준다
+    if !has_column(c, "files", "psig")? {
+        c.execute_batch("ALTER TABLE files ADD COLUMN psig BLOB")?;
+    }
+    Ok(())
 }
 
 /// «처리됨 보기»(2026-08-31) — 확정한 무리를 최근 순으로 다시 보고 무리 단위로 취소한다

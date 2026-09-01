@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS files (
     quick_hash  TEXT,                          -- xxHash64, 앞뒤 일부
     full_hash   TEXT,                          -- SHA-256, 전체
     image_hash  TEXT,                          -- SHA-256, JPEG 그림 데이터만(EXIF·XMP 등 머리 제외)
+    phash       INTEGER,                       -- 64비트 지각 해시(i64로 담음) — 크기만 줄인 사본 찾기
+    psig        BLOB,                          -- 16×16 회색조 256B — 그 짝이 정말 같은 그림인지 견주는 서명
 
     -- 이미지 속성 -------------------------------------------------------
     width       INTEGER,
@@ -244,7 +246,7 @@ CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS groups (
     id         INTEGER PRIMARY KEY,
-    kind       INTEGER NOT NULL,               -- 0 완전중복 · 1 잡동사니 · 2 같은순간 · 3 시각유사
+    kind       INTEGER NOT NULL,               -- 0 완전중복 · 1 잡동사니 · 2 같은순간 · 3 시각유사 · 4 줄인사본
     reason     TEXT,                           -- '스크린샷' 등 세부 사유
     size_bytes INTEGER NOT NULL DEFAULT 0,     -- 정리하면 확보되는 용량
     state      INTEGER NOT NULL DEFAULT 0,     -- 0 대기 · 1 처리됨 · 2 보류

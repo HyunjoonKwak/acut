@@ -80,7 +80,7 @@ fn taken(db: &Db) -> Result<HashMap<i64, Vec<i64>>> {
         let mut st = c.prepare(
             "SELECT m.file_id, m.group_id FROM group_members m
              JOIN groups g ON g.id = m.group_id
-             WHERE g.kind IN (0, 2) AND g.state = 0",
+             WHERE g.kind IN (0, 2, 4) AND g.state = 0",
         )?;
         let it = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         it.collect::<rusqlite::Result<Vec<_>>>()

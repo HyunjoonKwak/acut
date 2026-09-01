@@ -4,7 +4,7 @@
 //! 진행 상황을 이벤트로 흘린다. 조회는 즉시 돌아온다.
 
 use crate::api::{err, AppState};
-use crate::cull::{apply, burst, dedup, folders, junk, scene};
+use crate::cull::{apply, burst, dedup, folders, junk, phash, scene};
 use super::job;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -16,6 +16,7 @@ pub const KIND_DUP: i32 = 0;
 pub const KIND_JUNK: i32 = 1;
 pub const KIND_BURST: i32 = 2;
 pub const KIND_SCENE: i32 = scene::KIND;
+pub const KIND_RESIZED: i32 = phash::KIND;
 
 #[derive(Debug, Serialize)]
 pub struct GroupRow {
@@ -55,12 +56,13 @@ pub struct MemberRow {
     pub area: i32,
 }
 
-/// 세 갈래를 순서대로 돌린다. 가벼운 것부터 — 결과가 빨리 보이게.
+/// 갈래를 순서대로 돌린다. 가벼운 것부터 — 결과가 빨리 보이게.
 #[tauri::command]
 pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
+    let state_cache_base = state.cache_base.clone();
     // 스캔·벡터와 같은 스위치 — 같이 돌면 DB와 디스크를 다툰다. 상태바에 보이고
     // 창이 뒤로 가도 App Nap에 걸리지 않는다 (해시는 한 시간도 걸린다).
     let Some(guard) = job::try_start_wait(&state.running, "고르기", std::time::Duration::from_secs(20)) else {
@@ -103,7 +105,22 @@ pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
                 return;
             }
         }
-        // 비슷한 장면 — 벡터가 있는 사진만. 없으면 photos 0으로 곧 끝난다.
+        // 4. 크기만 줄인 사본 — 썸네일을 읽어 지각 해시를 채운 뒤 묶는다.
+        //    «비슷한 장면»보다 먼저다: 같은 그림이라는 더 또렷한 판정이므로,
+        //    여기서 묶인 짝은 저기서 다시 보여 주지 않는다.
+        let cache_base = state_cache_base.clone();
+        match phash::scan(&db, &cache_base, phash::DEFAULT_THRESHOLD, Arc::clone(&cancel), |p| {
+            let _ = app.emit("cull-phash-progress", p);
+        }) {
+            Ok(p) => {
+                let _ = app.emit("cull-phash", &p);
+            }
+            Err(e) => {
+                let _ = app.emit("cull-error", e.to_string());
+                return;
+            }
+        }
+        // 5. 비슷한 장면 — 벡터가 있는 사진만. 없으면 photos 0으로 곧 끝난다.
         match scene::scan(&db, scene::DEFAULT_THRESHOLD, cancel, |_| {}) {
             Ok(p) => {
                 let _ = app.emit("cull-scene", &p);

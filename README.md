@@ -29,9 +29,20 @@ NAS 1차 구역(폰 백업본)을 분류·정리해 공용·내사진 구역으�
 
 [Releases](https://github.com/HyunjoonKwak/photo_desk/releases)에서 최신 `.dmg`를 받아 설치합니다.
 
-공개 릴리스는 Developer ID로 서명하고 Apple 공증을 마친 번들만 게시합니다. 앱 안의
-업데이트 알림도 설치 파일을 직접 열지 않고 이 릴리스 페이지로 이동합니다. macOS가
-서명 또는 공증 오류를 표시하면 격리 속성을 지우지 말고 해당 릴리스를 설치하지 마세요.
+지금 판은 **개인 사용을 위한 자체 서명(ad-hoc)** 입니다. Apple 공증을 받지 않았으므로
+브라우저로 받으면 격리 표시가 붙어 macOS가 «손상되었기 때문에 열 수 없습니다»라고 막습니다.
+받은 뒤 한 번만 지우세요:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Photo Desk.app"
+```
+
+앱 안의 업데이트 알림은 설치 파일을 직접 열지 않고 이 릴리스 페이지로 이동합니다.
+
+> **공개 배포로 낼 때는** `src-tauri/tauri.conf.json` 의 `signingIdentity` 를 Developer ID 로
+> 바꾸세요. 그러면 릴리스 문지기가 Gatekeeper 평가와 공증 티켓까지 확인하고, 위의 격리
+> 해제도 필요 없어집니다. **선언을 빼면 공개 배포로 보고 공증을 요구합니다** — 설정을
+> 빠뜨린 것이 검사를 건너뛰는 길이 되지 않게.
 
 > 기존 "스마트 폴더" 사용자: 첫 실행 시 라이브러리(DB·설정)가 자동으로 이전됩니다.
 

@@ -26,15 +26,30 @@ const FILES = [
 /**
  * 릴리스 대본을 임시 사본에서 돌린다 — 진짜 저장소는 건드리지 않는다.
  *
- * `breakAt` 이 넘어뜨릴 명령, `bundleNotice` 가 가짜 빌드 결과에 고지를 둘지.
+ * `breakAt` 이 넘어뜨릴 명령, `bundleNotice` 가 가짜 빌드 결과에 고지를 둘지,
+ * `signingIdentity` 가 이 판을 무엇으로 선언할지 — `"-"` 면 자체 서명(ad-hoc),
+ * `null` 이면 아무 선언도 두지 않고, 그 밖이면 공개 배포다. 저장소의 실제 설정과
+ * 무관하게 세 길을 다 시험한다.
  */
-function runInSandbox(breakAt, bundleNotice = false) {
+function runInSandbox(breakAt, bundleNotice = false, signingIdentity = "Developer ID Application: 시험") {
   const box = mkdtempSync(join(tmpdir(), "acut-release-"));
   try {
     mkdirSync(join(box, "scripts"), { recursive: true });
     mkdirSync(join(box, "src-tauri"), { recursive: true });
     for (const f of [...FILES, "NOTICE"]) {
       cpSync(resolve(root, f), join(box, f));
+    }
+    // 배포 방식은 설정이 선언한다 — 시험이 그 선언을 직접 정한다
+    {
+      const path = join(box, "src-tauri/tauri.conf.json");
+      const conf = JSON.parse(readFileSync(path, "utf-8"));
+      if (signingIdentity === null) {
+        conf.bundle = { ...conf.bundle };
+        delete conf.bundle.macOS;
+      } else {
+        conf.bundle = { ...conf.bundle, macOS: { ...conf.bundle?.macOS, signingIdentity } };
+      }
+      writeFileSync(path, `${JSON.stringify(conf, null, 2)}\n`);
     }
     for (const f of ["release.mjs", "check-versions.mjs", "bump-version.mjs", "check-msrv.mjs"]) {
       cpSync(resolve(root, "scripts", f), join(box, "scripts", f));
@@ -139,6 +154,24 @@ for (const command of ["codesign", "xcrun"]) {
     assert.equal(after[f], before[f], `${f} 가 손댄 채 남았습니다`);
   }
   console.log(`✓ ${command} 검사 실패 — 버전 파일 원상 복구`);
+}
+
+// 7) 자체 서명(ad-hoc)으로 선언한 판은 Gatekeeper·공증 검사를 하지 않는다.
+//    개인 사용 판을 낼 수 있어야 하되, 그 길은 설정에 **명시**해야만 열린다.
+for (const command of ["spctl", "xcrun"]) {
+  const { status } = runInSandbox(command, true, "-");
+  assert.equal(status, 0, `자체 서명 판인데 ${command} 검사가 릴리스를 막았습니다`);
+}
+console.log("✓ 자체 서명 판 — 공증 검사를 건너뜀");
+
+// 8) 선언이 없으면 공개 배포로 친다 — 설정을 빠뜨린 것이 검사를 건너뛰는 길이 되면 안 된다
+{
+  const { status, before, after } = runInSandbox("spctl", true, null);
+  assert.equal(status, 1, "서명 선언이 없는데 공증 검사를 건너뛰었습니다");
+  for (const f of FILES) {
+    assert.equal(after[f], before[f], `${f} 가 손댄 채 남았습니다`);
+  }
+  console.log("✓ 서명 선언 없음 — 공개 배포로 보고 막음");
 }
 
 console.log("\n릴리스 복구 시험 통과");

@@ -108,23 +108,46 @@ function checkNotice() {
 }
 
 /**
- * 공개 배포물이 Gatekeeper가 신뢰하는 서명과 공증 티켓을 모두 가졌는지 확인한다.
+ * 이 판이 어떤 배포물인지는 `tauri.conf.json` 이 **선언한다.**
  *
- * ad-hoc 서명도 `codesign --verify`만은 통과하므로 그것만 봐서는 안 된다. 실제
- * Gatekeeper 평가와 stapler 검증까지 통과해야 릴리스가 끝난다. 인증서·공증 환경이
- * 없는 개발자는 `npm run tauri:build`로 로컬 번들을 만들 수 있지만 `npm run release`는
- * 공개 릴리스로 가장하지 않고 여기서 멈춘다.
+ * `signingIdentity` 가 `"-"` 면 자체 서명(ad-hoc) — 개인 사용 판이다. 그 밖에는
+ * 공개 배포로 본다. **선언이 없으면 공개 배포 쪽으로 친다** — 설정을 빠뜨린 것이
+ * 조용히 검사를 건너뛰는 길이 되면 안 되기 때문이다.
+ */
+function signingMode() {
+  const conf = JSON.parse(readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf-8"));
+  return conf?.bundle?.macOS?.signingIdentity === "-" ? "adhoc" : "public";
+}
+
+/**
+ * 배포물이 선언한 모습을 실제로 갖췄는지 확인한다.
+ *
+ * 공개 배포면 Gatekeeper가 신뢰하는 서명과 공증 티켓을 모두 가져야 한다.
+ * **`codesign --verify` 만 봐서는 안 된다 — ad-hoc 도 통과한다.** 실제 Gatekeeper
+ * 평가와 stapler 검증까지 지나야 공개 릴리스다.
+ *
+ * 자체 서명 판은 그 검사를 건너뛰되 **조용히 넘어가지 않는다.** 받는 쪽이 격리
+ * 속성을 손으로 지워야 열리므로, 무엇을 만들었는지 또렷이 말한다.
  */
 function checkMacDistribution() {
-  console.log("\n=== macOS 서명·공증 확인");
+  const mode = signingMode();
+  console.log(`\n=== macOS 서명 확인 (${mode === "adhoc" ? "자체 서명" : "공개 배포"})`);
   const macos = resolve(root, "src-tauri/target/release/bundle/macos");
   const apps = existsSync(macos) ? readdirSync(macos).filter((n) => n.endsWith(".app")) : [];
   if (!apps.length) throw new Error(`${macos} 안에 .app 이 없습니다.`);
   for (const app of apps) {
     const path = join(macos, app);
     run("코드 서명 확인", "codesign", ["--verify", "--deep", "--strict", path]);
+    if (mode === "adhoc") continue;
     run("Gatekeeper 확인", "spctl", ["--assess", "--type", "execute", "--verbose=2", path]);
     run("공증 티켓 확인", "xcrun", ["stapler", "validate", path]);
+  }
+  if (mode === "adhoc") {
+    console.warn("\n  ⚠ 자체 서명(ad-hoc) 판입니다 — Gatekeeper 는 이 번들을 거절합니다.");
+    console.warn("    받는 쪽이 격리 속성을 손으로 지워야 열립니다:");
+    console.warn('      xattr -dr com.apple.quarantine "/Applications/Photo Desk.app"');
+    console.warn("    공개 배포로 낼 때는 tauri.conf.json 의 signingIdentity 를");
+    console.warn("    Developer ID 로 바꾸세요 — 그러면 공증까지 여기서 확인합니다.");
   }
 }
 

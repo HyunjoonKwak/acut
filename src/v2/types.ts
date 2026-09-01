@@ -69,8 +69,10 @@ export type GeoStats = {
   /** 서버가 «이름 없음»으로 확정한 사진 — 더 할 일이 없다 */
   unavailable_files: number;
   cells_left: number;
-  /** 오프라인으로 풀 수 있는 자리 — 서버가 필요 없다 */
+  /** 오프라인으로 새로 판정할 자리 — 서버가 필요 없다 */
   offline_cells_left: number;
+  /** 이미 캐시에 이름이 있는데 아직 안 붙은 자리 — 옮겨 붙이기만 하면 된다 */
+  cache_cells_left: number;
   /** 서버에만 물을 수 있는 자리 — 오프라인이 이미 포기했다 */
   network_cells_left: number;
   /** 서버에 물을 수 있는 자리 전부 — 못 채운 곳과 정밀 보강할 곳 */

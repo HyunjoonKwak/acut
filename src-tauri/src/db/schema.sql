@@ -181,8 +181,19 @@ CREATE TABLE IF NOT EXISTS places (
     precision TEXT,                            -- approximate | boundary | remote
     distance_km REAL,                          -- 오프라인: 최근접 도시까지
     dataset_version TEXT,                      -- 오프라인 스냅샷 판
-    provider TEXT,                             -- 온라인: 물어본 서버 호스트
+    provider TEXT,                             -- 온라인: 이 값을 준 서버 호스트
     resolved_at INTEGER,                       -- 이 값이 정해진 시각
+    -- 온라인 «조회 결과»는 값의 출처와 다른 축이다. 서버가 이름을 못 찾았다고
+    -- 해서 이미 가진 이름이 틀린 것은 아니므로, 값은 그대로 두고 여기에만 적는다.
+    -- 이 칸이 없으면 같은 좌표를 볼 때마다 같은 서버에 되풀이해 묻게 된다.
+    --   NULL       아직 안 물어봤다
+    --   'success'  서버 답을 받아들여 값을 갱신했다
+    --   'none'     그 자리에 이름이 없다고 했다
+    --   'shallow'  기존보다 얕거나 국가 코드가 없는 부분 응답이었다
+    --   'conflict' 국가가 내장 경계와 어긋났다
+    online_outcome TEXT,
+    online_provider TEXT,                      -- 그 답을 준 서버 호스트 (열쇠는 뺀다)
+    online_checked_at INTEGER,                 -- 마지막으로 물어본 시각
     at      INTEGER NOT NULL                   -- 물어본 시각
 );
 CREATE INDEX IF NOT EXISTS idx_files_camera    ON files(cam_model) WHERE cam_model IS NOT NULL;

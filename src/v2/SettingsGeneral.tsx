@@ -290,7 +290,11 @@ function GeoRow() {
         .catch(() => {});
   }, [hasJob, geoRev]);
 
-  const offlineLeft = st?.offline_cells_left ?? 0;
+  // 서버 없이 할 수 있는 일 = 새로 판정할 자리 + 가진 값을 옮길 자리.
+  // 둘을 합쳐야 화면의 수와 실제로 도는 일이 같아진다 — 스캔으로 새 사진이
+  // 들어오면 판정할 자리는 0 이어도 붙일 자리는 남는다.
+  const offlineLeft = (st?.offline_cells_left ?? 0) + (st?.cache_cells_left ?? 0);
+  const cacheOnly = (st?.offline_cells_left ?? 0) === 0 && (st?.cache_cells_left ?? 0) > 0;
   const onlineLeft = st?.online_cells_left ?? 0;
   const ready = st?.endpoint_ready ?? false;
 
@@ -315,7 +319,11 @@ function GeoRow() {
       <Row
         label="지명 채우기"
         hint={`${summary} 앱에 담긴 지명 자료로 처리하므로 인터넷도 서버 설정도 필요 없습니다.${
-          offlineLeft > 0 ? ` 처리할 곳 ${offlineLeft.toLocaleString()}곳 — 몇 초면 끝납니다.` : ""
+          offlineLeft === 0
+            ? ""
+            : cacheOnly
+              ? ` 이미 아는 이름을 붙일 곳 ${offlineLeft.toLocaleString()}곳 — 곧바로 끝납니다.`
+              : ` 처리할 곳 ${offlineLeft.toLocaleString()}곳 — 몇 초면 끝납니다.`
         }`}
       >
         <Btn
@@ -324,7 +332,11 @@ function GeoRow() {
             start("offline", null, "지명을 채웁니다 — 진행은 위 작업 표시에서")
           }
         >
-          {offlineLeft > 0 ? `${offlineLeft.toLocaleString()}곳 채우기` : "처리 완료"}
+          {offlineLeft === 0
+            ? "처리 완료"
+            : cacheOnly
+              ? `${offlineLeft.toLocaleString()}곳 붙이기`
+              : `${offlineLeft.toLocaleString()}곳 채우기`}
         </Btn>
       </Row>
       <Row

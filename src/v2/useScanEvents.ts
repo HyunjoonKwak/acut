@@ -69,6 +69,11 @@ export function useScanEvents(cb: {
         );
       },
     );
+    // 스캔이 끝나며 이미 아는 이름을 새 사진에 붙였다 — 갈래와 지도가 곧바로 반영되게
+    on<number>("geo-applied", (n) => {
+      data().bumpGeo();
+      if (n > 0) toast(`새 사진 ${n.toLocaleString()}장에 지명을 붙였습니다`, "ok");
+    });
     on<string>("geo-error", (e) => {
       job().clear();
       toast(e, "drop");

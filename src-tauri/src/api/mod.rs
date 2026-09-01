@@ -228,6 +228,17 @@ pub async fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
         match r {
             Ok(p) => {
                 let _ = app.emit("scan-done", p);
+                // 새로 들어온 사진이 이미 이름을 아는 자리에 있으면 곧바로 붙인다.
+                // 서버도 내장 자료도 필요 없다 — 가진 값을 옮기는 것뿐이다.
+                // 폴더마다가 아니라 스캔이 끝날 때 한 번만 돈다(파일 표 1회 훑기).
+                match crate::geo::propagate_cached(&db) {
+                    Ok(n) if n > 0 => {
+                        log::info!("스캔 뒤 지명 캐시 적용 — {n}장");
+                        let _ = app.emit("geo-applied", n);
+                    }
+                    Ok(_) => {}
+                    Err(e) => log::warn!("스캔 뒤 지명 캐시 적용 실패: {e}"),
+                }
                 // 스캔이 끝나면 곧바로 썸네일을 만든다. 목록은 이미 볼 수 있다.
                 // 1차 — 박힌 미리보기를 그대로 받는다. 몇 분이면 그리드가 찬다.
                 let tp = scan::thumbs::generate(

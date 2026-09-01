@@ -140,6 +140,12 @@ fn add_geo_levels(c: &Connection) -> rusqlite::Result<()> {
         ("dataset_version", "TEXT"),
         ("provider", "TEXT"),
         ("resolved_at", "INTEGER"),
+        // 온라인 조회 이력 (2026-09-01) — 값의 출처와 다른 축이다. 서버가 못
+        // 찾았거나 얕게 답했을 때 값은 그대로 두고 «물어봤다»만 남겨야, 같은
+        // 좌표를 같은 서버에 되풀이해 묻지 않는다
+        ("online_outcome", "TEXT"),
+        ("online_provider", "TEXT"),
+        ("online_checked_at", "INTEGER"),
     ] {
         if !has_column(c, "places", col)? {
             c.execute_batch(&format!("ALTER TABLE places ADD COLUMN {col} {decl}"))?;
@@ -153,7 +159,8 @@ fn add_geo_levels(c: &Connection) -> rusqlite::Result<()> {
             AND country IS NOT NULL AND trim(country) <> '';
          UPDATE places SET source='nominatim', resolved_at=COALESCE(resolved_at, at)
           WHERE source='legacy' AND status='none';
-         CREATE INDEX IF NOT EXISTS idx_places_status ON places(status, source);",
+         CREATE INDEX IF NOT EXISTS idx_places_status ON places(status, source);
+         CREATE INDEX IF NOT EXISTS idx_places_online ON places(online_outcome, online_provider);",
     )?;
     // 첫 지명 구현은 «결과 없음»도 세 이름이 모두 NULL인 캐시 행으로 남겼다.
     // status를 단순 DEFAULT 'ok'로 더하면 그 행은 성공 캐시가 되어 다시 묻지도,

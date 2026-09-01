@@ -45,6 +45,9 @@
     ],
     "macOS": {
       "signingIdentity": "-"
+    },
+    "resources": {
+      "../NOTICE": "NOTICE"
     }
   }
 }

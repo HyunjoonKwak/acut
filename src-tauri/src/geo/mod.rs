@@ -47,7 +47,7 @@ const PREC_REMOTE: &str = "remote";
 /// 통계·대상 선택·파일 갱신이 반드시 같은 조건을 써야, 처리할 수 없는 행을
 /// 영원히 남은 것으로 세지 않는다. 이 모듈의 질의는 별칭 없이 files 를 읽는다.
 fn valid_gps_sql() -> String {
-    crate::db::predicates::valid_gps_sql("")
+    crate::db::predicates::valid_gps_sql(crate::db::predicates::Files::Bare)
 }
 
 fn validate_endpoint(raw: &str) -> Result<String> {
@@ -109,6 +109,18 @@ pub struct Place {
 }
 
 impl Place {
+    /// 몇 단계까지 채워졌나 — 0(빈 값)부터 3(시군구까지).
+    ///
+    /// 위가 비면 아래도 세지 않는다. «나라 없이 시군구만» 같은 결과는 트리에
+    /// 걸 자리가 없어 없는 것과 같다.
+    pub fn depth(&self) -> u8 {
+        match (&self.country, &self.admin1, &self.admin2) {
+            (Some(_), Some(_), Some(_)) => 3,
+            (Some(_), Some(_), None) => 2,
+            (Some(_), _, _) => 1,
+            _ => 0,
+        }
+    }
     /// 표시용 — 가장 좁은 단계. 셋 다 비면 None
     pub fn name(&self) -> Option<String> {
         self.admin2.clone().or_else(|| self.admin1.clone()).or_else(|| self.country.clone())
@@ -167,8 +179,9 @@ enum Answer {
     Fatal(String),
 }
 
-/// 재시도 사이에 쉬는 시간 — 1초, 2초, 4초. 서버가 Retry-After 를 주면 그것을 따른다.
-const RETRIES: &[Duration] = &[Duration::from_secs(1), Duration::from_secs(2), Duration::from_secs(4)];
+/// 재시도 사이에 쉬는 시간 — 2초, 5초, 15초. 서버가 Retry-After 를 주면 그것을 따른다.
+/// 어느 값도 `GAP`(초당 한 건)보다 짧지 않다 — 재시도가 그 약속을 깨면 안 된다.
+const RETRIES: &[Duration] = &[Duration::from_secs(2), Duration::from_secs(5), Duration::from_secs(15)];
 /// 서버가 «한참 뒤에 오라»고 해도 이보다 오래 붙잡고 있지 않는다
 const RETRY_CAP: Duration = Duration::from_secs(30);
 
@@ -207,7 +220,8 @@ fn ask_with_retry(
     for (attempt, backoff) in RETRIES.iter().enumerate() {
         match ask(client, endpoint, lat, lon, zoom) {
             Answer::Retryable { message, retry_after } => {
-                let wait = retry_after.unwrap_or(*backoff);
+                // 서버가 «곧 와도 된다»고 해도 초당 한 건은 지킨다
+                let wait = retry_after.unwrap_or(*backoff).max(GAP);
                 log::warn!("지명 조회 재시도 {}/{}: {message} ({}초 뒤)", attempt + 1, RETRIES.len(), wait.as_secs());
                 last = Answer::Retryable { message, retry_after };
                 if attempt + 1 == RETRIES.len() || !nap(cancel, wait) {
@@ -320,8 +334,10 @@ pub struct Progress {
     pub files: usize,
     /// 그 자리에 이름이 없어 다시 묻지 않기로 한 격자 수
     pub empty: usize,
-    /// 서버가 그만하라고 해서 멈췄으면 그 사유
+    /// 멈췄으면 그 사유. 비어 있으면 «끝까지 다 했다»는 뜻이다.
     pub stopped: Option<String>,
+    /// 사용자가 멈춘 것인가 — 서버 탓과 달리 경고로 보일 일이 아니다
+    pub cancelled: bool,
 }
 
 /// 캐시 한 줄을 쓰고 그 자리의 사진에 전파한다 — **한 트랜잭션**으로.
@@ -375,6 +391,56 @@ fn write_place(
             rusqlite::params![cell_key, &place.country, &place.admin1, &place.admin2],
         )?;
         Ok(n)
+    })
+}
+
+/// 이 자리에 이미 몇 단계까지 붙어 있나 — 새 답이 그보다 얕으면 덮지 않는다
+fn current_depth(db: &Db, cell_key: &str) -> Result<u8> {
+    let place: Option<Place> = db.read(|c| {
+        c.query_row(
+            "SELECT country, admin1, admin2 FROM places WHERE cell = ?1 AND status = 'ok'",
+            [cell_key],
+            |r| Ok(Place { country: r.get(0)?, admin1: r.get(1)?, admin2: r.get(2)? }),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(e),
+        })
+    })?;
+    Ok(place.map(|p| p.depth()).unwrap_or(0))
+}
+
+/// «그 자리에 이름이 없다»를 캐시에 못 박는다 — **이미 이름이 있으면 그대로 둔다.**
+///
+/// 이름을 지우는 일은 이 앱 어디에도 없어야 한다. 서버가 못 찾은 것과 그 자리에
+/// 이름이 없는 것은 다르다. 이미 붙은 이름이 있으면 그것을 남기고 «다시 묻지
+/// 않음»만 기록한다. 돌려주는 값은 실제로 못 박았는지 여부다.
+fn settle_empty(db: &Db, cell_key: &str, status: &str, source: &str, provider: Option<&str>) -> Result<bool> {
+    db.transaction(|tx| {
+        let named: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM places
+                            WHERE cell = ?1 AND country IS NOT NULL AND trim(country) <> '')",
+            [cell_key],
+            |r| r.get(0),
+        )?;
+        if named {
+            // 값은 그대로 두고 «언제 물어봤는지»만 새로 적는다
+            tx.execute(
+                "UPDATE places SET resolved_at = strftime('%s','now') WHERE cell = ?1",
+                [cell_key],
+            )?;
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO places(cell,status,source,precision,provider,resolved_at,at)
+             VALUES(?1,?2,?3,?4,?5,strftime('%s','now'),strftime('%s','now'))
+             ON CONFLICT(cell) DO UPDATE SET
+               status=excluded.status, source=excluded.source, precision=excluded.precision,
+               provider=excluded.provider, resolved_at=excluded.resolved_at",
+            rusqlite::params![cell_key, status, source, PREC_REMOTE, provider],
+        )?;
+        Ok(true)
     })
 }
 
@@ -491,6 +557,8 @@ pub fn fill_offline(
     const CHUNK: usize = 500;
     for chunk in todo.chunks(CHUNK) {
         if cancel.load(Ordering::Relaxed) {
+            p.stopped = Some("멈췄습니다".into());
+            p.cancelled = true;
             break;
         }
         let judged: Vec<(&str, f64, f64, Option<resolve::Resolved>)> =
@@ -575,6 +643,8 @@ pub fn fill(
 
     for (cell_key, lat, lon) in todo {
         if cancel.load(Ordering::Relaxed) {
+            p.stopped = Some("멈췄습니다".into());
+            p.cancelled = true;
             break;
         }
         // 캐시부터 — 성공한 것만 쓴다
@@ -608,6 +678,15 @@ pub fn fill(
                 std::thread::sleep(GAP); // 같은 서버에는 초당 하나
                 p.asked += 1;
                 match ask_with_retry(&client, endpoint.as_str(), lat, lon, zoom, cancel) {
+                    // 서버가 나라만 답했는데 이미 시군구까지 있는 자리면 그대로 둔다.
+                    // 어느 쪽이 옳은지 알 수 없을 때는 더 자세한 쪽을 남긴다
+                    // (2026-09-01 외부 검토).
+                    Answer::Found(place) if place.depth() < current_depth(db, &cell_key)? => {
+                        log::info!("서버 답이 기존보다 얕아 그대로 둡니다: {cell_key}");
+                        p.done += 1;
+                        on_progress(&p);
+                        continue;
+                    }
                     Answer::Found(place) => {
                         // 캐시 갱신과 파일 전파를 한 트랜잭션에 둔다 — 중간에 앱이 꺼져도
                         // places 와 files 가 어긋나지 않는다 (2026-09-01 리뷰)
@@ -618,11 +697,17 @@ pub fn fill(
                         place
                     }
                     Answer::Nothing => {
-                        // 서버가 «없다»고 확정한 자리 — 못 박아 두고 다시 묻지 않는다
+                        // 서버가 «없다»고 확정한 자리 — 못 박아 두고 다시 묻지 않는다.
+                        //
+                        // 단, **이미 이름이 붙은 자리는 지우지 않는다.** 새 서버가 못
+                        // 찾았다는 것이 오프라인이 찾아 둔 이름이 틀렸다는 뜻은 아니다
+                        // (2026-09-01 외부 검토).
                         let host = reqwest::Url::parse(endpoint.as_str())
                             .ok()
                             .and_then(|u| u.host_str().map(str::to_string));
-                        write_place(db, &cell_key, &Place::default(), NONE, SRC_ONLINE, PREC_REMOTE, None, None, host.as_deref(), &gps, Overwrite::All)?;
+                        if !settle_empty(db, &cell_key, NONE, SRC_ONLINE, host.as_deref())? {
+                            log::info!("지명 없음이라 하지만 이미 붙은 이름이 있어 그대로 둡니다: {cell_key}");
+                        }
                         p.empty += 1;
                         p.done += 1;
                         on_progress(&p);
@@ -782,7 +867,7 @@ mod tests {
             let stop = Arc::new(AtomicBool::new(false));
             let stop_thread = Arc::clone(&stop);
             let handle = std::thread::spawn(move || {
-                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                let deadline = std::time::Instant::now() + Duration::from_secs(8);
                 let mut served = 0usize;
                 while std::time::Instant::now() < deadline && !stop_thread.load(Ordering::Relaxed) {
                     match listener.accept() {
@@ -842,7 +927,10 @@ mod tests {
     fn test_client() -> reqwest::blocking::Client {
         reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(3))
+            .connect_timeout(Duration::from_millis(500))
             .redirect(reqwest::redirect::Policy::none())
+            // CI 나 macOS 의 프록시 환경 변수가 127.0.0.1 요청을 가로채지 않게
+            .no_proxy()
             .build()
             .unwrap()
     }
@@ -956,6 +1044,179 @@ mod tests {
             .unwrap();
         let s = stats(&db).unwrap();
         assert_eq!((s.named, s.pending_files, s.cells_left, s.offline_cells_left), (2, 1, 1, 1));
+    }
+
+    /// 잠깐 흔들린 서버에는 다시 물어본다 — 한 번 실패했다고 20분 작업을 버리지 않는다
+    #[test]
+    fn a_shaky_server_gets_another_chance() {
+        let mut server = TestServer::start(vec![
+            // 첫 답은 «곧 다시 와도 된다» — 그래도 초당 한 건은 지킨다
+            ("503 Service Unavailable", r#"{}"#, Some("Retry-After: 0")),
+            ("200 OK", r#"{"address":{"country":"대한민국","state":"경기도","city":"수원시"}}"#, None),
+        ]);
+        let began = std::time::Instant::now();
+        let answer = ask_with_retry(&test_client(), &server.url, 37.5, 127.0, 12, &AtomicBool::new(false));
+        let waited = began.elapsed();
+        assert_eq!(server.served(), 2, "두 번 물어봐야 한다");
+        match answer {
+            Answer::Found(p) => assert_eq!(p.admin2.as_deref(), Some("수원시")),
+            _ => panic!("두 번째 답을 받아야 한다"),
+        }
+        assert!(waited >= GAP, "재시도가 초당 한 건 약속을 깨면 안 된다 — {waited:?}");
+    }
+
+    /// 세 번을 다 쓰고도 안 되면 멈춘다 — 끝없이 두드리지 않는다
+    #[test]
+    fn a_dead_server_is_not_hammered_forever() {
+        let cancel = AtomicBool::new(false);
+        let mut server = TestServer::start(vec![("503 Service Unavailable", r#"{}"#, Some("Retry-After: 0"))]);
+        let answer = ask_with_retry(&test_client(), &server.url, 37.5, 127.0, 12, &cancel);
+        assert_eq!(server.served(), RETRIES.len(), "정해진 횟수만 물어본다");
+        assert!(matches!(answer, Answer::Retryable { .. }));
+    }
+
+    /// 백오프 중에 «그만»을 누르면 곧바로 멈춘다 — 15초를 다 기다리지 않는다
+    #[test]
+    fn stopping_during_a_backoff_takes_effect_at_once() {
+        let cancel = AtomicBool::new(true);
+        let began = std::time::Instant::now();
+        assert!(!nap(&cancel, Duration::from_secs(15)));
+        assert!(began.elapsed() < Duration::from_secs(1));
+    }
+
+    /// 서버가 못 찾았다고 해서 이미 붙은 이름을 지우면 안 된다
+    #[test]
+    fn a_server_that_finds_nothing_never_erases_a_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
+                 INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);
+                 INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
+                   VALUES(1,1,'a.jpg',1,0,1,0,0,37.2911,127.0089);",
+            )
+        })
+        .unwrap();
+        fill_offline(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
+
+        let settled = settle_empty(&db, "37.29,127.00", NONE, SRC_ONLINE, Some("my.server")).unwrap();
+        assert!(!settled, "이미 이름이 있으면 못 박지 않는다");
+
+        let (country, status): (Option<String>, String) = db
+            .read(|c| {
+                c.query_row("SELECT country, status FROM places WHERE cell='37.29,127.00'", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+            })
+            .unwrap();
+        assert_eq!(country.as_deref(), Some("대한민국"), "이름이 지워졌습니다");
+        assert_eq!(status, OK);
+
+        // 이름이 없는 자리는 정상적으로 못 박는다
+        assert!(settle_empty(&db, "10.00,10.00", NONE, SRC_ONLINE, None).unwrap());
+    }
+
+    /// 서버 답이 기존보다 얕으면 그대로 둔다 — 시군구까지 있는 자리가 나라만 남으면 후퇴다
+    #[test]
+    fn a_shallower_answer_never_replaces_a_deeper_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO places(cell,country,admin1,admin2,name,status,source,precision,at)
+                   VALUES('1,1','대한민국','경기도','수원시','수원시','ok','offline_geonames','approximate',0);",
+            )
+        })
+        .unwrap();
+        assert_eq!(current_depth(&db, "1,1").unwrap(), 3);
+        assert_eq!(current_depth(&db, "9,9").unwrap(), 0, "없는 자리는 0이라 무엇이든 들어간다");
+
+        let only_country = Place { country: Some("대한민국".into()), ..Default::default() };
+        assert!(only_country.depth() < current_depth(&db, "1,1").unwrap());
+        // 위가 비면 아래도 세지 않는다
+        assert_eq!(Place { admin2: Some("수원시".into()), ..Default::default() }.depth(), 0);
+    }
+
+    /// 사용자가 멈춘 것도 결과에 적는다 — 안 그러면 화면이 «다 했습니다»라고 한다
+    #[test]
+    fn stopping_is_reported_as_a_stop_not_a_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
+                 INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);
+                 INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
+                   VALUES(1,1,'a.jpg',1,0,1,0,0,37.2911,127.0089);",
+            )
+        })
+        .unwrap();
+        let p = fill_offline(&db, &AtomicBool::new(true), None, |_| {}).unwrap();
+        assert_eq!(p.total, 1, "할 일은 있었다");
+        assert_eq!(p.done, 0);
+        assert_eq!(p.stopped.as_deref(), Some("멈췄습니다"));
+        assert!(p.cancelled, "사용자가 멈춘 것과 서버가 막은 것은 다르게 보여야 한다");
+    }
+
+    /// 지도가 세는 사진과 지명이 처리하는 사진은 **같은 사진**이어야 한다.
+    ///
+    /// 좌표 조건이 두 곳에 따로 적혀 있던 시절, 한쪽만 고치면 지도에는 보이는데
+    /// 지명은 영영 «처리할 수 없는» 사진이 생겼다. 경계값을 한 상 차려 두고
+    /// 두 숫자가 같은지 본다.
+    #[test]
+    fn the_map_and_the_place_names_count_the_same_photos() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        let coords: &[(Option<f64>, Option<f64>)] = &[
+            (Some(37.5), Some(127.0)),
+            (Some(90.0), Some(180.0)),
+            (Some(-90.0), Some(-180.0)),
+            (Some(0.0), Some(127.0)),
+            (Some(37.5), Some(0.0)),
+            (Some(0.0), Some(0.0)),
+            (None, Some(127.0)),
+            (Some(37.5), None),
+            (Some(90.1), Some(127.0)),
+            (Some(37.5), Some(180.1)),
+            (None, None),
+        ];
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
+                 INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);",
+            )
+        })
+        .unwrap();
+        for (i, (lat, lon)) in coords.iter().enumerate() {
+            let id = i as i64 + 1;
+            db.write(|c| {
+                c.execute(
+                    "INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
+                     VALUES(?1,1,?2,1,0,1,0,0,?3,?4)",
+                    rusqlite::params![id, format!("f{id}.jpg"), lat, lon],
+                )
+            })
+            .unwrap();
+        }
+        // 휴지통에 든 사진은 어느 쪽도 세지 않는다
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon,trashed_at)
+                 VALUES(99,1,'gone.jpg',1,0,1,0,0,37.5,127.0,1)",
+                [],
+            )
+        })
+        .unwrap();
+
+        let by_map = crate::db::query::map_overview(&db, &crate::db::query::Filter::default()).unwrap();
+        let by_geo = stats(&db).unwrap();
+        assert_eq!(by_geo.with_gps, by_map.total, "지도와 지명이 다른 사진을 셉니다");
+        assert_eq!(by_geo.with_gps, 5, "경계값을 포함해 다섯 장이 유효하다");
+        // 셀 수 있는 것은 모두 처리할 수 있어야 한다 — 세기만 하고 못 붙이는 사진이 없게
+        assert_eq!(by_geo.pending_files, by_geo.with_gps);
+        let cells = targets(&db, Mode::Offline, &valid_gps_sql()).unwrap().len() as i64;
+        assert_eq!(cells, by_geo.offline_cells_left, "처리할 자리 수도 같아야 한다");
     }
 
     /// 서버 없이 채우는 길 — 내장 자료만으로 세 단계가 다 붙는다

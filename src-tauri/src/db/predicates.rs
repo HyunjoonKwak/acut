@@ -4,15 +4,33 @@
 //! 따로 있었다. 한쪽만 고치면 «지도가 세는 사진»과 «지명을 붙일 사진»이 조용히
 //! 달라진다 — 그러면 처리할 수 없는 행이 영원히 «남은 것»으로 남는다 (2026-09-01).
 
-/// 쓸 수 있는 좌표인가 — SQL 조건.
+/// 파일 표를 어떤 이름으로 부르는가 — 아는 별칭만 받는다.
 ///
-/// `alias` 는 파일 표의 별칭이다. **내부 상수만 넘긴다** — 사용자 입력이 여기로
-/// 오면 안 된다. 빈 문자열이면 별칭 없이(`gps_lat`) 쓴다.
+/// 문자열을 그대로 받으면 호출부의 오타가 조용한 오작동이 되고, 사용자 입력이
+/// 흘러들 여지도 생긴다. 쓰는 곳이 둘뿐이라 열거로 못 박는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Files {
+    /// 별칭 없이 — `gps_lat`
+    Bare,
+    /// `fi.gps_lat`
+    Fi,
+}
+
+impl Files {
+    fn prefix(self) -> &'static str {
+        match self {
+            Files::Bare => "",
+            Files::Fi => "fi.",
+        }
+    }
+}
+
+/// 쓸 수 있는 좌표인가 — SQL 조건.
 ///
 /// 두 값이 **모두 정확히 0** 인 것만 «좌표 없음» 센티널로 본다. 한쪽만 0 인
 /// 좌표(적도·본초자오선 위)는 정상이다. 지구 범위 밖은 잘못된 값으로 친다.
-pub(crate) fn valid_gps_sql(alias: &str) -> String {
-    let p = if alias.is_empty() { String::new() } else { format!("{alias}.") };
+pub(crate) fn valid_gps_sql(alias: Files) -> String {
+    let p = alias.prefix();
     format!(
         "{p}gps_lat IS NOT NULL AND {p}gps_lon IS NOT NULL
          AND {p}gps_lat BETWEEN -90.0 AND 90.0
@@ -88,7 +106,7 @@ mod tests {
             let by_sql: bool = db
                 .read(|c| {
                     c.query_row(
-                        &format!("SELECT EXISTS(SELECT 1 FROM files fi WHERE fi.id = ?1 AND ({}))", valid_gps_sql("fi")),
+                        &format!("SELECT EXISTS(SELECT 1 FROM files fi WHERE fi.id = ?1 AND ({}))", valid_gps_sql(Files::Fi)),
                         [id],
                         |r| r.get(0),
                     )
@@ -101,8 +119,8 @@ mod tests {
     /// 별칭이 있든 없든 같은 뜻이어야 한다
     #[test]
     fn the_alias_only_prefixes_the_columns() {
-        let with = valid_gps_sql("fi");
-        let bare = valid_gps_sql("");
+        let with = valid_gps_sql(Files::Fi);
+        let bare = valid_gps_sql(Files::Bare);
         assert!(with.contains("fi.gps_lat IS NOT NULL") && with.contains("fi.gps_lon BETWEEN"));
         assert!(bare.starts_with("gps_lat IS NOT NULL"));
         // 별칭이 없으면 칸 이름 앞에 접두사가 붙지 않는다 (숫자 리터럴의 점은 논외)

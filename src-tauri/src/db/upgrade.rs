@@ -159,10 +159,15 @@ fn add_geo_levels(c: &Connection) -> rusqlite::Result<()> {
     // status를 단순 DEFAULT 'ok'로 더하면 그 행은 성공 캐시가 되어 다시 묻지도,
     // 파일을 완료시키지도 못한다. 이미 그 중간 빌드를 열어 status가 생긴 DB도
     // 복구해야 하므로 컬럼 추가 여부와 무관하게 매번 멱등으로 보정한다.
+    //
+    // **`status='ok'` 인 행만 고친다.** 이 보정은 앱을 열 때마다 도는데, 조건을
+    // «이름이 비었으면»으로 잡으면 오프라인 판정이 남긴 `unresolved`(이름이 비어
+    // 있는 것이 정상이다)까지 `none` 으로 바꿔 버린다. 그러면 그 자리는 다시
+    // 물어볼 수 없는 곳으로 굳어 영영 이름을 얻지 못한다 (2026-09-01 외부 검토).
     c.execute_batch(
         "UPDATE places
             SET status = 'none'
-          WHERE country IS NULL OR trim(country) = '';",
+          WHERE status = 'ok' AND (country IS NULL OR trim(country) = '');",
     )?;
     Ok(())
 }
@@ -411,6 +416,42 @@ mod tests {
 
     /// 업그레이드가 나중에 더하는 칸을 schema.sql 이 먼저 참조하면 구버전 DB 가 안 열린다.
     /// v0.5.4 DB 에서 실제로 «no such column: geo_country» 로 죽었다 (2026-09-01).
+    /// 앱을 열 때마다 도는 보정이 «다시 물어볼 자리»를 «없는 자리»로 굳히면 안 된다.
+    ///
+    /// 오프라인 판정이 못 정한 자리는 이름이 비어 있는 것이 정상이다. 그것을
+    /// 지우면 온라인 보강 대상에서 영영 빠진다 (2026-09-01 외부 검토).
+    #[test]
+    fn the_repair_never_settles_a_cell_that_is_still_waiting_for_the_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        {
+            let db = Db::open(&path).unwrap();
+            db.write(|c| {
+                c.execute_batch(
+                    "INSERT INTO places(cell,status,source,precision,at)
+                       VALUES('1,1','unresolved','offline_geonames','approximate',0),
+                             ('2,2','ok','offline_geonames','approximate',0),
+                             ('3,3','ok','nominatim','remote',0);
+                     UPDATE places SET country='대한민국', name='대한민국'
+                      WHERE cell IN ('2,2','3,3');
+                     -- 값이 비었는데 성공이라고 적힌 모순 행 — 이것만 고쳐야 한다
+                     INSERT INTO places(cell,status,source,precision,at)
+                       VALUES('4,4','ok','nominatim','remote',0);",
+                )
+            })
+            .unwrap();
+        }
+        // 다시 열어 보정을 한 번 더 돌린다 (실제로 앱을 껐다 켜는 것과 같다)
+        let db = Db::open(&path).unwrap();
+        let status = |cell: &str| -> String {
+            db.read(|c| c.query_row("SELECT status FROM places WHERE cell=?1", [cell], |r| r.get(0))).unwrap()
+        };
+        assert_eq!(status("1,1"), "unresolved", "아직 물어볼 자리를 굳히면 안 된다");
+        assert_eq!(status("2,2"), "ok");
+        assert_eq!(status("3,3"), "ok");
+        assert_eq!(status("4,4"), "none", "값이 비었는데 성공이라고 적힌 행은 고친다");
+    }
+
     /// 새 칸을 넣을 때마다 이 목록에 더한다 — 사람이 기억하지 않아도 시험이 잡게.
     #[test]
     fn schema_never_mentions_a_column_that_upgrade_adds_later() {

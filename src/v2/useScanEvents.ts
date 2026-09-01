@@ -42,14 +42,24 @@ export function useScanEvents(cb: {
     on<{ total: number; done: number; asked: number; files: number }>("geo-progress", (p) =>
       job().progress({ label: "지명", done: p.done, total: p.total }),
     );
-    on<{ files: number; asked: number; empty: number; stopped: string | null }>(
+    on<{
+      files: number;
+      asked: number;
+      empty: number;
+      stopped: string | null;
+      cancelled: boolean;
+    }>(
       "geo-done",
       (p) => {
         job().clear();
         // 화면을 열어 둔 채로 끝나도 트리와 «이름 없는 N장»이 바로 새로 센다
         data().bumpGeo();
         if (p.stopped) {
-          toast(`${p.stopped} — ${p.files.toLocaleString()}장까지 붙였습니다`, "drop");
+          // 스스로 멈춘 것은 경고가 아니다 — 서버가 막은 것과 다르게 보인다
+          toast(
+            `${p.stopped} — ${p.files.toLocaleString()}장까지 붙였습니다`,
+            p.cancelled ? "ok" : "drop",
+          );
           return;
         }
         const tail = p.empty > 0 ? `이름 없는 곳 ${p.empty}` : "";

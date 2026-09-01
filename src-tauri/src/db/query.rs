@@ -199,7 +199,7 @@ pub struct Page {
 /// 파일 표의 별칭은 이 모듈 전체에서 `fi` 다. 판정 자체는 db::predicates 가 갖는다 —
 /// geo.rs 와 같은 뜻이어야 «세는 사진»과 «처리하는 사진»이 어긋나지 않는다
 fn valid_gps_sql() -> String {
-    crate::db::predicates::valid_gps_sql("fi")
+    crate::db::predicates::valid_gps_sql(crate::db::predicates::Files::Fi)
 }
 
 /// LIKE 와일드카드를 이스케이프한다. `_`가 임의 문자로 동작하면

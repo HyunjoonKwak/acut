@@ -20,7 +20,22 @@ type Cell = {
   n: number;
   library_id: number | null;
   thumb: string | null;
+  /** 이 자리에서 가장 흔한 지명 — 아직 지명을 안 채웠으면 null */
+  place: string | null;
+  /** 이 자리에 섞인 서로 다른 지명 수 */
+  places: number;
 };
+
+/** 마커에 올린 손가락 아래에 뜨는 글 — 위경도 대신 어디인지를 말한다 */
+function pinLabel(c: Cell, fine: boolean): string {
+  const where =
+    c.place === null
+      ? ""
+      : c.places > 1
+        ? `${c.place} 외 ${(c.places - 1).toLocaleString()}곳 · `
+        : `${c.place} · `;
+  return `${where}${c.n.toLocaleString()}장 — ${fine ? "누르면 이 자리의 사진만" : "누르면 확대"}`;
+}
 
 type Overview = {
   total: number;
@@ -307,9 +322,7 @@ function draw(
     });
     L.marker([c.lat, c.lon], {
       icon,
-      title: fine
-        ? `${c.n}장 — 누르면 이 자리의 사진만`
-        : `${c.n}장 — 누르면 확대`,
+      title: pinLabel(c, fine),
     })
       .on("click", () => onClick(c))
       .addTo(layer);

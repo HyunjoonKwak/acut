@@ -805,6 +805,10 @@ pub struct MapCell {
     pub n: i64,
     pub library_id: Option<i64>,
     pub thumb: Option<String>,
+    /// 이 칸에서 가장 흔한 지명 — 지도에서 위경도만 보고 어디인지 알 수 없던 것을 푼다
+    pub place: Option<String>,
+    /// 이 칸에 섞인 서로 다른 지명 수. 2 이상이면 «외 N곳»으로 알린다.
+    pub places: i64,
 }
 
 /// 지도 전체 조건의 요약. 마커는 현재 화면만 읽되, 장수와 첫 자동 맞춤은
@@ -855,16 +859,37 @@ pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
         ""
     };
     // +90/+180으로 양수로 만든 뒤 자른다 — CAST는 0쪽으로 자르므로 음수면 칸이 어긋난다
+    //
+    // 칸마다 «가장 흔한 지명»을 함께 뽑는다. 사전순 첫째(MIN)를 쓰면 그 칸을
+    // 대표하지 못하는 이름이 뽑힌다 — 한 장짜리 옆 동네가 이길 수 있다.
+    // 줌을 당기면 한 칸에 여러 곳이 섞이므로 그 수(places)도 함께 센다.
     let sql = format!(
-        "SELECT AVG(fi.gps_lat), AVG(fi.gps_lon), COUNT(*), MAX(fi.id)
-           FROM files fi {join} {where_sql} AND ({gps})
-          GROUP BY CAST((fi.gps_lat + 90.0) / {p} AS INTEGER), CAST((fi.gps_lon + 180.0) / {p} AS INTEGER)
-          ORDER BY 3 DESC LIMIT 4000"
+        "WITH pts AS MATERIALIZED (
+           SELECT CAST((fi.gps_lat + 90.0) / {p} AS INTEGER) AS ky,
+                  CAST((fi.gps_lon + 180.0) / {p} AS INTEGER) AS kx,
+                  fi.gps_lat AS la, fi.gps_lon AS lo, fi.id AS id, fi.geo_name AS place
+             FROM files fi {join} {where_sql} AND ({gps})
+         ),
+         agg AS (
+           SELECT ky, kx, AVG(la) AS la, AVG(lo) AS lo, COUNT(*) AS n, MAX(id) AS id,
+                  COUNT(DISTINCT place) AS places
+             FROM pts GROUP BY ky, kx ORDER BY n DESC LIMIT 4000
+         ),
+         top AS (
+           SELECT ky, kx, place,
+                  ROW_NUMBER() OVER (PARTITION BY ky, kx ORDER BY COUNT(*) DESC, place) AS rn
+             FROM pts WHERE place IS NOT NULL GROUP BY ky, kx, place
+         )
+         SELECT a.la, a.lo, a.n, a.id, t.place, a.places
+           FROM agg a LEFT JOIN top t ON t.ky = a.ky AND t.kx = a.kx AND t.rn = 1
+          ORDER BY a.n DESC"
     );
-    let cells: Vec<(f64, f64, i64, i64)> = db.read(|c| {
+    let cells: Vec<(f64, f64, i64, i64, Option<String>, i64)> = db.read(|c| {
         let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
         let mut st = c.prepare(&sql)?;
-        let it = st.query_map(refs.as_slice(), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        let it = st.query_map(refs.as_slice(), |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
     // 대표 썸네일 — 칸마다 한 장, 한 번에 묻는다
@@ -888,12 +913,12 @@ pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
     };
     Ok(cells
         .into_iter()
-        .map(|(lat, lon, n, id)| {
+        .map(|(lat, lon, n, id, place, places)| {
             let (library_id, thumb) = match covers.get(&id) {
                 Some((l, t)) => (Some(*l), Some(t.clone())),
                 None => (None, None),
             };
-            MapCell { lat, lon, n, library_id, thumb }
+            MapCell { lat, lon, n, library_id, thumb, place, places }
         })
         .collect())
 }
@@ -1612,6 +1637,53 @@ mod tests {
         let seoul = Filter { bbox: Some("37,126,38,128".into()), ..Default::default() };
         assert_eq!(summary(&db, &seoul).unwrap().0, 2);
         assert_eq!(map_cells(&db, &seoul, 0.1).unwrap().len(), 1);
+    }
+
+    /// 지도에서 위경도만 보고는 어디인지 알 수 없다 — 칸마다 지명을 함께 준다.
+    ///
+    /// 대표 지명은 **가장 흔한 것**이어야 한다. 사전순 첫째를 쓰면 한 장짜리
+    /// 옆 동네가 그 자리를 대표하게 된다.
+    #[test]
+    fn a_map_cell_carries_the_place_name_people_would_call_it() {
+        let (_d, db) = seeded();
+        db.transaction(|tx| {
+            // 한 칸 안에 수원 셋, 용인 하나 — 대표는 수원이어야 한다
+            tx.execute(
+                "UPDATE files SET gps_lat=37.28, gps_lon=127.01, geo_name='수원시' WHERE id IN (1,2,3)",
+                [],
+            )?;
+            tx.execute("UPDATE files SET gps_lat=37.24, gps_lon=127.17, geo_name='용인시' WHERE id=4", [])?;
+            Ok(())
+        })
+        .unwrap();
+
+        let wide = map_cells(&db, &Filter::default(), 1.0).unwrap();
+        assert_eq!(wide.len(), 1, "1도 칸이면 넷이 한 자리에 모인다");
+        assert_eq!(wide[0].place.as_deref(), Some("수원시"), "한 장짜리 옆 동네가 이기면 안 된다");
+        assert_eq!(wide[0].places, 2, "섞인 곳이 둘이라고 알려 준다");
+
+        // 줌을 당기면 각자 제 이름을 가진다
+        let close = map_cells(&db, &Filter::default(), 0.1).unwrap();
+        assert_eq!(close.len(), 2);
+        let mut names: Vec<_> = close.iter().map(|c| (c.place.clone(), c.places)).collect();
+        names.sort();
+        assert_eq!(names, vec![(Some("수원시".into()), 1), (Some("용인시".into()), 1)]);
+    }
+
+    /// 아직 지명을 안 채웠으면 이름 자리는 비어 있고, 장수는 그대로 보인다
+    #[test]
+    fn a_map_cell_without_a_name_still_counts_its_photos() {
+        let (_d, db) = seeded();
+        db.transaction(|tx| {
+            tx.execute("UPDATE files SET gps_lat=37.28, gps_lon=127.01 WHERE id IN (1,2)", [])?;
+            Ok(())
+        })
+        .unwrap();
+        let cells = map_cells(&db, &Filter::default(), 1.0).unwrap();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].n, 2);
+        assert_eq!(cells[0].place, None);
+        assert_eq!(cells[0].places, 0, "이름이 없는 것은 «한 곳»이 아니라 «없음»이다");
     }
 
     #[test]

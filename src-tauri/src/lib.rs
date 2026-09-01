@@ -112,7 +112,7 @@ pub fn run() {
                         {
                             continue;
                         }
-                        let Some(_guard) = api::job::try_start_with(&running, "에이컷 DB 정리", true) else {
+                        let Some(_guard) = api::job::try_start_with(&running, "DB 정리", true) else {
                             continue;
                         };
                         match db.checkpoint_truncate() {

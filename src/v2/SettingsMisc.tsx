@@ -88,8 +88,8 @@ export function About() {
         <span />
       </Row>
       <Row
-        label="에이컷"
-        hint="대규모 로컬 라이브러리를 위한 오프라인 우선 사진 관리자. 사진은 원래 자리에 그대로 둡니다."
+        label="Photo Desk"
+        hint="가져와 고르고, 제자리에 놓습니다. 폰·카메라·NAS 어디서 온 사진이든 여기서 정리해 제 구역으로 보냅니다. 사진은 원래 자리에 그대로 둡니다."
       >
         <span className="text-[13.5px] text-fg-mute tabular-nums">
           {ver ? `v${ver}` : "—"}

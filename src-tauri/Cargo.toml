@@ -1,8 +1,8 @@
 [package]
 name = "acut"
 version = "0.6.0"
-description = "에이컷 - 사진을 고르고 정리해 NAS로 올리는 컬링 스테이션"
-authors = ["에이컷"]
+description = "Photo Desk - 사진을 가져와 고르고 정리해 NAS 로 올리는 작업대"
+authors = ["Photo Desk"]
 license = "MIT"
 edition = "2021"
 # 의존성이 실제로 요구하는 값이다 — scripts/check-msrv.mjs 가 릴리스 때 확인한다.

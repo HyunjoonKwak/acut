@@ -1,7 +1,7 @@
 //! NAS 명령 — 1차 구역 내려받기, 올라갔나 확인, 확인된 것 비우기, XMP.
 //!
 //! NAS는 종(從)이다. 동기화 배관(내사진 ↔ Photos, 공용 ↔ photo)은 Drive
-//! Client가 맡고, 에이컷은 그 결과를 **확인**만 한다(nas_state). 1차 구역은
+//! Client가 맡고, Photo Desk은 그 결과를 **확인**만 한다(nas_state). 1차 구역은
 //! 처리 대기열 — 내려받아 작업대에서 고르고, 정리가 끝나 NAS에 올라간 것이
 //! 확인되면 1차에서 비운다. 순서가 곧 안전장치다: 확인 전엔 아무것도 지우지
 //! 않는다.
@@ -124,7 +124,7 @@ pub async fn nas_pull_start(app: AppHandle, library_id: i64) -> Result<(), Strin
         return Err("1차 구역은 작업대 라이브러리로만 내려받습니다".into());
     }
     let dir = lib.dir.clone().ok_or("디스크가 연결되어 있지 않습니다")?;
-    let Some(guard) = job::try_start_wait(&state.running, "에이컷 NAS 내려받기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(&state.running, "NAS 내려받기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let cancel = Arc::clone(&state.cancel);
@@ -407,7 +407,7 @@ pub async fn nas_purge_run(app: AppHandle, rels: Vec<String>) -> Result<Purged, 
         // 목록은 있었는데 전부 걸러졌다 — «0개 비움»으로 조용히 끝내면 왜 안 됐는지 모른다
         return Err("비울 수 있는 경로가 없습니다 — 이 앱이 받은 것(원장)이고 1차 구역 안의 경로만 비웁니다".into());
     }
-    let Some(guard) = job::try_start_wait(&state.running, "에이컷 NAS 비우기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(&state.running, "NAS 비우기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let ssh::Trashed { moved, error } = tauri::async_runtime::spawn_blocking(move || {
@@ -443,7 +443,7 @@ pub async fn nas_purge_run(app: AppHandle, rels: Vec<String>) -> Result<Purged, 
 #[tauri::command]
 pub async fn xmp_export(app: AppHandle, library_id: Option<i64>) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start_wait(&state.running, "에이컷 XMP", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(&state.running, "XMP", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);

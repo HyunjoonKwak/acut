@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "에이컷",
+  "productName": "Photo Desk",
   "version": "0.6.0",
   "identifier": "com.acut.media",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "에이컷",
+        "title": "Photo Desk",
         "userAgent": "ACut (+https://github.com/HyunjoonKwak/acut)",
         "width": 1280,
         "height": 800,

@@ -31,8 +31,9 @@ function JobChip({ narrow }: { narrow: boolean }) {
   if (!job && !busy && !holder) return null;
   const pct =
     job && job.total > 0 ? Math.min(100, (job.done / job.total) * 100) : null;
-  const label =
-    job?.label ?? (busy || (holder ? `${holder.replace(/^에이컷 /, "")} 중…` : ""));
+  // 백엔드가 보내는 라벨은 이미 «스캔»·«고르기»처럼 짧다.
+  // 예전에는 «에이컷 스캔»으로 와서 여기서 접두를 떼어 냈다 (2026-09-01 정리).
+  const label = job?.label ?? (busy || (holder ? `${holder} 중…` : ""));
   return (
     <div
       title={`${label}${job ? ` — ${job.done.toLocaleString()} / ${job.total.toLocaleString()}` : ""} · 아래 상태바에서 멈출 수 있습니다`}

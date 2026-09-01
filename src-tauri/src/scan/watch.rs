@@ -203,7 +203,7 @@ impl Watchers {
                         }
                         break;
                     }
-                    let Some(_guard) = crate::api::job::try_start_with(&running, "에이컷 폴더 감시", true) else {
+                    let Some(_guard) = crate::api::job::try_start_with(&running, "폴더 감시", true) else {
                         // 사용자 일이 도는 중 — 이것과 나머지를 되돌려 놓고 다음 틱에
                         let mut p = pending.lock().unwrap_or_else(|e| e.into_inner());
                         p.entry((library_id, dir)).or_insert_with(Instant::now);

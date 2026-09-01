@@ -41,7 +41,7 @@ type PurgePlan = {
 };
 
 /**
- * NAS — 종(從)이다. 동기화는 Drive Client가, 에이컷은 1차 구역을 내려받고,
+ * NAS — 종(從)이다. 동기화는 Drive Client가, Photo Desk은 1차 구역을 내려받고,
  * 올라갔는지 확인하고, 확인된 것만 1차에서 비운다. 순서가 곧 안전장치.
  */
 export function Nas() {

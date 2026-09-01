@@ -52,7 +52,7 @@ function runInSandbox(breakAt, bundleNotice = false) {
 
     // 가짜 빌드는 아무것도 만들지 않는다 — 고지 검사가 볼 결과물을 미리 놓아 준다
     if (bundleNotice) {
-      const app = join(box, "src-tauri/target/release/bundle/macos/에이컷.app/Contents/Resources");
+      const app = join(box, "src-tauri/target/release/bundle/macos/Photo Desk.app/Contents/Resources");
       mkdirSync(app, { recursive: true });
       cpSync(resolve(root, "NOTICE"), join(app, "NOTICE"));
     }

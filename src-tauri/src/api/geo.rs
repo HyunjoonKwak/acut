@@ -24,8 +24,8 @@ pub async fn geo_fill_start(app: AppHandle, limit: Option<usize>, mode: Option<g
     let cancel = Arc::clone(&state.cancel);
     let mode = mode.unwrap_or(geo::Mode::Offline);
     let label = match mode {
-        geo::Mode::Offline => "에이컷 지명 채우기",
-        geo::Mode::Online => "에이컷 지명 정밀 보강",
+        geo::Mode::Offline => "지명 채우기",
+        geo::Mode::Online => "지명 정밀 보강",
     };
     let Some(guard) = job::try_start_wait(&state.running, label, std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 아직 도는 중입니다 — 툴바의 작업 표시가 사라진 뒤 다시 눌러 주세요".into());

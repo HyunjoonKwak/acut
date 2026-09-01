@@ -57,7 +57,7 @@ pub async fn trash_apply(
     folder_ids: Option<Vec<i64>>,
 ) -> Result<trash::Outcome, String> {
     // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-    let Some(_guard) = super::job::try_start_wait(&state.running, "에이컷 휴지통으로", std::time::Duration::from_secs(20)) else {
+    let Some(_guard) = super::job::try_start_wait(&state.running, "휴지통으로", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     // 폴더 목록이 오면 그 안의 제외분만 — 비교 화면의 «표시한 것만 치우기»
@@ -103,7 +103,7 @@ pub async fn trash_files(
     ids: Vec<i64>,
 ) -> Result<trash::Outcome, String> {
     // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-    let Some(_guard) = super::job::try_start_wait(&state.running, "에이컷 휴지통으로", std::time::Duration::from_secs(20)) else {
+    let Some(_guard) = super::job::try_start_wait(&state.running, "휴지통으로", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     trash::to_trash(&state.db, &ids, "고른 사진 휴지통으로").map_err(err)
@@ -117,7 +117,7 @@ pub async fn trash_restore(
     ids: Vec<i64>,
 ) -> Result<trash::Outcome, String> {
     // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-    let Some(_guard) = super::job::try_start_wait(&state.running, "에이컷 휴지통 되돌리기", std::time::Duration::from_secs(20)) else {
+    let Some(_guard) = super::job::try_start_wait(&state.running, "휴지통 되돌리기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let ids = if ids.is_empty() {
@@ -136,7 +136,7 @@ pub async fn trash_empty(
     ids: Vec<i64>,
 ) -> Result<trash::Outcome, String> {
     // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-    let Some(_guard) = super::job::try_start_wait(&state.running, "에이컷 휴지통 비우기", std::time::Duration::from_secs(20)) else {
+    let Some(_guard) = super::job::try_start_wait(&state.running, "휴지통 비우기", std::time::Duration::from_secs(20)) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let all = ids.is_empty();

@@ -1,0 +1,28 @@
+에이컷(A-Cut) 제3자 데이터·라이브러리 고지
+=========================================
+
+이 앱은 아래 데이터를 포함하거나 사용합니다.
+
+GeoNames — 지명 데이터 (src-tauri/data/geonames/cities.tsv)
+-----------------------------------------------------------
+출처: https://www.geonames.org/ (cities15000, admin1CodesASCII)
+라이선스: Creative Commons Attribution 4.0 (CC BY 4.0)
+          https://creativecommons.org/licenses/by/4.0/
+사진의 좌표를 국가·시도·시군구 이름으로 바꾸는 데 씁니다. 원본을 가공해
+필요한 필드만 남겼으며, 가공 방법은 scripts/build-geodata.mjs 에 있습니다.
+
+OpenStreetMap — 국가 경계 (country-boundaries 크레이트)
+------------------------------------------------------
+출처: https://www.openstreetmap.org/ (ODbL 1.0)
+      https://opendatacommons.org/licenses/odbl/
+좌표가 어느 나라인지 판정하는 데 씁니다.
+
+Nominatim — 선택적 온라인 지명 조회
+-----------------------------------
+사용자가 설정에 직접 넣은 서버에만 요청합니다. OSM 공개 서버
+(nominatim.openstreetmap.org)는 이용 정책상 대량 조회에 쓸 수 없어
+앱에서 거부합니다.
+
+Pretendard — 글꼴 (src/assets/fonts/PretendardVariable.woff2)
+-------------------------------------------------------------
+라이선스: SIL Open Font License 1.1

@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "dataset": "geonames-cities15000",
+  "dataset_version": "2026-09-01",
+  "source": "https://download.geonames.org/export/dump/cities15000.zip",
+  "admin1_source": "https://download.geonames.org/export/dump/admin1CodesASCII.txt",
+  "license": "CC BY 4.0 (GeoNames)",
+  "record_count": 34127,
+  "sha256": "c59edea54ff803a55049047026f0903b16e06d590fb863325d9841604228c394",
+  "fields": [
+    "lat",
+    "lon",
+    "name",
+    "cc",
+    "admin1_code",
+    "admin1_name",
+    "admin2_code",
+    "population"
+  ]
+}

@@ -28,3 +28,6 @@ src-tauri/target
 
 # 도구 상태 (커밋 대상 아님)
 .omc/
+
+# 지명 데이터 생성 중 받은 원본 (scripts/build-geodata.mjs)
+.geodata-tmp/

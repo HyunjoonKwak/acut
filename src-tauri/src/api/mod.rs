@@ -14,6 +14,7 @@ pub mod nas;
 pub mod organize;
 pub mod photo_protocol;
 pub mod thumb_protocol;
+pub mod update;
 pub mod smart;
 pub mod tags;
 pub mod trash;

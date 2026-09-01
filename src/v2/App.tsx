@@ -50,6 +50,7 @@ import { useGridLayout } from "./useGridLayout";
 import { useOps } from "./useOps";
 import { usePhotoList } from "./usePhotoList";
 import { useScanEvents } from "./useScanEvents";
+import { useUpdateAuto } from "./useUpdateAuto";
 import { facetOf, useFilter } from "./viewStore";
 
 // Leaflet은 위치 갈래에서만 필요하다. 시작 번들에서 떼어 내 첫 화면을 가볍게 한다.
@@ -64,6 +65,7 @@ const MapView = lazy(() => import("./MapView"));
 export default function App() {
   const [libId] = usePref("libId");
   useNasAuto();
+  useUpdateAuto();
   // 재현용 — 시작 주소에 ?sel= 이 있으면 그 폴더를 바로 연다
   useEffect(() => {
     void applyStartupSel();

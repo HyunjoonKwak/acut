@@ -8,6 +8,20 @@ import { toast } from "./toastStore";
 import { Btn } from "./ui";
 import { useUi } from "./uiStore";
 import { Section, Row } from "./settingsUi";
+import { listen } from "@tauri-apps/api/event";
+
+/** 백엔드가 알려 주는 새 판 정보 — src-tauri/src/api/update.rs 와 짝이다 */
+type UpdateInfo = {
+  current: string;
+  latest: string;
+  newer: boolean;
+  notes: string;
+  page_url: string;
+  published_at: string | null;
+  asset_name: string | null;
+  asset_url: string | null;
+  asset_size: number | null;
+};
 
 export function Advanced() {
   const ask = useConfirm();
@@ -87,6 +101,7 @@ export function About() {
       >
         <span />
       </Row>
+      <UpdateRow />
       <Row
         label="지명 자료"
         hint="GeoNames 도시·행정구역 (CC BY 4.0) · Natural Earth 시도 경계 (퍼블릭 도메인) · OpenStreetMap 국가 경계 (ODbL 1.0) · Unicode CLDR 국가 이름. 자세한 고지는 앱 꾸러미 안 Contents/Resources/NOTICE 에 있습니다."
@@ -97,3 +112,110 @@ export function About() {
   );
 }
 
+/**
+ * 새 판 확인과 내려받기.
+ *
+ * 브라우저 대신 앱 안에서 받는 이유: 브라우저로 받으면 격리 표시가 붙어
+ * 자체 서명한 앱이 «손상되었다»며 열리지 않는다.
+ */
+function UpdateRow() {
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [busy, setBusy] = useState<"check" | "download" | null>(null);
+  const [percent, setPercent] = useState(0);
+  const [auto, setAuto] = useState(true);
+
+  useEffect(() => {
+    invoke<string | null>("settings_get", { key: "update.auto" })
+      .then((v) => setAuto(v !== "off"))
+      .catch(() => {});
+    const un = listen<{ percent: number }>("update-progress", (e) =>
+      setPercent(e.payload.percent),
+    );
+    return () => {
+      void un.then((f) => f());
+    };
+  }, []);
+
+  const check = () => {
+    setBusy("check");
+    invoke<UpdateInfo>("update_check")
+      .then((v) => {
+        setInfo(v);
+        if (!v.newer) toast(`최신판입니다 (${v.current})`);
+      })
+      .catch((e) => toast(String(e), "drop"))
+      .finally(() => setBusy(null));
+  };
+
+  const download = () => {
+    if (!info?.asset_url || !info.asset_name) return;
+    setBusy("download");
+    setPercent(0);
+    invoke<string>("update_download", {
+      assetUrl: info.asset_url,
+      assetName: info.asset_name,
+    })
+      .then(() => toast("받았습니다 — 열린 창에서 앱을 «응용 프로그램»으로 끌어다 놓으세요"))
+      .catch((e) => toast(String(e), "drop"))
+      .finally(() => setBusy(null));
+  };
+
+  const size = info?.asset_size ? ` · ${(info.asset_size / 1048576).toFixed(0)}MB` : "";
+  const hint = busy === "download"
+    ? `받는 중 ${percent}%${size}`
+    : info === null
+      ? "GitHub 릴리스에서 새 판이 있는지 살펴봅니다."
+      : info.newer
+        ? `${info.latest} 이 나왔습니다 (지금 ${info.current})${size}. 받으면 열리는 창에서 앱을 «응용 프로그램»으로 끌어다 놓으세요.`
+        : `최신판입니다 (${info.current}).`;
+
+  return (
+    <>
+      <Row label="업데이트" hint={hint}>
+        <>
+          {info?.newer && info.asset_url && (
+            <Btn
+              disabled={busy !== null}
+              onClick={download}
+              title="앱 안에서 받습니다 — 브라우저로 받으면 «손상됨»으로 열리지 않습니다"
+            >
+              {busy === "download" ? `${percent}%` : `${info.latest} 받기`}
+            </Btn>
+          )}
+          {info?.newer && (
+            <Btn
+              disabled={busy !== null}
+              onClick={() =>
+                invoke("update_open_page", { url: info.page_url }).catch((e) =>
+                  toast(String(e), "drop"),
+                )
+              }
+            >
+              무엇이 바뀌었나
+            </Btn>
+          )}
+          <Btn disabled={busy !== null} onClick={check}>
+            {busy === "check" ? "살피는 중…" : "확인"}
+          </Btn>
+        </>
+      </Row>
+      <Row
+        label="열 때 자동 확인"
+        hint="앱을 열 때 하루 한 번만 살핍니다. 새 판이 있을 때만 알리고, 인터넷이 없으면 조용히 넘어갑니다."
+      >
+        <Btn
+          active={auto}
+          onClick={() => {
+            const next = !auto;
+            setAuto(next);
+            invoke("settings_set", { key: "update.auto", value: next ? "on" : "off" }).catch(
+              (e) => toast(String(e), "drop"),
+            );
+          }}
+        >
+          {auto ? "켬" : "끔"}
+        </Btn>
+      </Row>
+    </>
+  );
+}

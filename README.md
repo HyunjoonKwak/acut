@@ -127,8 +127,8 @@ npm run tauri:build    # 릴리스 빌드 (.app + .dmg, ad-hoc 서명)
 npm run version:minor  # 버전 범프 (package.json/Cargo.toml/tauri.conf.json 동기화)
 ```
 
-- 백엔드: Rust 커맨드 100개 (`src-tauri/src/commands/`)
-- 영역 내비게이션: `src/utils/navigation.ts` (5영역 ↔ 뷰 매핑)
+- 백엔드: Tauri 명령 116개 (`src-tauri/src/api/`)
+- 프론트엔드: `src/v2/` — 영역(작업대·내사진·공용) 정의는 `src/v2/areaItems.ts`
 - 앱 아이콘 마스터: `src-tauri/icons/icon.svg` → `tauri icon`으로 전 세트 재생성
 - 스캔 시 시스템 경로(Library, System, `.app` 번들, node_modules 등) 자동 제외 — 내장 디스크 전체 스캔 가능
 
@@ -136,9 +136,8 @@ npm run version:minor  # 버전 범프 (package.json/Cargo.toml/tauri.conf.json 
 
 `~/Library/Application Support/com.acut.media/`
 
-- `smart_category.db` — 미디어 라이브러리 (SQLite, WAL)
-- `config.yaml` — 설정 (atomic write)
-- `smart-folder.sock` — MCP 서버 소켓
+- `acut-v2.db` — 라이브러리와 설정 (SQLite, WAL). 설정도 이 안에 있습니다
+- `thumbs/` — 썸네일 · `previews/` — 미리보기 · `models/` — AI 모델 · `backups/` — DB 백업
 - 구 식별자(`com.smartcategory.media`)의 데이터는 첫 실행 시 자동 이전됩니다
 
 ## License

@@ -262,7 +262,7 @@ ad-hoc 서명 때문입니다. `xattr -cr '/Applications/Photo Desk.app'` 실행
 됩니다. 시스템 경로(Library, System, 앱 번들, node_modules 등)는 자동 제외되어 실사용 사진만 수집됩니다.
 
 **Q. 데이터는 어디에 저장되나요?**
-`~/Library/Application Support/com.acut.media/` — `smart_category.db`(라이브러리), `config.yaml`(설정), `thumbnails/`(썸네일)
+`~/Library/Application Support/com.acut.media/` — `acut-v2.db`(라이브러리와 설정), `thumbs/`(썸네일), `previews/`(미리보기), `backups/`(DB 백업)
 
 **Q. 원본 파일이 수정되나요?**
 스캔·고르기·태그·코멘트는 원본을 건드리지 않습니다. 파일이 움직이는 것은 정리(이동)·동기화(복사)·휴지통 이동뿐이며, 전부 미리보기와 되돌리기를 제공합니다.

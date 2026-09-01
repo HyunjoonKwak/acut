@@ -20,7 +20,7 @@
 
 ### 설치
 
-[Releases](https://github.com/HyunjoonKwak/acut/releases)에서 `.dmg`를 받아 응용 프로그램에 넣습니다.
+[Releases](https://github.com/HyunjoonKwak/photo_desk/releases)에서 `.dmg`를 받아 응용 프로그램에 넣습니다.
 ad-hoc 서명이라 "손상됨" 경고가 뜨면 터미널에서 한 번만:
 
 ```bash

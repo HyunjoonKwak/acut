@@ -13,7 +13,7 @@
     "windows": [
       {
         "title": "Photo Desk",
-        "userAgent": "ACut (+https://github.com/HyunjoonKwak/acut)",
+        "userAgent": "PhotoDesk (+https://github.com/HyunjoonKwak/photo_desk)",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

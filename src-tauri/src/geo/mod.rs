@@ -25,7 +25,7 @@ use std::time::Duration;
 const CELL: f64 = 0.01;
 /// Nominatim 규칙 — 초당 한 건.
 const GAP: Duration = Duration::from_millis(1100);
-const UA: &str = concat!("acut/", env!("CARGO_PKG_VERSION"), " (personal photo library; github.com/HyunjoonKwak/acut)");
+const UA: &str = concat!("photo-desk/", env!("CARGO_PKG_VERSION"), " (personal photo library; github.com/HyunjoonKwak/photo_desk)");
 const ENDPOINT_KEY: &str = "geo.endpoint";
 const PUBLIC_HOST: &str = "nominatim.openstreetmap.org";
 /// 캐시 한 줄의 상태 — 이 셋을 섞으면 «결과 없음»을 영영 다시 묻는다 (2026-09-01 리뷰)

@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-const REPO: &str = "HyunjoonKwak/acut";
-const UA: &str = concat!("acut/", env!("CARGO_PKG_VERSION"), " (github.com/HyunjoonKwak/acut)");
+const REPO: &str = "HyunjoonKwak/photo_desk";
+const UA: &str = concat!("photo-desk/", env!("CARGO_PKG_VERSION"), " (github.com/HyunjoonKwak/photo_desk)");
 /// 이보다 큰 파일은 우리 dmg 가 아니다 — 받다가 디스크를 채우지 않는다
 const MAX_BYTES: u64 = 500 * 1024 * 1024;
 /// 자동 살피기는 하루 한 번. 오프라인 우선 앱이 바깥을 자주 두드리면 안 된다.
@@ -294,12 +294,12 @@ mod tests {
     /// 필드 이름을 하나만 잘못 적어도 «새 판 없음»으로 조용히 잘못 답하게 된다.
     const REAL: &str = r###"{
       "tag_name": "v0.6.0",
-      "html_url": "https://github.com/HyunjoonKwak/acut/releases/tag/v0.6.0",
+      "html_url": "https://github.com/HyunjoonKwak/photo_desk/releases/tag/v0.6.0",
       "body": "## 사진이 어디서 찍혔는지, 서버 없이 알려 줍니다",
       "published_at": "2026-09-01T05:08:04Z",
       "assets": [{
         "name": "_0.6.0_aarch64.dmg",
-        "browser_download_url": "https://github.com/HyunjoonKwak/acut/releases/download/v0.6.0/_0.6.0_aarch64.dmg",
+        "browser_download_url": "https://github.com/HyunjoonKwak/photo_desk/releases/download/v0.6.0/_0.6.0_aarch64.dmg",
         "size": 19922944
       }]
     }"###;
@@ -338,13 +338,13 @@ mod tests {
         assert!(pick_asset(&elsewhere).is_none(), "우리 저장소가 아닌 주소");
 
         let huge: Release = serde_json::from_str(
-            r#"{"tag_name":"v9.0.0","html_url":"x","assets":[{"name":"a.dmg","browser_download_url":"https://github.com/HyunjoonKwak/acut/releases/download/v9/a.dmg","size":999999999999}]}"#,
+            r#"{"tag_name":"v9.0.0","html_url":"x","assets":[{"name":"a.dmg","browser_download_url":"https://github.com/HyunjoonKwak/photo_desk/releases/download/v9/a.dmg","size":999999999999}]}"#,
         )
         .unwrap();
         assert!(pick_asset(&huge).is_none(), "너무 큰 파일");
 
         let script: Release = serde_json::from_str(
-            r#"{"tag_name":"v9.0.0","html_url":"x","assets":[{"name":"run.sh","browser_download_url":"https://github.com/HyunjoonKwak/acut/releases/download/v9/run.sh","size":10}]}"#,
+            r#"{"tag_name":"v9.0.0","html_url":"x","assets":[{"name":"run.sh","browser_download_url":"https://github.com/HyunjoonKwak/photo_desk/releases/download/v9/run.sh","size":10}]}"#,
         )
         .unwrap();
         assert!(pick_asset(&script).is_none(), "dmg 가 아닌 것");

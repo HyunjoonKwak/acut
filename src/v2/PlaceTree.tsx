@@ -17,14 +17,17 @@ export default function PlaceTree({
   picks,
   facetFilter,
   onPick,
-  unnamed,
+  pending,
+  unavailable,
 }: {
   picks: Picks;
   /** 지명 조건을 뺀 필터 — 이 안에서 센다 */
   facetFilter: unknown;
   onPick: (p: { country: string | null; admin1: string | null; admin2: string | null }) => void;
-  /** 아직 이름이 없는 사진 수 — 0보다 크면 안내를 보인다 */
-  unnamed: number;
+  /** 캐시 적용 또는 서버 조회가 필요한 사진 수 */
+  pending: number;
+  /** 물어봤지만 서버가 이름을 찾지 못한 사진 수 */
+  unavailable: number;
 }) {
   const country = picks.country;
   const admin1 = picks.admin1;
@@ -85,10 +88,16 @@ export default function PlaceTree({
 
   return (
     <div className="py-1">
-      {unnamed > 0 && (
+      {pending > 0 && (
         <div className="px-3 pb-2 text-[12px] text-fg-mute leading-snug">
-          아직 이름이 없는 사진 {unnamed.toLocaleString()}장 — 설정 › 탐색의
+          아직 지명 처리가 필요한 사진 {pending.toLocaleString()}장 — 설정 › 탐색의
           «지명 채우기»로 좌표에 지명을 붙입니다.
+        </div>
+      )}
+      {unavailable > 0 && (
+        <div className="px-3 pb-2 text-[12px] text-fg-mute leading-snug">
+          서버에서 지명을 찾지 못한 사진 {unavailable.toLocaleString()}장은 좌표로만
+          지도에 표시됩니다.
         </div>
       )}
       <Row

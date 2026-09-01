@@ -7,6 +7,7 @@ import { usePref } from "./prefs";
 import { toast } from "./toastStore";
 import { Btn } from "./ui";
 import { Section, Row, Select, Toggle } from "./settingsUi";
+import type { GeoStats } from "./types";
 
 export function General() {
   return (
@@ -88,8 +89,8 @@ export function Browse() {
   const [style] = usePref("gridStyle");
   return (
     <Section id="browse" title="탐색">
-      <GeoRow />
       <GeoEndpointRow />
+      <GeoRow />
       <Row label="보기 방식" hint="툴바 버튼과 같은 것입니다">
         <Select
           k="gridStyle"
@@ -218,7 +219,21 @@ export function ViewerSection() {
 }
 
 
-/** 지명 서버 — 정책상 앱 갱신 없이 바꿀 수 있어야 한다(자체 Nominatim·유료 서비스) */
+function geoEndpointProblem(value: string): string | null {
+  if (!value) return null;
+  try {
+    const u = new URL(value);
+    if (u.protocol !== "http:" && u.protocol !== "https:")
+      return "http 또는 https 주소를 입력해 주세요";
+    if (u.hostname.replace(/\.$/, "").toLowerCase() === "nominatim.openstreetmap.org")
+      return "OSM 공개 Nominatim은 배치 조회에 사용할 수 없습니다";
+    return null;
+  } catch {
+    return "올바른 지명 서버 URL을 입력해 주세요";
+  }
+}
+
+/** 지명 서버 — 공개 Nominatim은 배포 앱 전체가 초당 한 건이라 배치에는 쓰지 않는다 */
 function GeoEndpointRow() {
   const [url, setUrl] = useState("");
   useEffect(() => {
@@ -229,17 +244,32 @@ function GeoEndpointRow() {
   return (
     <Row
       label="지명 서버"
-      hint="비워 두면 OpenStreetMap 공개 서버를 씁니다. 자체 Nominatim 이나 다른 서비스 주소를 넣으면 그쪽에 묻습니다 — 많은 사진을 한꺼번에 채울 때는 공개 서버 대신 이쪽을 권합니다."
+      hint="자체 Nominatim 또는 배치 조회가 허용된 호환 서비스의 reverse 주소입니다. 사진의 대표 GPS 좌표가 이 서버로 전송됩니다. OSM 공개 Nominatim은 배포 앱의 대량 조회에 사용할 수 없습니다."
     >
       <input
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         onBlur={() => {
-          invoke("settings_set", { key: "geo.endpoint", value: url.trim() })
-            .then(() => toast(url.trim() ? "지명 서버를 바꿨습니다" : "공개 서버로 되돌렸습니다"))
+          const value = url.trim();
+          const problem = geoEndpointProblem(value);
+          const save = value
+            ? invoke("settings_set", { key: "geo.endpoint", value })
+            : invoke("settings_remove", { key: "geo.endpoint" });
+          save
+            .then(() => {
+              useData.getState().bumpGeo();
+              toast(
+                problem
+                  ? `저장했지만 사용할 수 없습니다 — ${problem}`
+                  : value
+                    ? "지명 서버 주소를 저장했습니다"
+                    : "지명 서버 설정을 비웠습니다",
+                problem ? "drop" : "ok",
+              );
+            })
             .catch((e) => toast(String(e), "drop"));
         }}
-        placeholder="https://nominatim.openstreetmap.org/reverse"
+        placeholder="https://내-서버.example/reverse"
         spellCheck={false}
         className="h-control w-[320px] px-2 rounded-md bg-raised text-[13px] ring-1 ring-line focus:ring-accent outline-none"
       />
@@ -249,48 +279,63 @@ function GeoEndpointRow() {
 
 /** 지명 채우기 — 좌표를 국가·시도·시군구 이름으로. 격자마다 한 번만 묻는다 */
 function GeoRow() {
-  const [st, setSt] = useState<{ with_gps: number; named: number; cells_left: number } | null>(null);
+  const [st, setSt] = useState<GeoStats | null>(null);
   const hasJob = useJob((s) => s.job !== null);
-  const load = () =>
-    invoke<{ with_gps: number; named: number; cells_left: number }>("geo_stats")
-      .then(setSt)
-      .catch(() => {});
+  const geoRev = useData((s) => s.geoRev);
+  // 처음 열 때, 일이 끝날 때, 서버 설정이 바뀔 때 숫자를 다시 읽는다
   useEffect(() => {
-    void load();
-  }, []);
-  // 일이 끝나면 숫자를 다시 읽는다
-  useEffect(() => {
-    if (!hasJob) void load();
-  }, [hasJob]);
+    if (!hasJob)
+      void invoke<GeoStats>("geo_stats")
+        .then(setSt)
+        .catch(() => {});
+  }, [hasJob, geoRev]);
 
   const left = st?.cells_left ?? 0;
-  const mins = Math.ceil((left * 1.1) / 60);
+  const networkLeft = st?.network_cells_left ?? 0;
+  const mins = Math.ceil((networkLeft * 1.1) / 60);
+  const ready = st?.endpoint_ready ?? false;
+  const needsServer = networkLeft > 0;
+  const canRun = ready || !needsServer;
+  const hint = st
+    ? [
+        `유효한 좌표가 있는 사진 ${st.with_gps.toLocaleString()}장 중 ${st.named.toLocaleString()}장에 지명이 붙어 있습니다.`,
+        st.pending_files > 0
+          ? `처리할 사진 ${st.pending_files.toLocaleString()}장 · ${left.toLocaleString()}곳.${
+              networkLeft > 0
+                ? ` 서버에 새로 물을 곳 ${networkLeft.toLocaleString()}곳 — 약 ${mins}분입니다.`
+                : " 모두 저장된 캐시로 바로 채울 수 있습니다."
+            }`
+          : "조회할 곳은 없습니다.",
+        st.unavailable_files > 0
+          ? `서버에서 지명을 찾지 못한 사진 ${st.unavailable_files.toLocaleString()}장은 좌표로만 표시됩니다.`
+          : "",
+        !ready && needsServer ? "새로 조회할 곳이 있어 먼저 위에 지명 서버를 설정해야 합니다." : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : "좌표를 국가·시도·시군구 이름으로 바꿔 위치 갈래에서 이름으로 찾습니다.";
   return (
     <Row
       label="지명 채우기"
-      hint={
-        st
-          ? `좌표가 있는 사진 ${st.with_gps.toLocaleString()}장 중 ${st.named.toLocaleString()}장에 지명이 붙어 있습니다.${
-              left > 0
-                ? ` 남은 곳 ${left.toLocaleString()}군데 — 약 ${mins}분 걸립니다(OpenStreetMap 에 초당 한 번만 묻습니다).`
-                : " 다 붙었습니다."
-            }`
-          : "좌표를 국가·시도·시군구 이름으로 바꿔 위치 갈래에서 이름으로 찾습니다."
-      }
+      hint={hint}
     >
       <>
         <Btn
-          disabled={hasJob || left === 0}
+          disabled={hasJob || left === 0 || !canRun}
           onClick={() => {
             invoke("geo_fill_start", { limit: 100 })
-              .then(() => toast("가까운 100군데부터 채웁니다 — 진행은 위 작업 표시에서"))
+              .then(() => toast("최대 100곳을 채웁니다 — 진행은 위 작업 표시에서"))
               .catch((e) => toast(String(e), "drop"));
           }}
         >
-          {left > 0 ? `${Math.min(100, left)}군데 채우기` : "다 채웠습니다"}
+          {!canRun && left > 0
+            ? "서버 설정 필요"
+            : left > 0
+              ? `${Math.min(100, left)}곳 채우기`
+              : "처리 완료"}
         </Btn>
         <Btn
-          disabled={hasJob || left === 0}
+          disabled={hasJob || left === 0 || !canRun}
           onClick={() => {
             invoke("geo_fill_start", { limit: null })
               .then(() => toast("남은 곳을 모두 채웁니다 — 멈추면 채운 것은 남습니다"))

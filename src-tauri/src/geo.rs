@@ -4,14 +4,13 @@
 //! 물어보고 `places` 에 캐시한다 — 실측(2026-09-01) 사진 52,576장이 격자로는
 //! 1,143칸뿐이다. 한 번 채우면 그 뒤로는 완전히 오프라인이다.
 //!
-//! 이름은 Nominatim 규약을 쓰는 서버에서 받는다. 기본값은 OSM 공개 서버지만
-//! **설정에서 바꿀 수 있다**(`geo.endpoint`) — 공개 서버 정책이 «요청하면 언제든
-//! 서버를 바꿀 수 있어야 하고, 그것이 소프트웨어 갱신 없이 되어야 한다»를 요구한다.
-//! 자체 Nominatim 이나 유료 서비스를 넣으면 그쪽으로 간다.
+//! 이름은 Nominatim 규약을 쓰는 서버에서 받는다. 배포 앱 여러 대의 요청을 합쳐
+//! 초당 한 건이어야 하는 OSM 공개 서버는 배치 작업에 쓰지 않는다. 설정
+//! (`geo.endpoint`)에 자체 Nominatim이나 배치 사용이 허용된 서비스를 넣었을 때만
+//! 새 좌표를 묻는다. 이미 받은 캐시는 서버가 없어도 쓴다.
 //!
-//! 공개 서버를 쓸 때 지키는 것: 초당 한 건, 앱을 밝히는 User-Agent, 429·5xx 는
-//! 물러서서 멈춤. 그리고 **격자를 훑지 않는다** — 정책이 «reverse queries in a
-//! grid»를 금지한다. 물어보는 좌표는 그 칸에 실제로 있는 사진들의 대표 좌표이고,
+//! 서버에는 초당 한 건만 보내고, 앱을 밝히는 User-Agent를 쓰며, HTTP 오류가 오면
+//! 그 자리에서 멈춘다. 물어보는 좌표는 그 칸에 실제로 있는 사진들의 대표 좌표이고,
 //! 한 번 물어본 것은 places 에 남아 두 번 묻지 않는다.
 
 use crate::db::conn::{Db, Result};
@@ -23,12 +22,49 @@ const CELL: f64 = 0.01;
 /// Nominatim 규칙 — 초당 한 건.
 const GAP: Duration = Duration::from_millis(1100);
 const UA: &str = concat!("acut/", env!("CARGO_PKG_VERSION"), " (personal photo library; github.com/HyunjoonKwak/acut)");
-/// 기본 서버 — 설정 `geo.endpoint` 로 바꿀 수 있다
-pub const DEFAULT_ENDPOINT: &str = "https://nominatim.openstreetmap.org/reverse";
+const ENDPOINT_KEY: &str = "geo.endpoint";
+const PUBLIC_HOST: &str = "nominatim.openstreetmap.org";
 /// 캐시 한 줄의 상태 — 이 셋을 섞으면 «결과 없음»을 영영 다시 묻는다 (2026-09-01 리뷰)
 const OK: &str = "ok";
 /// 그 자리에 이름이 없다(바다 한가운데 등). 다시 묻지 않는다
 const NONE: &str = "none";
+
+/// 지도와 같은 «쓸 수 있는 좌표» 규칙. 통계·대상 선택·파일 갱신이 반드시
+/// 이 한 조건을 함께 써야, 처리할 수 없는 행을 영원히 남은 것으로 세지 않는다.
+const VALID_GPS_SQL: &str =
+    "gps_lat IS NOT NULL AND gps_lon IS NOT NULL
+     AND gps_lat BETWEEN -90.0 AND 90.0
+     AND gps_lon BETWEEN -180.0 AND 180.0
+     AND NOT (gps_lat = 0.0 AND gps_lon = 0.0)";
+
+fn validate_endpoint(raw: &str) -> Result<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err(crate::db::conn::DbError::Invalid(
+            "설정 › 탐색에서 자체 Nominatim 또는 배치 사용이 허용된 지명 서버를 먼저 입력해 주세요".into(),
+        ));
+    }
+    let url = reqwest::Url::parse(raw)
+        .map_err(|_| crate::db::conn::DbError::Invalid("지명 서버 주소가 올바른 URL이 아닙니다".into()))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(crate::db::conn::DbError::Invalid(
+            "지명 서버는 http 또는 https 주소여야 합니다".into(),
+        ));
+    }
+    if url
+        .host_str()
+        .is_some_and(|h| h.trim_end_matches('.').eq_ignore_ascii_case(PUBLIC_HOST))
+    {
+        return Err(crate::db::conn::DbError::Invalid(
+            "OSM 공개 Nominatim은 배포 앱의 대량 조회에 사용할 수 없습니다 — 자체 서버나 배치 사용이 허용된 서비스를 입력해 주세요".into(),
+        ));
+    }
+    Ok(raw.to_string())
+}
+
+fn endpoint_setting(db: &Db) -> Result<Option<String>> {
+    Ok(crate::db::settings::get(db, ENDPOINT_KEY)?.filter(|s| !s.trim().is_empty()))
+}
 
 /// SQLite 로 좌표를 격자 문자열로 — `FLOOR` 는 수학 확장이 있어야 해서 쓰지 않는다.
 /// CAST 는 0 쪽으로 자르므로 음수면 1을 뺀다 (내림).
@@ -75,7 +111,13 @@ impl Place {
 /// 시도 후보가 비어 있고 시군구 후보가 둘 이상이면 첫째를 시도로 올린다.
 /// (서울은 state 가 없고 city=서울특별시 · borough=서초구 로 온다)
 pub fn fold(addr: &serde_json::Value) -> Place {
-    let get = |k: &str| addr.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let get = |k: &str| {
+        addr.get(k)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
     let first = |keys: &[&str]| keys.iter().find_map(|k| get(k));
 
     let country = get("country");
@@ -106,9 +148,7 @@ enum Answer {
     Found(Place),
     /// 그 자리에 이름이 없다 — 캐시에 못 박고 다시 묻지 않는다
     Nothing,
-    /// 지금은 실패 — 다음에 다시 (String 은 사람이 읽을 사유)
-    Retry(String),
-    /// 서버가 그만하라고 한다 (429·5xx) — 작업을 멈춘다
+    /// 서버 응답·연결이 정상이 아니다 — 캐시하지 않고 작업을 멈춘다
     Backoff(String),
 }
 
@@ -118,25 +158,33 @@ fn ask(client: &reqwest::blocking::Client, endpoint: &str, lat: f64, lon: f64, z
     let url = format!("{endpoint}{sep}lat={lat}&lon={lon}&format=jsonv2&zoom={zoom}&accept-language=ko");
     let res = match client.get(&url).header(reqwest::header::USER_AGENT, UA).send() {
         Ok(r) => r,
-        Err(e) => return Answer::Retry(e.to_string()),
+        Err(e) => return Answer::Backoff(format!("지명 서버에 연결하지 못했습니다: {e}")),
     };
     let status = res.status();
-    if status.as_u16() == 429 || status.is_server_error() {
+    if !status.is_success() {
         return Answer::Backoff(format!("서버가 {status} 로 답했습니다 — 잠시 뒤에 다시 해 주세요"));
-    }
-    if let Err(e) = res.error_for_status_ref() {
-        return Answer::Retry(e.to_string());
     }
     let body: serde_json::Value = match res.json() {
         Ok(v) => v,
-        Err(e) => return Answer::Retry(e.to_string()),
+        Err(e) => return Answer::Backoff(format!("지명 서버 응답을 읽지 못했습니다: {e}")),
     };
     // 서버가 200 으로 오류를 싣는 경우도 있다
-    if body.get("error").is_some() {
-        return Answer::Nothing;
+    if let Some(error) = body.get("error") {
+        let message = error.as_str().map(str::to_string).unwrap_or_else(|| error.to_string());
+        let lower = message.to_ascii_lowercase();
+        return if lower.contains("unable to geocode")
+            || lower.contains("not found")
+            || lower.contains("no result")
+        {
+            Answer::Nothing
+        } else {
+            Answer::Backoff(format!("지명 서버 오류: {message}"))
+        };
     }
     let place = body.get("address").map(fold).unwrap_or_default();
-    if place.is_empty() { Answer::Nothing } else { Answer::Found(place) }
+    // 위치 트리의 첫 단계이자 처리 완료 표시는 국가다. 국가가 없는 부분 응답을
+    // 성공 캐시로 남기면 같은 파일이 영원히 미완료로 남는다.
+    if place.country.is_none() { Answer::Nothing } else { Answer::Found(place) }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -149,8 +197,6 @@ pub struct Progress {
     pub asked: usize,
     /// 이름을 붙인 사진 수
     pub files: usize,
-    /// 물어봤지만 답을 못 받은 격자 수 — 다음에 다시 해 볼 것
-    pub failed: usize,
     /// 그 자리에 이름이 없어 다시 묻지 않기로 한 격자 수
     pub empty: usize,
     /// 서버가 그만하라고 해서 멈췄으면 그 사유
@@ -163,7 +209,7 @@ pub struct Progress {
 /// 실제로 있는 사진들의 대표(중앙값에 가장 가까운 사진) 좌표**다 — 칸 정중앙을 물으면
 /// 경계·해안·섬에서 옆 동네가 붙는다 (2026-09-01 리뷰).
 ///
-/// 캐시에 있으면 곧바로 쓰고, 없을 때만 물어본다(초당 하나). 서버가 429·5xx 로
+/// 캐시에 있으면 곧바로 쓰고, 없을 때만 물어본다(초당 하나). 서버가 HTTP 오류로
 /// 답하면 그 자리에서 멈춘다 — 채운 것은 남고 다음에 이어서 한다.
 pub fn fill(
     db: &Db,
@@ -171,9 +217,9 @@ pub fn fill(
     limit: Option<usize>,
     on_progress: impl Fn(&Progress),
 ) -> Result<Progress> {
-    let endpoint = crate::db::settings::get(db, "geo.endpoint")?
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
+    // 서버가 없어도 기존 성공 캐시는 파일에 적용할 수 있다. 실제로 새 좌표를
+    // 물어야 하는 순간에만 설정을 요구한다.
+    let endpoint = endpoint_setting(db)?;
     let zoom: u8 = crate::db::settings::get(db, "geo.zoom")?
         .and_then(|v| v.parse().ok())
         .unwrap_or(12);
@@ -188,9 +234,7 @@ pub fn fill(
                       ROW_NUMBER() OVER (PARTITION BY {cell_expr} ORDER BY gps_lat, gps_lon) AS rn,
                       COUNT(*) OVER (PARTITION BY {cell_expr}) AS n
                  FROM files
-                WHERE gps_lat IS NOT NULL AND gps_lon IS NOT NULL
-                  AND NOT (gps_lat = 0.0 AND gps_lon = 0.0)
-                  AND gps_lat BETWEEN -90 AND 90 AND gps_lon BETWEEN -180 AND 180
+                WHERE {VALID_GPS_SQL}
                   AND geo_country IS NULL AND trashed_at IS NULL
              )
              SELECT cell, la, lo FROM pts WHERE rn = (n + 1) / 2
@@ -213,6 +257,8 @@ pub fn fill(
 
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(20))
+        // 허용된 주소가 공개 Nominatim으로 우회되지 않게 리다이렉트도 중단한다.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| crate::db::conn::DbError::Invalid(e.to_string()))?;
 
@@ -223,7 +269,9 @@ pub fn fill(
         // 캐시부터 — 성공한 것만 쓴다
         let cached: Option<Place> = db.read(|c| {
             c.query_row(
-                "SELECT country, admin1, admin2 FROM places WHERE cell = ?1 AND status = ?2",
+                "SELECT country, admin1, admin2 FROM places
+                  WHERE cell = ?1 AND status = ?2
+                    AND country IS NOT NULL AND trim(country) <> ''",
                 rusqlite::params![&cell_key, OK],
                 |r| Ok(Place { country: r.get(0)?, admin1: r.get(1)?, admin2: r.get(2)? }),
             )
@@ -237,9 +285,16 @@ pub fn fill(
         let place = match cached {
             Some(place) => place,
             None => {
-                std::thread::sleep(GAP); // 공개 서버 규칙 — 초당 하나
+                let endpoint = endpoint
+                    .as_deref()
+                    .map(validate_endpoint)
+                    .transpose()?
+                    .ok_or_else(|| crate::db::conn::DbError::Invalid(
+                        "설정 › 탐색에서 자체 Nominatim 또는 배치 사용이 허용된 지명 서버를 먼저 입력해 주세요".into(),
+                    ))?;
+                std::thread::sleep(GAP); // 같은 서버에는 초당 하나
                 p.asked += 1;
-                match ask(&client, &endpoint, lat, lon, zoom) {
+                match ask(&client, endpoint.as_str(), lat, lon, zoom) {
                     Answer::Found(place) => {
                         let name = place.name();
                         db.write(|c| {
@@ -265,13 +320,6 @@ pub fn fill(
                         on_progress(&p);
                         continue;
                     }
-                    Answer::Retry(e) => {
-                        log::warn!("지명 조회 실패 {cell_key}: {e}");
-                        p.failed += 1;
-                        p.done += 1;
-                        on_progress(&p);
-                        continue;
-                    }
                     Answer::Backoff(e) => {
                         log::warn!("지명 조회 중단 {cell_key}: {e}");
                         p.stopped = Some(e);
@@ -287,7 +335,7 @@ pub fn fill(
                 &format!(
                     "UPDATE files SET geo_country = ?2, geo_admin1 = ?3, geo_admin2 = ?4,
                             geo_name = COALESCE(?4, ?3, ?2)
-                     WHERE {cell_expr} = ?1 AND gps_lat IS NOT NULL AND geo_country IS NULL"
+                     WHERE {cell_expr} = ?1 AND {VALID_GPS_SQL} AND geo_country IS NULL"
                 ),
                 rusqlite::params![&cell_key, &place.country, &place.admin1, &place.admin2],
             )
@@ -309,34 +357,89 @@ pub struct Stats {
     pub with_gps: i64,
     /// 그중 이름이 붙은 사진
     pub named: i64,
+    /// 아직 조회할 수 있는 이름 없는 사진
+    pub pending_files: i64,
+    /// 조회했지만 서버에 지명이 없었던 사진
+    pub unavailable_files: i64,
     /// 이름이 필요한 격자 수 — 대략 이만큼 초가 걸린다
     pub cells_left: i64,
+    /// 남은 격자 중 성공 캐시가 없어 서버에 물어야 하는 수
+    pub network_cells_left: i64,
+    /// 새 조회에 쓸 수 있는 비공개/허가된 서버가 설정됐나
+    pub endpoint_ready: bool,
 }
 
 pub fn stats(db: &Db) -> Result<Stats> {
-    db.read(|c| {
+    let endpoint_ready = endpoint_setting(db)?
+        .as_deref()
+        .is_some_and(|s| validate_endpoint(s).is_ok());
+    let mut stats = db.read(|c| {
         c.query_row(
             &format!(
-                "SELECT
-                   (SELECT COUNT(*) FROM files WHERE gps_lat IS NOT NULL AND NOT (gps_lat=0.0 AND gps_lon=0.0) AND trashed_at IS NULL),
-                   (SELECT COUNT(*) FROM files WHERE geo_country IS NOT NULL AND trashed_at IS NULL),
-                   (SELECT COUNT(DISTINCT {cell})
-                      FROM files
-                     WHERE gps_lat IS NOT NULL AND NOT (gps_lat=0.0 AND gps_lon=0.0)
-                       AND geo_country IS NULL AND trashed_at IS NULL
-                       AND {cell} NOT IN (SELECT cell FROM places WHERE status = '{none}'))",
-                cell = cell_sql("gps_lat", "gps_lon"), none = NONE
+                "WITH valid AS (
+                   SELECT geo_country, {cell} AS cell
+                     FROM files
+                    WHERE {VALID_GPS_SQL} AND trashed_at IS NULL
+                 )
+                 SELECT COUNT(*),
+                        COALESCE(SUM(geo_country IS NOT NULL), 0),
+                        COALESCE(SUM(geo_country IS NULL AND NOT EXISTS(
+                          SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{none}'
+                        )), 0),
+                        COALESCE(SUM(geo_country IS NULL AND EXISTS(
+                          SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{none}'
+                        )), 0),
+                        COUNT(DISTINCT CASE WHEN geo_country IS NULL AND NOT EXISTS(
+                          SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{none}'
+                        ) THEN cell END),
+                        COUNT(DISTINCT CASE WHEN geo_country IS NULL
+                          AND NOT EXISTS(SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{none}')
+                          AND NOT EXISTS(SELECT 1 FROM places p WHERE p.cell=valid.cell AND p.status='{ok}'
+                            AND p.country IS NOT NULL AND trim(p.country) <> '')
+                        THEN cell END)
+                   FROM valid",
+                cell = cell_sql("gps_lat", "gps_lon"), none = NONE, ok = OK
             ),
             [],
-            |r| Ok(Stats { with_gps: r.get(0)?, named: r.get(1)?, cells_left: r.get(2)? }),
+            |r| Ok(Stats {
+                with_gps: r.get(0)?,
+                named: r.get(1)?,
+                pending_files: r.get(2)?,
+                unavailable_files: r.get(3)?,
+                cells_left: r.get(4)?,
+                network_cells_left: r.get(5)?,
+                endpoint_ready: false,
+            }),
         )
-    })
+    })?;
+    stats.endpoint_ready = endpoint_ready;
+    Ok(stats)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn one_shot_server(status: &str, body: &str) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_string();
+        let body = body.to_string();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request);
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (format!("http://{address}/reverse"), handle)
+    }
 
     #[test]
     fn a_cell_is_a_hundredth_of_a_degree_and_negatives_floor_the_same_way() {
@@ -391,6 +494,13 @@ mod tests {
         assert_eq!(p.name(), None);
     }
 
+    #[test]
+    fn the_public_batch_endpoint_is_refused() {
+        assert!(validate_endpoint("https://nominatim.openstreetmap.org/reverse").is_err());
+        assert!(validate_endpoint("https://nominatim.openstreetmap.org./reverse").is_err());
+        assert!(validate_endpoint("http://127.0.0.1:8080/reverse").is_ok());
+    }
+
     /// SQL 격자 식과 러스트 cell() 이 같은 칸을 가리켜야 한다 — 음수 좌표 포함
     #[test]
     fn the_sql_grid_matches_the_rust_one() {
@@ -419,17 +529,26 @@ mod tests {
                    VALUES(1,1,'a.jpg',1,0,1,0,0,37.2846,127.0512),
                          (2,1,'b.jpg',1,0,1,0,0,37.2899,127.0599),
                          (3,1,'c.jpg',1,0,1,0,0,-33.8688,151.2093),
-                         (4,1,'d.jpg',1,0,1,0,0,NULL,NULL);",
+                         (4,1,'d.jpg',1,0,1,0,0,NULL,NULL),
+                         (5,1,'bad-lat.jpg',1,0,1,0,0,200.0,127.0),
+                         (6,1,'no-lon.jpg',1,0,1,0,0,37.0,NULL),
+                         (7,1,'null-island.jpg',1,0,1,0,0,0.0,0.0);",
             )
         })
         .unwrap();
         let s = stats(&db).unwrap();
-        assert_eq!((s.with_gps, s.named, s.cells_left), (3, 0, 2), "같은 칸 둘은 한 번만 센다");
+        assert_eq!(
+            (s.with_gps, s.named, s.pending_files, s.unavailable_files, s.cells_left),
+            (3, 0, 3, 0, 2),
+            "같은 칸 둘은 한 번만 세고 잘못된 좌표는 대상에서 뺀다"
+        );
+        assert_eq!(s.network_cells_left, 2);
+        assert!(!s.endpoint_ready, "기본값으로 공개 배치 서버를 쓰지 않는다");
 
         db.write(|c| c.execute("UPDATE files SET geo_country='대한민국' WHERE id IN (1,2)", []))
             .unwrap();
         let s = stats(&db).unwrap();
-        assert_eq!((s.named, s.cells_left), (2, 1));
+        assert_eq!((s.named, s.pending_files, s.cells_left, s.network_cells_left), (2, 1, 1, 1));
     }
 
     /// 캐시에 있으면 묻지 않고 곧바로 사진에 붙인다 — 네트워크 없이 도는 길
@@ -450,6 +569,9 @@ mod tests {
         })
         .unwrap();
 
+        let before = stats(&db).unwrap();
+        assert_eq!((before.cells_left, before.network_cells_left), (1, 0), "성공 캐시는 서버가 필요 없다");
+
         let p = fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
         assert_eq!((p.total, p.asked, p.files), (1, 0, 2), "묻지 않고 두 장에 붙는다");
 
@@ -465,6 +587,28 @@ mod tests {
         // 두 번째로 부르면 할 일이 없다
         let again = fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap();
         assert_eq!(again.total, 0);
+    }
+
+    #[test]
+    fn an_uncached_fill_requires_an_allowed_batch_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
+                 INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1);
+                 INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at,gps_lat,gps_lon)
+                   VALUES(1,1,'a.jpg',1,0,1,0,0,37.2846,127.0512);",
+            )
+        })
+        .unwrap();
+
+        let err = fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap_err();
+        assert!(err.to_string().contains("지명 서버를 먼저"));
+
+        crate::db::settings::set(&db, ENDPOINT_KEY, "https://nominatim.openstreetmap.org/reverse").unwrap();
+        let err = fill(&db, &AtomicBool::new(false), None, |_| {}).unwrap_err();
+        assert!(err.to_string().contains("공개 Nominatim"));
     }
 
     /// 이름이 없는 자리(status='none')는 두 번 묻지 않고, 남은 곳 셈에서도 빠진다.
@@ -493,7 +637,11 @@ mod tests {
 
         // 남은 곳 셈에서도 빠진다 — 전에는 영영 줄지 않았다
         let s = stats(&db).unwrap();
-        assert_eq!((s.with_gps, s.named, s.cells_left), (2, 0, 0));
+        assert_eq!(
+            (s.with_gps, s.named, s.pending_files, s.unavailable_files, s.cells_left),
+            (2, 0, 0, 2, 0)
+        );
+        assert_eq!(s.network_cells_left, 0);
     }
 
     /// 칸 정중앙이 아니라 그 칸 사진들의 대표(가운데) 좌표를 묻는다 —
@@ -537,14 +685,40 @@ mod tests {
         assert!((la - clat).abs() > 1e-6 || (lo - clon).abs() > 1e-6, "칸 정중앙과 달라야 한다");
     }
 
-    /// 서버가 429·5xx 로 답하면 물러선다 — 계속 두드리지 않는다
+    /// 실제 HTTP 429가 enum 이름만 검사하는 가짜 시험이 아니라 ask의 중단 경로를 탄다.
     #[test]
-    fn a_rate_limited_server_stops_the_run() {
-        let answer = Answer::Backoff("서버가 429 Too Many Requests 로 답했습니다".into());
-        match answer {
+    fn an_http_429_stops_the_run() {
+        let (endpoint, server) = one_shot_server("429 Too Many Requests", r#"{"error":"slow down"}"#);
+        let client = reqwest::blocking::Client::builder().build().unwrap();
+        match ask(&client, &endpoint, 37.5, 127.0, 12) {
             Answer::Backoff(msg) => assert!(msg.contains("429")),
             _ => panic!("백오프여야 한다"),
         }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn an_error_hidden_in_a_200_response_stops_instead_of_becoming_a_cache_miss() {
+        let (endpoint, server) = one_shot_server("200 OK", r#"{"error":"rate limit exceeded"}"#);
+        let client = reqwest::blocking::Client::builder().build().unwrap();
+        assert!(matches!(ask(&client, &endpoint, 37.5, 127.0, 12), Answer::Backoff(_)));
+        server.join().unwrap();
+
+        let (endpoint, server) = one_shot_server("200 OK", r#"{"error":"Unable to geocode"}"#);
+        assert!(matches!(ask(&client, &endpoint, 37.5, 127.0, 12), Answer::Nothing));
+        server.join().unwrap();
+    }
+
+    /// HTTP 성공이어도 국가가 없는 부분 응답은 성공 캐시로 저장하지 않는다.
+    #[test]
+    fn a_partial_place_without_a_country_is_not_success() {
+        let (endpoint, server) = one_shot_server(
+            "200 OK",
+            r#"{"address":{"city":"서울특별시","borough":"서초구"}}"#,
+        );
+        let client = reqwest::blocking::Client::builder().build().unwrap();
+        assert!(matches!(ask(&client, &endpoint, 37.5, 127.0, 12), Answer::Nothing));
+        server.join().unwrap();
     }
 
     /// 멈추면 그때까지 채운 것은 남는다

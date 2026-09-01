@@ -18,7 +18,7 @@ import { sourceTitle } from "./railItems";
 import { useSelection } from "./selectionStore";
 import { Label, QuickRow } from "./ui";
 import { useView, type Filter } from "./viewStore";
-import type { Bucket, Library } from "./types";
+import type { Bucket, GeoStats, Library } from "./types";
 
 /**
  * 왼쪽 — 레일과 그 갈래의 패널, 그리고 폭 조절 손잡이.
@@ -66,14 +66,16 @@ export default function Sidebar({
     setViewTrash(source === "trash");
   }, [source, setViewTrash]);
 
-  /// 아직 지명이 없는 사진 수 — 위치 갈래가 안내를 보인다
+  /// 처리 대기와 «서버에도 이름 없음»을 갈라 위치 갈래가 가능한 행동만 안내한다
   const geoRev = useData((s) => s.geoRev);
-  const [geoLeft, setGeoLeft] = useState(0);
+  const [geoState, setGeoState] = useState({ pending: 0, unavailable: 0 });
   useEffect(() => {
     if (source !== "location") return;
     let live = true;
-    invoke<{ with_gps: number; named: number }>("geo_stats")
-      .then((s) => live && setGeoLeft(Math.max(0, s.with_gps - s.named)))
+    invoke<GeoStats>("geo_stats")
+      .then((s) =>
+        live && setGeoState({ pending: s.pending_files, unavailable: s.unavailable_files }),
+      )
       .catch(() => {});
     return () => {
       live = false;
@@ -213,7 +215,8 @@ export default function Sidebar({
             <PlaceTree
               picks={picks}
               facetFilter={facetFilter}
-              unnamed={geoLeft}
+              pending={geoState.pending}
+              unavailable={geoState.unavailable}
               onPick={(p) => patchPicks({ ...p, place: null })}
             />
           )}

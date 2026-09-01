@@ -131,6 +131,15 @@ fn add_geo_levels(c: &Connection) -> rusqlite::Result<()> {
     if !has_column(c, "places", "status")? {
         c.execute_batch("ALTER TABLE places ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'")?;
     }
+    // 첫 지명 구현은 «결과 없음»도 세 이름이 모두 NULL인 캐시 행으로 남겼다.
+    // status를 단순 DEFAULT 'ok'로 더하면 그 행은 성공 캐시가 되어 다시 묻지도,
+    // 파일을 완료시키지도 못한다. 이미 그 중간 빌드를 열어 status가 생긴 DB도
+    // 복구해야 하므로 컬럼 추가 여부와 무관하게 매번 멱등으로 보정한다.
+    c.execute_batch(
+        "UPDATE places
+            SET status = 'none'
+          WHERE country IS NULL OR trim(country) = '';",
+    )?;
     Ok(())
 }
 
@@ -420,6 +429,53 @@ mod tests {
         .unwrap();
         db.write(|c| c.execute("INSERT INTO places(cell,at) VALUES('0.00,0.00',0)", []))
             .unwrap();
+    }
+
+    /// 첫 지명 빌드가 남긴 빈 캐시는 status 칸이 없었다. 새 칸의 기본값 'ok'를
+    /// 그대로 주면 성공으로 오인하므로, 이름 없는 행은 'none'으로 복구해야 한다.
+    #[test]
+    fn empty_place_rows_from_the_first_geo_build_become_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(include_str!("schema.sql")).unwrap();
+            c.execute_batch(
+                "DROP TABLE places;
+                 CREATE TABLE places (
+                   cell TEXT PRIMARY KEY, country TEXT, admin1 TEXT, admin2 TEXT,
+                   name TEXT, at INTEGER NOT NULL
+                 );
+                 INSERT INTO places(cell,country,admin1,admin2,name,at)
+                   VALUES('10.00,20.00',NULL,NULL,NULL,NULL,0),
+                         ('37.28,127.05','대한민국','경기도','수원시','수원시',0);",
+            )
+            .unwrap();
+        }
+
+        let db = Db::open(&path).expect("첫 지명 빌드의 DB도 열려야 한다");
+        let statuses: Vec<(String, String)> = db
+            .read(|c| {
+                let mut st = c.prepare("SELECT cell,status FROM places ORDER BY cell")?;
+                let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .unwrap();
+        assert_eq!(
+            statuses,
+            vec![("10.00,20.00".into(), "none".into()), ("37.28,127.05".into(), "ok".into())]
+        );
+
+        // 중간 수정 빌드가 이미 status='ok'를 붙인 DB도 다음 실행에서 복구한다.
+        db.write(|c| c.execute("UPDATE places SET status='ok' WHERE cell='10.00,20.00'", []))
+            .unwrap();
+        drop(db);
+        let reopened = Db::open(&path).unwrap();
+        let repaired: String = reopened
+            .read(|c| c.query_row("SELECT status FROM places WHERE cell='10.00,20.00'", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(repaired, "none");
     }
 
     #[test]

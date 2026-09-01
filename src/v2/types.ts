@@ -56,6 +56,16 @@ export type Stats = {
 /** 캐시 용량 — 디스크를 훑어야 해서 자주 부르지 않는다 */
 export type CacheUsage = { bytes: number; files: number };
 export type Counted = { files: number; bytes: number };
+/** 역지오코딩 현황 — 처리 대기와 서버가 이름을 못 찾은 사진을 섞지 않는다. */
+export type GeoStats = {
+  with_gps: number;
+  named: number;
+  pending_files: number;
+  unavailable_files: number;
+  cells_left: number;
+  network_cells_left: number;
+  endpoint_ready: boolean;
+};
 /** 라이브러리 하나의 휴지통 — 휴지통은 라이브러리마다 따로 있다 */
 export type TrashByLib = { library_id: number; name: string; files: number; bytes: number };
 

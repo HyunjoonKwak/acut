@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { undoLabel } from "./undoLabel.ts";
+import { isUndoableBatchKind, undoLabel } from "./undoLabel.ts";
 
 test("되돌리기 단추는 작업 종류별로 «무엇이 어떻게 되는지»를 적는다", () => {
   assert.equal(undoLabel("trash", 3912), "휴지통 보낸 3,912장 되살리기");
@@ -10,4 +10,8 @@ test("되돌리기 단추는 작업 종류별로 «무엇이 어떻게 되는지
   assert.equal(undoLabel("import", 40), "가져온 40장 되돌리기");
   assert.equal(undoLabel("whatever", 2), "되돌리기 (2장)");
   assert.equal(undoLabel("move", 28383, "폴더 합치기 «후보2번» → «연도별»"), "폴더 합치기 되돌리기 (28,383장)");
+  assert.equal(undoLabel("folder_copy", 1), "복사한 폴더 지우기");
+  assert.equal(undoLabel("capture_date", 25), "촬영일 교정 25장 되돌리기");
+  assert.equal(isUndoableBatchKind("folder_trash"), true);
+  assert.equal(isUndoableBatchKind("delete"), false);
 });

@@ -10,6 +10,7 @@ pub mod geo;
 pub mod cull;
 pub mod backup;
 pub mod capture_date;
+pub mod folder;
 pub mod job;
 pub mod nas;
 pub mod organize;
@@ -448,7 +449,10 @@ fn leaves_of(state: &AppState, library_id: i64, library_rel: &str) -> Result<Vec
                              ELSE substr(rel_path, length(?2) + 2) END,
                         rel_path, file_count
                  FROM folders
-                 WHERE library_id = ?1 AND file_count > 0
+                 WHERE library_id = ?1
+                   AND (file_count > 0 OR scanned_at = -1)
+                   AND rel_path <> CASE WHEN ?2 = '' THEN '.acut' ELSE ?2 || '/.acut' END
+                   AND rel_path NOT LIKE (CASE WHEN ?2 = '' THEN '.acut' ELSE ?2 || '/.acut' END) || '/%'
                  ORDER BY rel_path",
             )?;
             let it = st.query_map(rusqlite::params![library_id, library_rel], |r| {

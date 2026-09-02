@@ -8,7 +8,7 @@ import { useViewportW } from "./useViewportW";
 import { useCountUp } from "./useCountUp";
 import { usePrefs } from "./prefs";
 import { useView } from "./viewStore";
-import { undoLabel } from "./undoLabel";
+import { isUndoableBatchKind, undoLabel } from "./undoLabel";
 
 /**
  * 상태바 오른쪽 — 벌어지는 일과 되돌리기.
@@ -49,7 +49,7 @@ export default function StatusActions({
   const narrow = useViewportW() < 880;
   const latest = batches[0];
   const undoable =
-    latest && latest.undone_at === null && (latest.kind === "move" || latest.kind === "rename" || latest.kind === "import")
+    latest && latest.undone_at === null && isUndoableBatchKind(latest.kind)
       ? latest
       : undefined;
 

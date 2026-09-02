@@ -341,6 +341,22 @@ CREATE TABLE IF NOT EXISTS publication_ledger (
 );
 CREATE INDEX IF NOT EXISTS idx_publication_hash ON publication_ledger(source_sha256, destination_library_id);
 
+-- 일반 폴더 작업은 파일별 저널과 별도로, 갈래 하나의 물리 경로와 DB 재지정
+-- 범위를 기록한다. source/destination은 라이브러리 기준 상대경로다.
+CREATE TABLE IF NOT EXISTS folder_journal (
+    batch_id                INTEGER PRIMARY KEY REFERENCES batches(id) ON DELETE CASCADE,
+    op                      TEXT NOT NULL,
+    source_library_id       INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    source_path             TEXT NOT NULL,
+    destination_library_id  INTEGER REFERENCES libraries(id) ON DELETE CASCADE,
+    destination_path        TEXT,
+    file_count              INTEGER NOT NULL DEFAULT 0,
+    dir_count               INTEGER NOT NULL DEFAULT 0,
+    bytes                   INTEGER NOT NULL DEFAULT 0,
+    manifest_sha256         TEXT NOT NULL,
+    cross_volume            INTEGER NOT NULL DEFAULT 0
+);
+
 -- ---------------------------------------------------------------------------
 -- 스마트 앨범 — 조건을 저장해 두고 이름으로 부른다
 --

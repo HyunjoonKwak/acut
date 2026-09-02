@@ -14,7 +14,39 @@ export function undoLabel(kind: string, n: number, label?: string | null): strin
       return "이름 바꾸기 되돌리기";
     case "import":
       return `가져온 ${c}장 되돌리기`;
+    case "capture_date":
+      return `촬영일 교정 ${c}장 되돌리기`;
+    case "copy":
+      return `복사한 ${c}장 지우기`;
+    case "publish":
+      return `공용 발행 ${c}장 되돌리기`;
+    case "folder_create":
+      return "만든 폴더 되돌리기";
+    case "folder_rename":
+      return "폴더 이름 변경 되돌리기";
+    case "folder_move":
+      return "폴더 이동 되돌리기";
+    case "folder_copy":
+      return "복사한 폴더 지우기";
+    case "folder_trash":
+      return "휴지통 보낸 폴더 되살리기";
     default:
       return `되돌리기 (${c}장)`;
   }
 }
+
+const undoable = new Set([
+  "move",
+  "rename",
+  "import",
+  "capture_date",
+  "copy",
+  "publish",
+  "folder_create",
+  "folder_rename",
+  "folder_move",
+  "folder_copy",
+  "folder_trash",
+]);
+
+export const isUndoableBatchKind = (kind: string): boolean => undoable.has(kind);

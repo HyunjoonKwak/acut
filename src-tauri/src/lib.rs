@@ -256,6 +256,8 @@ pub fn run() {
             api::capture_date::capture_date_apply,
             api::transfer::transfer_preview,
             api::transfer::transfer_execute,
+            api::folder::folder_operation_preview,
+            api::folder::folder_operation_execute,
             api::scan_start,
             api::scan_cancel,
             api::files_page,

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { MenuAt } from "./ContextMenu";
+import type { FolderOperationTarget } from "./FolderOperationDialog";
 
 /**
  * 위에 무엇이 떠 있나 — 뷰어·상자·메뉴.
@@ -17,6 +18,8 @@ type Store = {
   captureDate: { ids: number[]; libraryId?: number; relPath?: string } | null;
   /** 선택 사진을 기존/새 폴더로 이동·복사 */
   transfer: { ids: number[]; sourceLibraryId: number } | null;
+  /** 생성·이름변경·이동·복사·휴지통 폴더 작업 */
+  folderOperation: FolderOperationTarget | null;
   /** 라이브러리 등록 중 — 영역을 고르는 폴더 */
   areaPick: string | null;
   /** 나란히 보기 — 골라 둔 것 중 앞의 넷. null이면 닫힌 상태 */
@@ -54,6 +57,7 @@ export const useUi = create<Store>()((set) => ({
   organizing: false,
   captureDate: null,
   transfer: null,
+  folderOperation: null,
   areaPick: null,
   comparing: null,
   helping: false,
@@ -85,6 +89,7 @@ export const useOverlayOpen = () =>
       s.organizing ||
       s.captureDate !== null ||
       s.transfer !== null ||
+      s.folderOperation !== null ||
       s.comparing !== null ||
       s.similarFor !== null ||
       s.textSearch !== null ||

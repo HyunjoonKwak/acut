@@ -21,6 +21,7 @@ import HuskDialog from "./HuskDialog";
 import Organize from "./Organize";
 import CaptureDateDialog from "./CaptureDateDialog";
 import TransferDialog from "./TransferDialog";
+import FolderOperationDialog from "./FolderOperationDialog";
 import PhotoGrid from "./PhotoGrid";
 import Preview from "./Preview";
 import SettingsView from "./SettingsView";
@@ -292,6 +293,7 @@ export default function App() {
       organizing: s.organizing,
       captureDate: s.captureDate,
       transfer: s.transfer,
+      folderOperation: s.folderOperation,
       importing: s.importing,
       helping: s.helping,
       dropped: s.dropped,
@@ -500,6 +502,16 @@ export default function App() {
             await useData.getState().loadFolders();
           }}
           onClose={() => ui.set({ transfer: null })}
+        />
+      )}
+      {ui.folderOperation !== null && (
+        <FolderOperationDialog
+          target={ui.folderOperation}
+          onChanged={async () => {
+            await useData.getState().loadFolders();
+            await ops.after();
+          }}
+          onClose={() => ui.set({ folderOperation: null })}
         />
       )}
       {ui.textSearch !== null && ui.similarFor === null && (

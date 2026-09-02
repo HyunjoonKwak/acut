@@ -53,7 +53,20 @@ fn add_gallery_transition_p0(c: &Connection) -> rusqlite::Result<()> {
             created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
             UNIQUE(source_sha256,destination_library_id,destination_path)
          );
-         CREATE INDEX IF NOT EXISTS idx_publication_hash ON publication_ledger(source_sha256,destination_library_id);",
+         CREATE INDEX IF NOT EXISTS idx_publication_hash ON publication_ledger(source_sha256,destination_library_id);
+         CREATE TABLE IF NOT EXISTS folder_journal (
+            batch_id INTEGER PRIMARY KEY REFERENCES batches(id) ON DELETE CASCADE,
+            op TEXT NOT NULL,
+            source_library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+            source_path TEXT NOT NULL,
+            destination_library_id INTEGER REFERENCES libraries(id) ON DELETE CASCADE,
+            destination_path TEXT,
+            file_count INTEGER NOT NULL DEFAULT 0,
+            dir_count INTEGER NOT NULL DEFAULT 0,
+            bytes INTEGER NOT NULL DEFAULT 0,
+            manifest_sha256 TEXT NOT NULL,
+            cross_volume INTEGER NOT NULL DEFAULT 0
+         );",
     )
 }
 

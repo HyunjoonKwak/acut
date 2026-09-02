@@ -352,7 +352,7 @@ fn ensure_folder(db: &Db, lib: &crate::db::libraries::Library, rel: &str) -> Res
     })
 }
 
-fn clone_row(db: &Db, source: i64, folder: i64, name: &str, hash: &str) -> Result<i64> {
+pub(crate) fn clone_row(db: &Db, source: i64, folder: i64, name: &str, hash: &str) -> Result<i64> {
     db.transaction(|tx|{
         tx.execute(
             "INSERT INTO files(folder_id,name,ext,size,kind,taken_at,taken_at_source,created_at,modified_at,

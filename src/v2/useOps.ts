@@ -7,6 +7,7 @@ import { toast } from "./toastStore";
 import { usePrefs } from "./prefs";
 import type { Library, Outcome } from "./types";
 import { useView } from "./viewStore";
+import { isUndoableBatchKind } from "./undoLabel";
 
 /**
  * 파일을 실제로 움직이는 일들 — 휴지통, 되돌리기.
@@ -171,7 +172,7 @@ export function useOps(cb: {
     // 상태바와 같은 규칙 — 가장 최근 작업이 정리·이름 바꾸기·가져오기일 때만
     const latest = batches[0];
     const last =
-      latest && latest.undone_at === null && (latest.kind === "move" || latest.kind === "rename" || latest.kind === "import")
+      latest && latest.undone_at === null && isUndoableBatchKind(latest.kind)
         ? latest
         : undefined;
     if (!last) return;

@@ -9,6 +9,7 @@
 
 pub mod husk;
 pub mod capture_date;
+pub mod folder;
 pub mod import;
 pub mod merge;
 pub mod naming;

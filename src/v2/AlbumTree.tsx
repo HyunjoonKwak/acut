@@ -76,6 +76,9 @@ export default function AlbumTree({
               const lib = root
                 ? libs.find((l) => l.id === f.library_id)
                 : undefined;
+              const folderRel = root
+                ? ""
+                : f.path.split("/").slice(1).join("/");
               return (
                 <div
                   key={f.path}
@@ -162,7 +165,7 @@ export default function AlbumTree({
                     </div>
                   )}
                   {/* 폴더 줄 — 다른 디스크로 옮기기. 라이브러리 자체는 못 옮긴다 */}
-                  {!root && f.id !== null && (
+                  {!root && (
                     <div className="absolute right-1 hidden group-hover:flex bg-raised rounded">
                       <button
                         onClick={() =>
@@ -177,8 +180,60 @@ export default function AlbumTree({
                       </button>
                     </div>
                   )}
-                  {!root && f.id !== null && folderMenu === f.path && (
+                  {!root && folderMenu === f.path && (
                     <div className="absolute right-1 top-7 z-20 bg-raised rounded-md ring-1 ring-line-strong shadow-lg py-1">
+                      <button
+                        onClick={() =>
+                          setUi({
+                            folderMenu: null,
+                            folderOperation: {
+                              action: "create",
+                              sourceLibraryId: f.library_id,
+                              sourceDir: folderRel,
+                              sourceName: f.name,
+                            },
+                          })
+                        }
+                        disabled={busy}
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                      >
+                        안에 새 폴더…
+                      </button>
+                      <button
+                        onClick={() =>
+                          setUi({
+                            folderMenu: null,
+                            folderOperation: {
+                              action: "rename",
+                              sourceLibraryId: f.library_id,
+                              sourceDir: folderRel,
+                              sourceName: f.name,
+                            },
+                          })
+                        }
+                        disabled={busy}
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                      >
+                        이름 변경…
+                      </button>
+                      <button
+                        onClick={() =>
+                          setUi({
+                            folderMenu: null,
+                            folderOperation: {
+                              action: "move",
+                              sourceLibraryId: f.library_id,
+                              sourceDir: folderRel,
+                              sourceName: f.name,
+                            },
+                          })
+                        }
+                        disabled={busy}
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                      >
+                        이동·복사…
+                      </button>
+                      <div className="my-1 border-t border-line" />
                       <button
                         onClick={() =>
                           setUi({
@@ -195,21 +250,40 @@ export default function AlbumTree({
                       >
                         촬영일 감사·교정…
                       </button>
+                      {f.id !== null && (
+                        <button
+                          onClick={() =>
+                            setUi({
+                              folderMenu: null,
+                              offload: {
+                                folderId: f.id!,
+                                name: f.name,
+                                libraryId: f.library_id,
+                              },
+                            })
+                          }
+                          disabled={busy}
+                          className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                        >
+                          다른 디스크로 옮기기…
+                        </button>
+                      )}
                       <button
                         onClick={() =>
                           setUi({
                             folderMenu: null,
-                            offload: {
-                              folderId: f.id!,
-                              name: f.name,
-                              libraryId: f.library_id,
+                            folderOperation: {
+                              action: "trash",
+                              sourceLibraryId: f.library_id,
+                              sourceDir: folderRel,
+                              sourceName: f.name,
                             },
                           })
                         }
                         disabled={busy}
-                        className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-drop hover:bg-hover whitespace-nowrap disabled:opacity-40"
                       >
-                        다른 디스크로 옮기기…
+                        폴더를 휴지통으로…
                       </button>
                     </div>
                   )}
@@ -234,6 +308,23 @@ export default function AlbumTree({
                         </button>
                       ))}
                       <div className="my-1 border-t border-line" />
+                      <button
+                        onClick={() =>
+                          setUi({
+                            menuFor: null,
+                            folderOperation: {
+                              action: "create",
+                              sourceLibraryId: lib.id,
+                              sourceDir: "",
+                              sourceName: lib.name,
+                            },
+                          })
+                        }
+                        disabled={busy || !lib.online}
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                      >
+                        새 폴더…
+                      </button>
                       <button
                         onClick={() => setUi({ menuFor: null, husks: { libraryId: lib.id, name: lib.name } })}
                         title="사진을 다 치운 뒤 메모·썸네일·zip 만 남은 폴더들을 찾아 휴지통으로"

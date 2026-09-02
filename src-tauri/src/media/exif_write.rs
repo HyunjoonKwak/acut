@@ -1,7 +1,5 @@
 //! JPEG 촬영일 쓰기 — ImageIO가 기존 메타데이터를 보존한 채 EXIF/TIFF 시각을 갱신한다.
 
-#![cfg(target_os = "macos")]
-
 use chrono::{Local, TimeZone};
 use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;

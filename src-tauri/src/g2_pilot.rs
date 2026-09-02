@@ -69,9 +69,13 @@ fn real_photo_copy_round_trip() {
 
     let original_sha = sha256(&source);
     let original_size = std::fs::metadata(&source).unwrap().len();
+    let same_base = std::env::var("PHOTO_DESK_G2_SAME_VOLUME_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"));
+    assert!(same_base.is_dir());
     let same = tempfile::Builder::new()
         .prefix("photo-desk-g2-")
-        .tempdir_in("/tmp")
+        .tempdir_in(&same_base)
         .unwrap();
     let nonce = format!(
         ".photo-desk-g2-{}-{}",
@@ -93,6 +97,11 @@ fn real_photo_copy_round_trip() {
     let folder_source = mine.join("G2_FOLDER/중첩/G2_FOLDER.jpg");
     std::fs::copy(&source, &publish_source).unwrap();
     std::fs::copy(&source, &folder_source).unwrap();
+    std::fs::write(
+        mine.join("G2_PUBLISH.xmp"),
+        b"<x:xmpmeta>G2 publish sidecar</x:xmpmeta>",
+    )
+    .unwrap();
     std::fs::write(
         mine.join("G2_FOLDER/중첩/G2_FOLDER.xmp"),
         b"<x:xmpmeta>G2 sidecar</x:xmpmeta>",
@@ -173,8 +182,10 @@ fn real_photo_copy_round_trip() {
     };
     let first_publish = transfer::execute(&db, &publish_request, "G2 공용 발행").unwrap();
     let published = shared.join("G2_PUBLISHED/G2_PUBLISH.jpg");
+    let published_sidecar = shared.join("G2_PUBLISHED/G2_PUBLISH.xmp");
     assert_eq!((first_publish.completed, first_publish.failed), (1, 0));
     assert_eq!(sha256(&published), original_sha);
+    assert!(published_sidecar.is_file());
     assert_eq!(sha256(&publish_source), original_sha);
     let second_publish = transfer::execute(&db, &publish_request, "G2 공용 재발행").unwrap();
     assert_eq!(
@@ -184,9 +195,86 @@ fn real_photo_copy_round_trip() {
     let publish_undo = transfer::undo_copy(&db, first_publish.batch_id).unwrap();
     assert_eq!((publish_undo.moved, publish_undo.failed), (1, 0));
     assert!(!published.exists());
+    assert!(!published_sidecar.exists());
     assert_eq!(sha256(&publish_source), original_sha);
+    assert!(mine.join("G2_PUBLISH.xmp").is_file());
 
-    // 3. 같은 볼륨 폴더 이동·복사와 undo.
+    // 3. 파일 충돌은 preview에서 보이고 실행은 기존 파일을 덮어쓰지 않는다.
+    let transfer_conflict_dir = shared.join("G2_CONFLICT");
+    std::fs::create_dir_all(&transfer_conflict_dir).unwrap();
+    let transfer_conflict_file = transfer_conflict_dir.join("G2_PUBLISH.jpg");
+    std::fs::write(&transfer_conflict_file, b"existing destination").unwrap();
+    let conflict_sha = sha256(&transfer_conflict_file);
+    let conflict_request = transfer::Request {
+        ids: vec![publish_id],
+        destination_library_id: shared_lib.id,
+        destination_dir: "G2_CONFLICT".into(),
+        mode: transfer::Mode::Copy,
+        conflict_policy: transfer::ConflictPolicy::Skip,
+        publish: false,
+    };
+    let conflict_preview = transfer::preview(&db, &conflict_request).unwrap();
+    assert_eq!(conflict_preview.items[0].conflict, "name_exists");
+    assert_eq!(conflict_preview.items[0].action, "skip");
+    let conflict_run = transfer::execute(&db, &conflict_request, "G2 파일 충돌").unwrap();
+    assert_eq!(
+        (
+            conflict_run.completed,
+            conflict_run.skipped,
+            conflict_run.failed
+        ),
+        (0, 1, 0)
+    );
+    assert_eq!(sha256(&transfer_conflict_file), conflict_sha);
+
+    // 4. 폴더 생성과 이름변경은 각각 journal로 되돌릴 수 있다.
+    let create_request = folder_request(
+        folder::Action::Create,
+        mine_lib.id,
+        "",
+        mine_lib.id,
+        "G2_CREATED",
+    );
+    let created = folder::execute(&db, &create_request, "G2 폴더 생성").unwrap();
+    assert_eq!((created.completed, created.failed), (1, 0));
+    assert!(mine.join("G2_CREATED").is_dir());
+    let create_undo = folder::undo(&db, created.batch_id).unwrap();
+    assert_eq!((create_undo.moved, create_undo.failed), (1, 0));
+    assert!(!mine.join("G2_CREATED").exists());
+
+    let rename_request = folder_request(
+        folder::Action::Rename,
+        mine_lib.id,
+        "G2_FOLDER",
+        mine_lib.id,
+        "G2_RENAMED",
+    );
+    let renamed = folder::execute(&db, &rename_request, "G2 폴더 이름변경").unwrap();
+    assert_eq!((renamed.completed, renamed.failed), (1, 0));
+    assert!(mine.join("G2_RENAMED/중첩/G2_FOLDER.xmp").is_file());
+    let rename_undo = folder::undo(&db, renamed.batch_id).unwrap();
+    assert_eq!((rename_undo.moved, rename_undo.failed), (1, 0));
+    assert!(mine.join("G2_FOLDER/중첩/G2_FOLDER.jpg").is_file());
+
+    // 폴더 이름 충돌도 실행 전에 표시되고 기존 트리를 보존한다.
+    std::fs::create_dir_all(mine.join("G2_COLLISION")).unwrap();
+    let folder_conflict_marker = mine.join("G2_COLLISION/existing.txt");
+    std::fs::write(&folder_conflict_marker, b"existing folder").unwrap();
+    let folder_conflict_request = folder_request(
+        folder::Action::Copy,
+        mine_lib.id,
+        "G2_FOLDER",
+        mine_lib.id,
+        "G2_COLLISION",
+    );
+    let folder_conflict_preview = folder::preview(&db, &folder_conflict_request).unwrap();
+    assert_eq!(folder_conflict_preview.conflict, "name_exists");
+    assert_eq!(folder_conflict_preview.action, "skip");
+    let folder_conflict = folder::execute(&db, &folder_conflict_request, "G2 폴더 충돌").unwrap();
+    assert_eq!((folder_conflict.completed, folder_conflict.failed), (0, 0));
+    assert!(folder_conflict_marker.is_file());
+
+    // 5. 같은 볼륨 폴더 이동·복사와 undo.
     let same_move_request = folder_request(
         folder::Action::Move,
         mine_lib.id,
@@ -221,7 +309,7 @@ fn real_photo_copy_round_trip() {
     assert_eq!((same_copy_undo.moved, same_copy_undo.failed), (1, 0));
     assert!(!mine.join("G2_SAME_COPY").exists());
 
-    // 4. 실제 다른 device의 폴더 복사·이동과 undo.
+    // 6. 실제 다른 device의 폴더 복사·이동과 undo.
     let cross_copy_request = folder_request(
         folder::Action::Copy,
         mine_lib.id,
@@ -274,7 +362,23 @@ fn real_photo_copy_round_trip() {
             "second_completed": second_publish.completed,
             "second_already_published": second_publish.already_published,
             "undo_removed": publish_undo.moved,
-            "source_retained": publish_source.is_file()
+            "source_retained": publish_source.is_file(),
+            "sidecar_copied_and_undone": !published_sidecar.exists() && mine.join("G2_PUBLISH.xmp").is_file()
+        },
+        "conflicts": {
+            "file_preview": conflict_preview.items[0].conflict,
+            "file_action": conflict_preview.items[0].action,
+            "file_skipped": conflict_run.skipped,
+            "destination_preserved": sha256(&transfer_conflict_file) == conflict_sha,
+            "folder_preview": folder_conflict_preview.conflict,
+            "folder_action": folder_conflict_preview.action,
+            "folder_preserved": folder_conflict_marker.is_file()
+        },
+        "folder_create_rename": {
+            "create_batch": created.batch_id,
+            "create_undo": create_undo.moved,
+            "rename_batch": renamed.batch_id,
+            "rename_undo": rename_undo.moved
         },
         "same_volume": {
             "move_batch": same_move.batch_id,

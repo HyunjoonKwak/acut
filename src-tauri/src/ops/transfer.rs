@@ -433,11 +433,18 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                         Some(&dest_vol_rel),
                         Ok(()),
                     )?;
-                    db.write(|c| {
-                        c.execute(
+                    db.transaction(|tx| {
+                        tx.execute(
                             "UPDATE files SET folder_id=?2,name=?3 WHERE id=?1",
                             rusqlite::params![it.id, folder, p.planned_name],
-                        )
+                        )?;
+                        // 썸네일 캐시는 라이브러리별 루트에 있다. 다른 라이브러리로
+                        // 옮긴 뒤 예전 완료 행을 남기면 통계는 완료인데 UI는 빈 그림이
+                        // 된다. 행을 지워 다음 썸네일 생성에서 정확히 다시 만들게 한다.
+                        if it.library_id != lib.id {
+                            tx.execute("DELETE FROM thumbs WHERE file_id=?1", [it.id])?;
+                        }
+                        Ok(())
                     })?;
                 }
                 Mode::Copy => {
@@ -676,6 +683,13 @@ mod tests {
     #[test]
     fn move_uses_the_shared_batch_journal_and_standard_undo() {
         let (d, db, _mine, shared, ids) = setup();
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state) VALUES(?1,'aa/old.jpg',1,1,1)",
+                [ids[0]],
+            )
+        })
+        .unwrap();
         let req = Request {
             ids: ids[..1].to_vec(),
             destination_library_id: shared,
@@ -689,6 +703,16 @@ mod tests {
         assert!(!d.path().join("내사진/a.jpg").exists());
         assert!(d.path().join("공용/이동/a.jpg").is_file());
         assert!(d.path().join("공용/이동/a.xmp").is_file());
+        assert_eq!(
+            db.read(|c| c.query_row(
+                "SELECT COUNT(*) FROM thumbs WHERE file_id=?1",
+                [ids[0]],
+                |r| r.get::<_, i64>(0),
+            ))
+            .unwrap(),
+            0,
+            "라이브러리별 캐시 루트가 바뀌면 기존 썸네일은 재생성 대기가 된다"
+        );
 
         let undo = crate::ops::undo::undo(&db, out.batch_id).unwrap();
         assert_eq!((undo.moved, undo.failed), (1, 0));

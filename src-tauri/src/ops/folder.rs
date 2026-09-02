@@ -518,6 +518,12 @@ fn move_db_rows(
     let destination_vol = vol_rel(destination_lib, destination_rel);
     db.transaction(|tx| {
         for (id, old) in &rows {
+            if source_lib.id != destination_lib.id {
+                tx.execute(
+                    "DELETE FROM thumbs WHERE file_id IN (SELECT id FROM files WHERE folder_id=?1)",
+                    [id],
+                )?;
+            }
             let suffix = old.strip_prefix(&source_vol).unwrap_or_default();
             let new_path = format!("{destination_vol}{suffix}");
             let name = new_path.rsplit('/').next().unwrap_or(&new_path);
@@ -1110,6 +1116,43 @@ mod tests {
         std::fs::rename(&backup, &source).unwrap();
         std::fs::remove_dir_all(&destination).unwrap();
         assert_eq!(before.sha256, manifest(&source).unwrap().sha256);
+    }
+
+    #[test]
+    fn cross_library_folder_move_invalidates_thumbnail_rows() {
+        let (_temp, db, la, lb) = setup();
+        let file_id = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT fi.id FROM files fi JOIN folders fo ON fo.id=fi.folder_id
+                     WHERE fo.library_id=?1 LIMIT 1",
+                    [la.id],
+                    |r| r.get::<_, i64>(0),
+                )
+            })
+            .unwrap();
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state) VALUES(?1,'aa/old.jpg',1,1,1)",
+                [file_id],
+            )
+        })
+        .unwrap();
+
+        let mut move_request = req(Action::Move, la.id, "부모/자식");
+        move_request.destination_library_id = Some(lb.id);
+        move_request.destination_parent = Some(String::new());
+        let moved = execute(&db, &move_request, "라이브러리 간 폴더 이동").unwrap();
+        assert_eq!((moved.completed, moved.failed), (1, 0));
+        assert_eq!(
+            db.read(|c| c.query_row(
+                "SELECT COUNT(*) FROM thumbs WHERE file_id=?1",
+                [file_id],
+                |r| r.get::<_, i64>(0),
+            ))
+            .unwrap(),
+            0
+        );
     }
 
     #[test]

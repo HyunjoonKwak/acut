@@ -212,7 +212,10 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
 
-    let mut out = Outcome { batch_id, ..Default::default() };
+    let mut out = Outcome {
+        batch_id,
+        ..Default::default()
+    };
     // 볼륨마다 마운트는 한 번만 찾는다
     let mut mounts: std::collections::HashMap<&str, Option<std::path::PathBuf>> =
         std::collections::HashMap::new();
@@ -226,18 +229,27 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
             continue;
         };
         let from = now_mount.join(&row.to_path); // 지금 있는 곳
-        // 원래 자리에 그새 다른 파일이 생겼을 수 있다 — 덮어쓰지 않고 옆에 놓는다
-        // (리뷰: rename은 있는 파일을 소리 없이 바꿔치기한다)
+                                                 // 원래 자리에 그새 다른 파일이 생겼을 수 있다 — 덮어쓰지 않고 옆에 놓는다
+                                                 // (리뷰: rename은 있는 파일을 소리 없이 바꿔치기한다)
         let to = crate::ops::trash::free_path(back_mount.join(&row.from_path));
         let to_rel = to
             .strip_prefix(&back_mount)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| row.from_path.clone());
         match move_with_sidecars(&from, &to) {
-            Ok(()) => {
-                repoint(db, row.file_id, &row.from_vol, &to_rel)?;
-                out.moved += 1;
-            }
+            Ok(()) => match repoint(db, batch_id, row.file_id, &row.from_vol, &to_rel) {
+                Ok(()) => out.moved += 1,
+                Err(error) => {
+                    let rollback = move_with_sidecars(&to, &from);
+                    out.failed += 1;
+                    out.first_error.get_or_insert_with(|| match rollback {
+                        Ok(()) => error.to_string(),
+                        Err(rollback) => {
+                            format!("DB 복원 실패: {error}; 파일 원위치 복구도 실패: {rollback}")
+                        }
+                    });
+                }
+            },
             Err(e) => {
                 out.failed += 1;
                 out.first_error.get_or_insert(e.to_string());
@@ -245,7 +257,14 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
         }
     }
     // 하나도 못 돌렸으면(디스크가 빠짐) 배치를 열어 둔다 — 꽂고 다시 시도할 수 있게
-    if out.moved > 0 || rows.is_empty() {
+    let remaining: i64 = db.read(|c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM journal WHERE batch_id=?1 AND ok=1 AND file_id IS NOT NULL AND to_path IS NOT NULL",
+            [batch_id],
+            |r| r.get(0),
+        )
+    })?;
+    if remaining == 0 {
         mark_undone(db, batch_id)?;
     }
     Ok(out)
@@ -261,7 +280,7 @@ fn mount_cached<'a>(
 }
 
 /// 파일 행이 원래 폴더를 가리키게 되돌린다. 폴더 행이 사라졌으면 되살린다.
-fn repoint(db: &Db, file_id: i64, volume_uuid: &str, vol_rel: &str) -> Result<()> {
+fn repoint(db: &Db, batch_id: i64, file_id: i64, volume_uuid: &str, vol_rel: &str) -> Result<()> {
     let (dir, name) = match vol_rel.rsplit_once('/') {
         Some((d, n)) => (d.to_string(), n.to_string()),
         None => (String::new(), vol_rel.to_string()),
@@ -282,19 +301,24 @@ fn repoint(db: &Db, file_id: i64, volume_uuid: &str, vol_rel: &str) -> Result<()
     let library_id = lib.map(|l| l.0);
     let area = lib.map(|l| l.1).unwrap_or(0);
     let folder_name = dir.rsplit('/').next().unwrap_or(&dir).to_string();
-    db.write(|c| {
-        c.execute(
+    db.transaction(|tx| {
+        tx.execute(
             "INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,scanned_at)
              VALUES(?1,?2,?3,?4,?5,strftime('%s','now'))
              ON CONFLICT(volume_uuid,rel_path) DO UPDATE SET library_id=COALESCE(excluded.library_id, library_id)",
             rusqlite::params![volume_uuid, library_id, dir, folder_name, area],
         )?;
-        c.execute(
+        tx.execute(
             "UPDATE files SET name = ?2,
                     folder_id = (SELECT id FROM folders WHERE volume_uuid=?3 AND rel_path=?4)
              WHERE id = ?1",
             rusqlite::params![file_id, name, volume_uuid, dir],
-        )
+        )?;
+        tx.execute(
+            "UPDATE journal SET ok=0 WHERE batch_id=?1 AND file_id=?2 AND ok=1",
+            rusqlite::params![batch_id,file_id],
+        )?;
+        Ok(())
     })?;
     Ok(())
 }
@@ -341,13 +365,19 @@ mod tests {
     #[test]
     fn undo_puts_moved_files_back() {
         let (dir, db, lib, ids) = setup();
-        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
         let out = move_to(&db, &ids, &dest, "정리").unwrap();
         assert!(!dir.path().join("작업대/a.jpg").exists());
 
         let u = undo(&db, out.batch_id).unwrap();
         assert_eq!((u.moved, u.failed), (2, 0));
-        assert!(dir.path().join("작업대/a.jpg").is_file(), "원래 자리로 돌아온다");
+        assert!(
+            dir.path().join("작업대/a.jpg").is_file(),
+            "원래 자리로 돌아온다"
+        );
         assert!(!dir.path().join("2024/행사/a.jpg").exists());
 
         // rel_path는 볼륨 기준이라 임시 폴더에서는 앞이 길다. 끝만 본다.
@@ -370,9 +400,11 @@ mod tests {
         let out = trash::to_trash(&db, &ids[..1], "치우기").unwrap();
         let trashed: i64 = db
             .read(|c| {
-                c.query_row("SELECT COUNT(*) FROM files WHERE trashed_at IS NOT NULL", [], |r| {
-                    r.get(0)
-                })
+                c.query_row(
+                    "SELECT COUNT(*) FROM files WHERE trashed_at IS NOT NULL",
+                    [],
+                    |r| r.get(0),
+                )
             })
             .unwrap();
         assert_eq!(trashed, 1);
@@ -381,9 +413,11 @@ mod tests {
         assert!(dir.path().join("작업대/a.jpg").is_file());
         let still: i64 = db
             .read(|c| {
-                c.query_row("SELECT COUNT(*) FROM files WHERE trashed_at IS NOT NULL", [], |r| {
-                    r.get(0)
-                })
+                c.query_row(
+                    "SELECT COUNT(*) FROM files WHERE trashed_at IS NOT NULL",
+                    [],
+                    |r| r.get(0),
+                )
             })
             .unwrap();
         assert_eq!(still, 0, "휴지통 표시도 지워져야 목록에 다시 나온다");
@@ -393,16 +427,32 @@ mod tests {
     fn journal_keeps_the_destination_volume_apart_from_the_source() {
         let (_d, db, _lib, ids) = setup();
         let batch = crate::ops::open_batch(&db, "move", "볼륨 넘어가기").unwrap();
-        crate::ops::record_to(&db, batch, "move", ids[0], "VOL-A", "a/x.jpg", "VOL-B", Some("b/x.jpg"), Ok(()))
-            .unwrap();
+        crate::ops::record_to(
+            &db,
+            batch,
+            "move",
+            ids[0],
+            "VOL-A",
+            "a/x.jpg",
+            "VOL-B",
+            Some("b/x.jpg"),
+            Ok(()),
+        )
+        .unwrap();
         let (from, to): (String, String) = db
             .read(|c| {
-                c.query_row("SELECT from_vol, to_vol FROM journal WHERE batch_id = ?1", [batch], |r| {
-                    Ok((r.get(0)?, r.get(1)?))
-                })
+                c.query_row(
+                    "SELECT from_vol, to_vol FROM journal WHERE batch_id = ?1",
+                    [batch],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
             })
             .unwrap();
-        assert_eq!((from.as_str(), to.as_str()), ("VOL-A", "VOL-B"), "to_vol 이 from_vol 에 묶이지 않는다");
+        assert_eq!(
+            (from.as_str(), to.as_str()),
+            ("VOL-A", "VOL-B"),
+            "to_vol 이 from_vol 에 묶이지 않는다"
+        );
     }
 
     #[test]
@@ -411,16 +461,31 @@ mod tests {
         let out = trash::to_trash(&db, &ids[..1], "치우기").unwrap();
         // 휴지통의 파일이 그새 사라졌다 — 되돌릴 것이 없다
         let trash_path: String = db
-            .read(|c| c.query_row("SELECT trash_path FROM files WHERE id = ?1", [ids[0]], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT trash_path FROM files WHERE id = ?1",
+                    [ids[0]],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         let _ = std::fs::remove_file(dir.path().join(&trash_path));
         let _ = std::fs::remove_file(&trash_path);
         let u = undo(&db, out.batch_id).unwrap();
         let undone: Option<i64> = db
-            .read(|c| c.query_row("SELECT undone_at FROM batches WHERE id=?1", [out.batch_id], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT undone_at FROM batches WHERE id=?1",
+                    [out.batch_id],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         if u.moved == 0 {
-            assert!(undone.is_none(), "하나도 못 돌렸으면 배치는 열려 있어야 한다");
+            assert!(
+                undone.is_none(),
+                "하나도 못 돌렸으면 배치는 열려 있어야 한다"
+            );
         } else {
             assert!(undone.is_some());
         }
@@ -435,9 +500,18 @@ mod tests {
         assert_eq!((u.moved, u.failed), (0, 0));
         assert!(u.first_error.as_deref().unwrap_or("").contains("이미"));
         let undone: Option<i64> = db
-            .read(|c| c.query_row("SELECT undone_at FROM batches WHERE id=?1", [t.batch_id], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT undone_at FROM batches WHERE id=?1",
+                    [t.batch_id],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
-        assert!(undone.is_some(), "할 일이 없는 배치는 닫힌다 — 단추가 영영 남지 않게");
+        assert!(
+            undone.is_some(),
+            "할 일이 없는 배치는 닫힌다 — 단추가 영영 남지 않게"
+        );
         assert!(dir.path().join("작업대/a.jpg").is_file(), "사진은 제자리");
     }
 
@@ -451,7 +525,13 @@ mod tests {
         assert_eq!((u.moved, u.failed), (1, 0), "{u:?}");
         assert!(!dir.path().join("작업대/a.jpg").exists(), "다시 휴지통으로");
         let trashed: i64 = db
-            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE trashed_at IS NOT NULL", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM files WHERE trashed_at IS NOT NULL",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(trashed, 1);
     }
@@ -459,11 +539,15 @@ mod tests {
     #[test]
     fn empty_operations_do_not_leave_batches_behind() {
         let (_d, db, _lib, ids) = setup();
-        let before: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0))).unwrap();
+        let before: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0)))
+            .unwrap();
         let r = trash::restore(&db, &ids).unwrap(); // 휴지통이 비었다
         assert_eq!(r.moved, 0);
         assert!(r.first_error.is_some());
-        let after: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0))).unwrap();
+        let after: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0)))
+            .unwrap();
         assert_eq!(before, after, "빈 배치가 생기지 않는다");
     }
 
@@ -474,17 +558,33 @@ mod tests {
         let e = trash::empty(&db, &ids[..1]).unwrap();
         let u = undo(&db, e.batch_id).unwrap();
         assert_eq!(u.moved, 0);
-        assert!(u.first_error.as_deref().unwrap_or("").contains("되돌릴 수 없"));
+        assert!(u
+            .first_error
+            .as_deref()
+            .unwrap_or("")
+            .contains("되돌릴 수 없"));
         let undone: Option<i64> = db
-            .read(|c| c.query_row("SELECT undone_at FROM batches WHERE id=?1", [e.batch_id], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT undone_at FROM batches WHERE id=?1",
+                    [e.batch_id],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
-        assert!(undone.is_none(), "«되돌린 작업»으로 꾸미지 않는다 — 지운 건 지운 것");
+        assert!(
+            undone.is_none(),
+            "«되돌린 작업»으로 꾸미지 않는다 — 지운 건 지운 것"
+        );
     }
 
     #[test]
     fn undoing_twice_does_nothing() {
         let (_d, db, lib, ids) = setup();
-        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
         let out = move_to(&db, &ids, &dest, "정리").unwrap();
         undo(&db, out.batch_id).unwrap();
         let again = undo(&db, out.batch_id).unwrap();
@@ -496,18 +596,42 @@ mod tests {
     fn recent_closes_trash_batches_that_have_nothing_left_to_undo() {
         let (_d, db, _lib, ids) = setup();
         let t = trash::to_trash(&db, &ids[..1], "휴지통으로").unwrap();
-        assert!(recent(&db, 10).unwrap().iter().any(|b| b.id == t.batch_id && b.undone_at.is_none()));
+        assert!(recent(&db, 10)
+            .unwrap()
+            .iter()
+            .any(|b| b.id == t.batch_id && b.undone_at.is_none()));
         trash::restore(&db, &ids[..1]).unwrap(); // 휴지통 화면에서 되돌림
         let list = recent(&db, 10).unwrap();
         let b = list.iter().find(|b| b.id == t.batch_id).unwrap();
-        assert!(b.undone_at.is_some(), "물릴 게 없는 묶음은 목록을 읽을 때 닫힌다");
+        assert!(
+            b.undone_at.is_some(),
+            "물릴 게 없는 묶음은 목록을 읽을 때 닫힌다"
+        );
     }
 
     #[test]
     fn recent_lists_newest_first_and_shows_undone() {
         let (_d, db, lib, ids) = setup();
-        let a = move_to(&db, &ids[..1], &Dest { library_id: lib, rel_dir: "x".into() }, "1").unwrap();
-        let b = move_to(&db, &ids[1..], &Dest { library_id: lib, rel_dir: "y".into() }, "2").unwrap();
+        let a = move_to(
+            &db,
+            &ids[..1],
+            &Dest {
+                library_id: lib,
+                rel_dir: "x".into(),
+            },
+            "1",
+        )
+        .unwrap();
+        let b = move_to(
+            &db,
+            &ids[1..],
+            &Dest {
+                library_id: lib,
+                rel_dir: "y".into(),
+            },
+            "2",
+        )
+        .unwrap();
         undo(&db, a.batch_id).unwrap();
 
         let list = recent(&db, 10).unwrap();
@@ -516,19 +640,28 @@ mod tests {
         assert!(first.undone_at.is_some(), "되돌린 표시가 남는다");
     }
 
-
     #[test]
     fn undo_does_not_overwrite_a_newer_file_in_the_old_place() {
         let (dir, db, lib, ids) = setup();
-        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
         let out = move_to(&db, &ids[..1], &dest, "정리").unwrap();
         // 그새 같은 이름의 새 사진이 원래 자리에 들어왔다
         std::fs::write(dir.path().join("작업대/a.jpg"), b"NEW PHOTO").unwrap();
 
         let u = undo(&db, out.batch_id).unwrap();
         assert_eq!((u.moved, u.failed), (1, 0));
-        assert_eq!(std::fs::read(dir.path().join("작업대/a.jpg")).unwrap(), b"NEW PHOTO", "새 사진은 그대로");
-        assert!(dir.path().join("작업대/a (2).jpg").is_file(), "돌아온 것은 옆에 놓인다");
+        assert_eq!(
+            std::fs::read(dir.path().join("작업대/a.jpg")).unwrap(),
+            b"NEW PHOTO",
+            "새 사진은 그대로"
+        );
+        assert!(
+            dir.path().join("작업대/a (2).jpg").is_file(),
+            "돌아온 것은 옆에 놓인다"
+        );
         let name: String = db
             .read(|c| c.query_row("SELECT name FROM files WHERE id=?1", [ids[0]], |r| r.get(0)))
             .unwrap();
@@ -538,15 +671,27 @@ mod tests {
     #[test]
     fn a_fully_failed_undo_stays_undoable() {
         let (dir, db, lib, ids) = setup();
-        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
         let out = move_to(&db, &ids[..1], &dest, "정리").unwrap();
         // 옮긴 파일이 사라져 되돌릴 수 없다
         std::fs::remove_file(dir.path().join("2024/행사/a.jpg")).unwrap();
         let u = undo(&db, out.batch_id).unwrap();
         assert_eq!((u.moved, u.failed), (0, 1));
         let undone: Option<i64> = db
-            .read(|c| c.query_row("SELECT undone_at FROM batches WHERE id=?1", [out.batch_id], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT undone_at FROM batches WHERE id=?1",
+                    [out.batch_id],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
-        assert!(undone.is_none(), "하나도 못 돌렸으면 «되돌린 것»으로 찍지 않는다");
+        assert!(
+            undone.is_none(),
+            "하나도 못 돌렸으면 «되돌린 것»으로 찍지 않는다"
+        );
     }
 }

@@ -324,6 +324,9 @@ CREATE TABLE IF NOT EXISTS capture_date_journal (
     old_override    INTEGER,
     new_taken_at    INTEGER NOT NULL,
     write_scope     TEXT NOT NULL,
+    before_sha256   TEXT,
+    after_sha256    TEXT,
+    undone_at       INTEGER,
     PRIMARY KEY (batch_id, file_id)
 );
 
@@ -349,6 +352,21 @@ CREATE TABLE IF NOT EXISTS publication_ledger (
     UNIQUE(source_sha256, destination_library_id, destination_path)
 );
 CREATE INDEX IF NOT EXISTS idx_publication_hash ON publication_ledger(source_sha256, destination_library_id);
+
+-- 사진 복사 undo가 실제로 만든 파일만 지우도록 남기는 완전한 산출물 목록.
+-- 0번은 본 파일, 그 뒤는 XMP sidecar다. 파일 행을 먼저 지워도 검증·복구 자료가
+-- 배치가 끝날 때까지 남아야 하므로 file_id에는 외래키를 걸지 않는다.
+CREATE TABLE IF NOT EXISTS copy_manifest (
+    batch_id   INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+    file_id    INTEGER NOT NULL,
+    seq        INTEGER NOT NULL,
+    to_vol     TEXT NOT NULL,
+    to_path    TEXT NOT NULL,
+    sha256     TEXT NOT NULL,
+    is_main    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (batch_id, file_id, seq),
+    UNIQUE (batch_id, to_vol, to_path)
+);
 
 -- 일반 폴더 작업은 파일별 저널과 별도로, 갈래 하나의 물리 경로와 DB 재지정
 -- 범위를 기록한다. source/destination은 라이브러리 기준 상대경로다.

@@ -288,7 +288,7 @@ fn backup_path(db: &Db, it: &Item, batch_id: i64) -> Result<(PathBuf, String)> {
     Ok((full, rel))
 }
 
-fn refresh_row(db: &Db, it: &Item, path: &Path, wanted: i64, embedded: bool) -> Result<(i64, i32)> {
+fn refresh_values(path: &Path, wanted: i64, embedded: bool) -> Result<(i64, i32, u64, i64)> {
     let meta = std::fs::metadata(path)?;
     let mtime = FileTime::from_last_modification_time(&meta).unix_seconds();
     let (resolved, source) = if embedded {
@@ -299,25 +299,31 @@ fn refresh_row(db: &Db, it: &Item, path: &Path, wanted: i64, embedded: bool) -> 
     } else {
         (wanted, taken_at::Source::Manual as i32)
     };
-    db.transaction(|tx| {
-        if embedded {
-            tx.execute("DELETE FROM capture_date_overrides WHERE file_id=?1", [it.id])?;
-        } else {
-            tx.execute(
-                "INSERT INTO capture_date_overrides(file_id,taken_at) VALUES(?1,?2)
-                 ON CONFLICT(file_id) DO UPDATE SET taken_at=excluded.taken_at,updated_at=strftime('%s','now')",
-                rusqlite::params![it.id, wanted],
-            )?;
-        }
-        tx.execute(
-            "UPDATE files SET taken_at=?2,taken_at_source=?3,size=?4,modified_at=?5,
-              quick_hash=NULL,full_hash=NULL,image_hash=NULL,phash=NULL,psig=NULL,scanned_at=strftime('%s','now') WHERE id=?1",
-            rusqlite::params![it.id, resolved, source, meta.len() as i64, mtime],
-        )?;
-        tx.execute("DELETE FROM thumbs WHERE file_id=?1", [it.id])?;
-        Ok(())
-    })?;
-    Ok((resolved, source))
+    Ok((resolved, source, meta.len(), mtime))
+}
+
+fn restore_backup(
+    backup: &Path,
+    target: &Path,
+    expected: &str,
+    atime: FileTime,
+    mtime: FileTime,
+) -> Result<()> {
+    let temp = crate::ops::trash::free_path(target.with_file_name(format!(
+        ".{}.capture-restore.tmp",
+        target.file_name().unwrap_or_default().to_string_lossy()
+    )));
+    std::fs::copy(backup, &temp)?;
+    if sha256(&temp)? != expected {
+        let _ = std::fs::remove_file(&temp);
+        return Err(DbError::Invalid(
+            "촬영일 백업의 SHA-256이 원본 기록과 다릅니다".into(),
+        ));
+    }
+    std::fs::File::open(&temp)?.sync_all()?;
+    std::fs::rename(&temp, target)?;
+    filetime::set_file_times(target, atime, mtime)?;
+    Ok(())
 }
 
 pub fn apply(db: &Db, changes: &[Change], label: &str) -> Result<CaptureOutcome> {
@@ -378,12 +384,17 @@ pub fn apply(db: &Db, changes: &[Change], label: &str) -> Result<CaptureOutcome>
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::copy(&path, &backup)?;
+                std::fs::File::open(&backup)?.sync_all()?;
+                if sha256(&backup)? != before_hash {
+                    let _ = std::fs::remove_file(&backup);
+                    return Err(DbError::Invalid("촬영일 백업 검증에 실패했습니다".into()));
+                }
                 (Some(it.volume_uuid.clone()), Some(rel))
             } else {
                 (None, None)
             };
 
-            let write = (|| -> Result<()> {
+            let changed = (|| -> Result<ManifestItem> {
                 if is_jpeg(&it) {
                     crate::media::exif_write::write_capture_time(&path, change.taken_at)
                         .map_err(|e| DbError::Invalid(e.to_string()))?;
@@ -393,51 +404,84 @@ pub fn apply(db: &Db, changes: &[Change], label: &str) -> Result<CaptureOutcome>
                     atime,
                     FileTime::from_unix_time(change.taken_at, 0),
                 )?;
-                Ok(())
+                let embedded = is_jpeg(&it);
+                let (rescan_at, rescan_source, size, modified_at) =
+                    refresh_values(&path, change.taken_at, embedded)?;
+                let after_hash = sha256(&path)?;
+                let scope = if embedded {
+                    "jpeg-exif+mtime"
+                } else {
+                    "mtime+desk-override"
+                };
+                db.transaction(|tx| {
+                    if embedded {
+                        tx.execute(
+                            "DELETE FROM capture_date_overrides WHERE file_id=?1",
+                            [it.id],
+                        )?;
+                    } else {
+                        tx.execute(
+                            "INSERT INTO capture_date_overrides(file_id,taken_at) VALUES(?1,?2)
+                             ON CONFLICT(file_id) DO UPDATE SET taken_at=excluded.taken_at,updated_at=strftime('%s','now')",
+                            rusqlite::params![it.id, change.taken_at],
+                        )?;
+                    }
+                    tx.execute(
+                        "UPDATE files SET taken_at=?2,taken_at_source=?3,size=?4,modified_at=?5,
+                          quick_hash=NULL,full_hash=NULL,image_hash=NULL,phash=NULL,psig=NULL,scanned_at=strftime('%s','now') WHERE id=?1",
+                        rusqlite::params![it.id, rescan_at, rescan_source, size as i64, modified_at],
+                    )?;
+                    tx.execute("DELETE FROM thumbs WHERE file_id=?1", [it.id])?;
+                    tx.execute(
+                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
+                         VALUES(?1,?2,'capture_date',?3,?4,?3,?4,1)",
+                        rusqlite::params![batch_id,it.id,it.volume_uuid,it.vol_rel],
+                    )?;
+                    tx.execute(
+                        "INSERT INTO capture_date_journal(batch_id,file_id,backup_vol,backup_path,
+                         old_atime_sec,old_atime_nsec,old_mtime_sec,old_mtime_nsec,old_taken_at,old_source,
+                         old_override,new_taken_at,write_scope,before_sha256,after_sha256)
+                         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                        rusqlite::params![batch_id,it.id,backup_vol,backup_rel,atime.unix_seconds(),atime.nanoseconds(),
+                            mtime.unix_seconds(),mtime.nanoseconds(),it.taken_at,it.source,old_override,change.taken_at,scope,
+                            before_hash,after_hash],
+                    )?;
+                    Ok(())
+                })?;
+                Ok(ManifestItem {
+                    id: it.id,
+                    path: it.lib_rel.clone(),
+                    before_sha256: before_hash.clone(),
+                    after_sha256: after_hash,
+                    before_taken_at: it.taken_at,
+                    written_at: change.taken_at,
+                    rescan_at,
+                    rescan_source,
+                    write_scope: scope.into(),
+                })
             })();
-            if let Err(e) = write {
-                if let Some(ref rel) = backup_rel {
-                    if let Some(mount) = crate::db::volumes::find_mount(&it.volume_uuid) {
-                        let _ = std::fs::copy(mount.join(rel), &path);
-                        let _ = filetime::set_file_times(&path, atime, mtime);
+            match changed {
+                Ok(manifest) => Ok(manifest),
+                Err(error) => {
+                    let rollback = if let Some(ref rel) = backup_rel {
+                        crate::db::volumes::find_mount(&it.volume_uuid)
+                            .ok_or_else(|| {
+                                DbError::Invalid("백업 볼륨이 연결되어 있지 않습니다".into())
+                            })
+                            .and_then(|mount| {
+                                restore_backup(&mount.join(rel), &path, &before_hash, atime, mtime)
+                            })
+                    } else {
+                        filetime::set_file_times(&path, atime, mtime).map_err(Into::into)
+                    };
+                    match rollback {
+                        Ok(()) => Err(error),
+                        Err(rollback) => Err(DbError::Invalid(format!(
+                            "촬영일 교정 실패: {error}; 원본 복구도 실패: {rollback}"
+                        ))),
                     }
                 }
-                return Err(e);
             }
-            let embedded = is_jpeg(&it);
-            let (rescan_at, rescan_source) =
-                refresh_row(db, &it, &path, change.taken_at, embedded)?;
-            let scope = if embedded {
-                "jpeg-exif+mtime"
-            } else {
-                "mtime+desk-override"
-            };
-            db.transaction(|tx| {
-                tx.execute(
-                    "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
-                     VALUES(?1,?2,'capture_date',?3,?4,?3,?4,1)",
-                    rusqlite::params![batch_id,it.id,it.volume_uuid,it.vol_rel],
-                )?;
-                tx.execute(
-                    "INSERT INTO capture_date_journal(batch_id,file_id,backup_vol,backup_path,
-                     old_atime_sec,old_atime_nsec,old_mtime_sec,old_mtime_nsec,old_taken_at,old_source,
-                     old_override,new_taken_at,write_scope) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
-                    rusqlite::params![batch_id,it.id,backup_vol,backup_rel,atime.unix_seconds(),atime.nanoseconds(),
-                        mtime.unix_seconds(),mtime.nanoseconds(),it.taken_at,it.source,old_override,change.taken_at,scope],
-                )?;
-                Ok(())
-            })?;
-            Ok(ManifestItem {
-                id: it.id,
-                path: it.lib_rel,
-                before_sha256: before_hash,
-                after_sha256: sha256(&path)?,
-                before_taken_at: it.taken_at,
-                written_at: change.taken_at,
-                rescan_at,
-                rescan_source,
-                write_scope: scope.into(),
-            })
         })();
         match result {
             Ok(m) => {
@@ -479,10 +523,12 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
         old_at: i64,
         old_src: i32,
         old_override: Option<i64>,
+        before_sha256: Option<String>,
+        after_sha256: Option<String>,
     }
     let rows: Vec<Row> = db.read(|c| {
-        let mut st=c.prepare("SELECT file_id,backup_vol,backup_path,old_atime_sec,old_atime_nsec,old_mtime_sec,old_mtime_nsec,old_taken_at,old_source,old_override FROM capture_date_journal WHERE batch_id=?1 ORDER BY file_id DESC")?;
-        let it=st.query_map([batch_id],|r| Ok(Row{file_id:r.get(0)?,backup_vol:r.get(1)?,backup_path:r.get(2)?,at_s:r.get(3)?,at_n:r.get::<_,i64>(4)? as u32,mt_s:r.get(5)?,mt_n:r.get::<_,i64>(6)? as u32,old_at:r.get(7)?,old_src:r.get(8)?,old_override:r.get(9)?}))?;
+        let mut st=c.prepare("SELECT file_id,backup_vol,backup_path,old_atime_sec,old_atime_nsec,old_mtime_sec,old_mtime_nsec,old_taken_at,old_source,old_override,before_sha256,after_sha256 FROM capture_date_journal WHERE batch_id=?1 AND undone_at IS NULL ORDER BY file_id DESC")?;
+        let it=st.query_map([batch_id],|r| Ok(Row{file_id:r.get(0)?,backup_vol:r.get(1)?,backup_path:r.get(2)?,at_s:r.get(3)?,at_n:r.get::<_,i64>(4)? as u32,mt_s:r.get(5)?,mt_n:r.get::<_,i64>(6)? as u32,old_at:r.get(7)?,old_src:r.get(8)?,old_override:r.get(9)?,before_sha256:r.get(10)?,after_sha256:r.get(11)?}))?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
     let mut out = Outcome {
@@ -493,6 +539,19 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
         let result = (|| -> Result<()> {
             let it = one(db, row.file_id)?;
             let target = absolute(&it)?;
+            let expected_after = row.after_sha256.as_deref().ok_or_else(|| {
+                DbError::Invalid(
+                    "0.9.0에서 만든 촬영일 작업은 변경 후 해시가 없어 안전하게 되돌릴 수 없습니다"
+                        .into(),
+                )
+            })?;
+            if sha256(&target)? != expected_after {
+                return Err(DbError::Invalid(
+                    "교정 뒤 파일 내용이 바뀌어 원본으로 덮어쓰지 않았습니다".into(),
+                ));
+            }
+            let corrected_times = times(&std::fs::metadata(&target)?);
+            let mut staged_corrected = None;
             if let (Some(vol), Some(rel)) = (row.backup_vol.as_deref(), row.backup_path.as_deref())
             {
                 let mount = crate::db::volumes::find_mount(vol)
@@ -501,19 +560,38 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
                 if !backup.is_file() {
                     return Err(DbError::Invalid("촬영일 백업 파일이 없습니다".into()));
                 }
-                let temp = target.with_file_name(format!(
-                    ".{}.capture-undo.tmp",
+                let expected_before = row.before_sha256.as_deref().ok_or_else(|| {
+                    DbError::Invalid("원본 SHA-256 기록이 없어 되돌릴 수 없습니다".into())
+                })?;
+                if sha256(&backup)? != expected_before {
+                    return Err(DbError::Invalid(
+                        "촬영일 백업의 SHA-256이 원본 기록과 다릅니다".into(),
+                    ));
+                }
+                let corrected = crate::ops::trash::free_path(target.with_file_name(format!(
+                    ".{}.capture-undo-{batch_id}.tmp",
                     target.file_name().unwrap_or_default().to_string_lossy()
-                ));
-                std::fs::copy(&backup, &temp)?;
-                std::fs::rename(&temp, &target)?;
+                )));
+                std::fs::rename(&target, &corrected)?;
+                if let Err(error) = restore_backup(
+                    &backup,
+                    &target,
+                    expected_before,
+                    FileTime::from_unix_time(row.at_s, row.at_n),
+                    FileTime::from_unix_time(row.mt_s, row.mt_n),
+                ) {
+                    let _ = std::fs::rename(&corrected, &target);
+                    return Err(error);
+                }
+                staged_corrected = Some(corrected);
+            } else {
+                filetime::set_file_times(
+                    &target,
+                    FileTime::from_unix_time(row.at_s, row.at_n),
+                    FileTime::from_unix_time(row.mt_s, row.mt_n),
+                )?;
             }
-            filetime::set_file_times(
-                &target,
-                FileTime::from_unix_time(row.at_s, row.at_n),
-                FileTime::from_unix_time(row.mt_s, row.mt_n),
-            )?;
-            db.transaction(|tx| {
+            let updated = db.transaction(|tx| {
                 match row.old_override {
                     Some(t)=>{tx.execute("INSERT INTO capture_date_overrides(file_id,taken_at) VALUES(?1,?2) ON CONFLICT(file_id) DO UPDATE SET taken_at=excluded.taken_at",rusqlite::params![row.file_id,t])?;}
                     None=>{tx.execute("DELETE FROM capture_date_overrides WHERE file_id=?1",[row.file_id])?;}
@@ -521,8 +599,46 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
                 let meta=std::fs::metadata(&target).map_err(|e|rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 tx.execute("UPDATE files SET taken_at=?2,taken_at_source=?3,size=?4,modified_at=?5,quick_hash=NULL,full_hash=NULL,image_hash=NULL,phash=NULL,psig=NULL WHERE id=?1",rusqlite::params![row.file_id,row.old_at,row.old_src,meta.len() as i64,row.mt_s])?;
                 tx.execute("DELETE FROM thumbs WHERE file_id=?1",[row.file_id])?;
+                tx.execute(
+                    "UPDATE capture_date_journal SET undone_at=strftime('%s','now') WHERE batch_id=?1 AND file_id=?2",
+                    rusqlite::params![batch_id,row.file_id],
+                )?;
                 Ok(())
-            })?;
+            });
+            if let Err(error) = updated {
+                let rollback = if let Some(corrected) = staged_corrected.as_ref() {
+                    let _ = std::fs::remove_file(&target);
+                    std::fs::rename(corrected, &target).and_then(|()| {
+                        filetime::set_file_times(&target, corrected_times.0, corrected_times.1)
+                    })
+                } else {
+                    filetime::set_file_times(&target, corrected_times.0, corrected_times.1)
+                };
+                return match rollback {
+                    Ok(()) => Err(error),
+                    Err(rollback) => Err(DbError::Invalid(format!(
+                        "되돌리기 DB 갱신 실패: {error}; 교정 파일 복구도 실패: {rollback}"
+                    ))),
+                };
+            }
+            if let Some(corrected) = staged_corrected {
+                if let Err(error) = std::fs::remove_file(&corrected) {
+                    log::warn!(
+                        "촬영일 되돌리기 임시 파일을 지우지 못했습니다 {}: {error}",
+                        corrected.display()
+                    );
+                }
+            }
+            if let (Some(vol), Some(rel)) = (row.backup_vol.as_deref(), row.backup_path.as_deref())
+            {
+                if let Some(mount) = crate::db::volumes::find_mount(vol) {
+                    let backup = mount.join(rel);
+                    let _ = std::fs::remove_file(&backup);
+                    if let Some(parent) = backup.parent() {
+                        let _ = std::fs::remove_dir(parent);
+                    }
+                }
+            }
             Ok(())
         })();
         match result {
@@ -534,7 +650,14 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
             }
         }
     }
-    if out.moved > 0 || out.failed == 0 {
+    let remaining: i64 = db.read(|c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM capture_date_journal WHERE batch_id=?1 AND undone_at IS NULL",
+            [batch_id],
+            |r| r.get(0),
+        )
+    })?;
+    if remaining == 0 {
         crate::ops::undo::mark_undone(db, batch_id)?;
     }
     Ok(out)
@@ -637,5 +760,47 @@ mod tests {
         assert_eq!((out.corrected, out.failed), (1, 1));
         assert_eq!(out.manifest[0].write_scope, "mtime+desk-override");
         assert_eq!(undo(&db, out.batch_id).unwrap().moved, 1);
+    }
+
+    #[test]
+    fn undo_refuses_to_overwrite_a_file_changed_after_correction() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("사진");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("20240102_120000.jpg");
+        jpeg(&path);
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        scan_test(&db, &root, 0, |_| {}).unwrap();
+        let id: i64 = db
+            .read(|c| c.query_row("SELECT id FROM files", [], |r| r.get(0)))
+            .unwrap();
+        let out = apply(
+            &db,
+            &[Change {
+                id,
+                taken_at: taken_at::civil_to_unix(2024, 1, 3, 12, 0, 0),
+                manual: true,
+            }],
+            "교정",
+        )
+        .unwrap();
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"later edit")
+            .unwrap();
+        let changed = sha256(&path).unwrap();
+        let undone = undo(&db, out.batch_id).unwrap();
+        assert_eq!((undone.moved, undone.failed), (0, 1));
+        assert_eq!(sha256(&path).unwrap(), changed);
+        assert!(undone
+            .first_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("바뀌어"));
     }
 }

@@ -39,12 +39,22 @@ fn u32_at(bytes: &[u8], offset: usize, endian: Endian) -> Option<u32> {
     })
 }
 
-fn ifd_entries(bytes: &[u8], tiff: usize, relative: u32, endian: Endian) -> Option<Vec<usize>> {
+fn ifd_entries(
+    bytes: &[u8],
+    tiff: usize,
+    relative: u32,
+    endian: Endian,
+    segment_end: usize,
+) -> Option<Vec<usize>> {
     let start = tiff.checked_add(relative as usize)?;
+    if start < tiff || start.checked_add(2)? > segment_end {
+        return None;
+    }
     let count = u16_at(bytes, start, endian)? as usize;
     let first = start.checked_add(2)?;
     let end = first.checked_add(count.checked_mul(12)?)?;
-    (end <= bytes.len()).then(|| (0..count).map(|index| first + index * 12).collect())
+    (end <= segment_end && end <= bytes.len())
+        .then(|| (0..count).map(|index| first + index * 12).collect())
 }
 
 fn tag_value(
@@ -53,6 +63,7 @@ fn tag_value(
     entries: &[usize],
     wanted: u16,
     endian: Endian,
+    segment_end: usize,
 ) -> Option<(usize, usize)> {
     let entry = *entries
         .iter()
@@ -67,7 +78,9 @@ fn tag_value(
     } else {
         tiff.checked_add(u32_at(bytes, entry + 8, endian)? as usize)?
     };
-    (offset.checked_add(20)? <= bytes.len()).then_some((offset, count))
+    let value_end = offset.checked_add(count)?;
+    (offset >= tiff && value_end <= segment_end && value_end <= bytes.len())
+        .then_some((offset, count))
 }
 
 /// 이미 표준 EXIF 세 필드가 있는 JPEG는 TIFF 구조 안의 고정 길이 ASCII 값만
@@ -123,6 +136,7 @@ fn overwrite_existing_exif(path: &Path, date: &[u8; 20]) -> Result<bool, WriteEr
             tiff,
             u32_at(&bytes, tiff + 4, endian).ok_or(WriteError::Metadata)?,
             endian,
+            segment_end,
         )
         .ok_or(WriteError::Metadata)?;
         let exif_pointer = ifd0
@@ -130,12 +144,12 @@ fn overwrite_existing_exif(path: &Path, date: &[u8; 20]) -> Result<bool, WriteEr
             .find(|&&entry| u16_at(&bytes, entry, endian) == Some(0x8769))
             .and_then(|&entry| u32_at(&bytes, entry + 8, endian))
             .ok_or(WriteError::Metadata)?;
-        let exif_ifd =
-            ifd_entries(&bytes, tiff, exif_pointer, endian).ok_or(WriteError::Metadata)?;
+        let exif_ifd = ifd_entries(&bytes, tiff, exif_pointer, endian, segment_end)
+            .ok_or(WriteError::Metadata)?;
         let positions = [
-            tag_value(&bytes, tiff, &ifd0, 0x0132, endian),
-            tag_value(&bytes, tiff, &exif_ifd, 0x9003, endian),
-            tag_value(&bytes, tiff, &exif_ifd, 0x9004, endian),
+            tag_value(&bytes, tiff, &ifd0, 0x0132, endian, segment_end),
+            tag_value(&bytes, tiff, &exif_ifd, 0x9003, endian, segment_end),
+            tag_value(&bytes, tiff, &exif_ifd, 0x9004, endian, segment_end),
         ];
         if positions.iter().any(Option::is_none) {
             return Err(WriteError::Metadata);
@@ -317,5 +331,36 @@ mod tests {
             "재교정 뒤 이전 시각이 남으면 안 된다"
         );
         assert_eq!(image::open(&path).unwrap().to_rgb8(), before);
+    }
+
+    #[test]
+    fn rejects_a_value_offset_that_escapes_the_exif_segment() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad-offset.jpg");
+        image::RgbImage::from_pixel(32, 32, image::Rgb([10, 20, 30]))
+            .save(&path)
+            .unwrap();
+        let first = crate::media::taken_at::civil_to_unix(2024, 1, 2, 3, 4, 5);
+        write_capture_time(&path, first).unwrap();
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let exif = bytes
+            .windows(6)
+            .position(|window| window == b"Exif\0\0")
+            .expect("inserted EXIF");
+        let tiff = exif + 6;
+        // IFD0 첫 항목(DateTime)의 값 offset을 TIFF 끝 바깥, 그러나 JPEG 파일
+        // 안쪽으로 돌린다. 예전 검사는 전체 파일 길이만 봐 화소 구간을 썼다.
+        let entry = tiff + 10;
+        bytes[entry + 8..entry + 12].copy_from_slice(&140_u32.to_be_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let second = first + 60;
+        assert!(matches!(
+            write_capture_time(&path, second),
+            Err(WriteError::Metadata)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 }

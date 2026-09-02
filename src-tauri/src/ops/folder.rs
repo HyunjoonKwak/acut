@@ -124,6 +124,7 @@ fn bad_name(part: &str) -> bool {
     part.is_empty()
         || part == "."
         || part == ".."
+        || part.starts_with('.')
         || part.contains(':')
         || part.chars().any(|c| (c as u32) < 0x20)
 }
@@ -133,9 +134,23 @@ fn library(db: &Db, id: i64) -> Result<Library> {
 }
 
 fn online_root(lib: &Library) -> Result<PathBuf> {
-    lib.dir
+    let root = lib
+        .dir
         .clone()
-        .ok_or_else(|| bad(format!("「{}」 디스크가 연결되어 있지 않습니다", lib.name)))
+        .ok_or_else(|| bad(format!("「{}」 디스크가 연결되어 있지 않습니다", lib.name)))?;
+    let root = root.canonicalize().map_err(|_| {
+        bad(format!(
+            "「{}」 라이브러리 경로를 확인할 수 없습니다",
+            lib.name
+        ))
+    })?;
+    if !root.is_dir() {
+        return Err(bad(format!(
+            "「{}」 라이브러리가 폴더가 아닙니다",
+            lib.name
+        )));
+    }
+    Ok(root)
 }
 
 fn existing_inside(root: &Path, rel: &str) -> Result<PathBuf> {
@@ -364,10 +379,24 @@ fn planned(
         ));
     }
 
-    let destination_id = request.destination_library_id.unwrap_or(source_lib.id);
+    // 이름 변경은 같은 부모 안의 이름만 바꾼다. 숨겨진 UI 상태나 직접 invoke한
+    // payload가 다른 라이브러리를 넣어도 물리 이동으로 변질되면 안 된다.
+    let destination_id = if request.action == Action::Rename {
+        source_lib.id
+    } else {
+        request.destination_library_id.unwrap_or(source_lib.id)
+    };
     let destination_lib = library(db, destination_id)?;
     let destination_root = online_root(&destination_lib)?;
-    let parent_rel = clean_rel(request.destination_parent.as_deref().unwrap_or(""), true)?;
+    let parent_rel = if request.action == Action::Rename {
+        source_rel
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("")
+            .to_string()
+    } else {
+        clean_rel(request.destination_parent.as_deref().unwrap_or(""), true)?
+    };
     let parent = parent_inside(&destination_root, &parent_rel)?;
     let name = match request.action {
         Action::Rename => clean_name(request.name.as_deref())?,
@@ -409,7 +438,13 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
     } else {
         manifest(&source)?
     };
-    let exists = wanted.exists();
+    let same_existing_folder = request.action == Action::Rename
+        && wanted.exists()
+        && matches!(
+            (source.canonicalize(), wanted.canonicalize()),
+            (Ok(source), Ok(wanted)) if source == wanted
+        );
+    let exists = wanted.exists() && !same_existing_folder;
     let (conflict, action, destination) = if exists && request.action != Action::Trash {
         match request.conflict_policy {
             ConflictPolicy::Skip => ("name_exists", "skip", wanted),
@@ -490,6 +525,7 @@ fn copy_tree_verified(
                 }
                 std::fs::copy(entry.path(), &dest)?;
                 copy_mtime(entry.path(), &dest);
+                std::fs::File::open(&dest)?.sync_all()?;
                 copied += 1;
             }
         }
@@ -504,6 +540,9 @@ fn copy_tree_verified(
             std::fs::create_dir_all(parent)?;
         }
         std::fs::rename(&temp, target)?;
+        if let Some(parent) = target.parent() {
+            std::fs::File::open(parent)?.sync_all()?;
+        }
         Ok(())
     })();
     if let Err(error) = result {
@@ -629,9 +668,13 @@ fn move_db_rows(
     if rows.is_empty() {
         ensure_folder_row(db, destination_lib, destination_rel, -1)?;
     }
-    refresh_counts(db, source_lib.id)?;
+    if let Err(error) = refresh_counts(db, source_lib.id) {
+        log::warn!("폴더 이동 뒤 원본 장수 갱신 보류: {error}");
+    }
     if source_lib.id != destination_lib.id {
-        refresh_counts(db, destination_lib.id)?;
+        if let Err(error) = refresh_counts(db, destination_lib.id) {
+            log::warn!("폴더 이동 뒤 목적지 장수 갱신 보류: {error}");
+        }
     }
     Ok(())
 }
@@ -687,7 +730,10 @@ fn copy_db_rows(
             crate::ops::transfer::clone_row(db, file_id, *new_folder, &name, hash)?;
         }
     }
-    refresh_counts(db, destination_lib.id)
+    if let Err(error) = refresh_counts(db, destination_lib.id) {
+        log::warn!("폴더 복사 뒤 장수 갱신 보류: {error}");
+    }
+    Ok(())
 }
 
 fn delete_copied_db(db: &Db, lib: &Library, rel: &str) -> Result<()> {
@@ -745,7 +791,13 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
     } else {
         online_root(&destination_lib)?.join(&preview.destination)
     };
-    if destination.exists() && request.action != Action::Trash {
+    let same_existing_folder = request.action == Action::Rename
+        && destination.exists()
+        && matches!(
+            (source.canonicalize(), destination.canonicalize()),
+            (Ok(source), Ok(destination)) if source == destination
+        );
+    if destination.exists() && request.action != Action::Trash && !same_existing_folder {
         return Err(bad("실행 직전 목적지에 같은 이름이 생겼습니다"));
     }
     let kind = match request.action {
@@ -759,14 +811,13 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
     let operation = (|| -> Result<Manifest> {
         match request.action {
             Action::Create => {
-                std::fs::create_dir(&destination)?;
-                let info = manifest(&destination)?;
-                if let Err(error) =
-                    ensure_folder_row(db, &destination_lib, &preview.destination, -1)
-                {
-                    let _ = std::fs::remove_dir(&destination);
-                    return Err(error);
-                }
+                let info = Manifest {
+                    sha256: String::new(),
+                    files: 0,
+                    directories: 1,
+                    bytes: 0,
+                    file_hashes: HashMap::new(),
+                };
                 record_folder(
                     db,
                     batch,
@@ -778,10 +829,33 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     &info,
                     false,
                 )?;
+                std::fs::create_dir(&destination)?;
+                if let Err(error) =
+                    ensure_folder_row(db, &destination_lib, &preview.destination, -1)
+                {
+                    let _ = std::fs::remove_dir(&destination);
+                    return Err(error);
+                }
                 Ok(info)
             }
             Action::Copy => {
-                let info = copy_tree_verified(&source, &destination, batch, None)?;
+                let info = manifest(&source)?;
+                record_folder(
+                    db,
+                    batch,
+                    "copy",
+                    source_lib.id,
+                    &source_rel,
+                    Some(destination_lib.id),
+                    Some(&preview.destination),
+                    &info,
+                    preview.cross_volume,
+                )?;
+                let copied = copy_tree_verified(&source, &destination, batch, None)?;
+                if copied.sha256 != info.sha256 {
+                    let _ = remove_tree(&destination);
+                    return Err(bad("폴더가 미리보기 뒤 바뀌었습니다. 다시 확인하세요"));
+                }
                 if let Err(error) = copy_db_rows(
                     db,
                     &source_lib,
@@ -794,22 +868,36 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     let _ = remove_tree(&destination);
                     return Err(error);
                 }
+                Ok(info)
+            }
+            Action::Move | Action::Rename => {
+                let cross = source_lib.volume_uuid != destination_lib.volume_uuid;
+                let info = manifest(&source)?;
                 record_folder(
                     db,
                     batch,
-                    "copy",
+                    if request.action == Action::Rename {
+                        "rename"
+                    } else {
+                        "move"
+                    },
                     source_lib.id,
                     &source_rel,
                     Some(destination_lib.id),
                     Some(&preview.destination),
                     &info,
-                    preview.cross_volume,
+                    cross,
                 )?;
-                Ok(info)
-            }
-            Action::Move | Action::Rename => {
-                let cross = source_lib.volume_uuid != destination_lib.volume_uuid;
-                let (info, backup) = stage_move(&source, &destination, batch, cross)?;
+                let (moved, backup) = stage_move(&source, &destination, batch, cross)?;
+                if moved.sha256 != info.sha256 {
+                    if let Some(backup) = &backup {
+                        let _ = std::fs::rename(backup, &source);
+                        let _ = remove_tree(&destination);
+                    } else {
+                        let _ = std::fs::rename(&destination, &source);
+                    }
+                    return Err(bad("폴더가 미리보기 뒤 바뀌었습니다. 다시 확인하세요"));
+                }
                 if let Err(error) = move_db_rows(
                     db,
                     &source_lib,
@@ -828,25 +916,21 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                 if let Some(backup) = backup {
                     let _ = remove_tree(&backup);
                 }
-                record_folder(
-                    db,
-                    batch,
-                    if request.action == Action::Rename {
-                        "rename"
-                    } else {
-                        "move"
-                    },
-                    source_lib.id,
-                    &source_rel,
-                    Some(destination_lib.id),
-                    Some(&preview.destination),
-                    &info,
-                    cross,
-                )?;
                 Ok(info)
             }
             Action::Trash => {
                 let info = manifest(&source)?;
+                record_folder(
+                    db,
+                    batch,
+                    "trash",
+                    source_lib.id,
+                    &source_rel,
+                    Some(source_lib.id),
+                    Some(&preview.destination),
+                    &info,
+                    false,
+                )?;
                 if let Some(parent) = destination.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
@@ -871,17 +955,6 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     let _ = std::fs::rename(&destination, &source);
                     return Err(error);
                 }
-                record_folder(
-                    db,
-                    batch,
-                    "trash",
-                    source_lib.id,
-                    &source_rel,
-                    Some(source_lib.id),
-                    Some(&preview.destination),
-                    &info,
-                    false,
-                )?;
                 Ok(info)
             }
         }
@@ -965,8 +1038,15 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
             );
             return Ok(out);
         }
-        remove_tree(&destination)?;
-        delete_copied_db(db, &destination_lib, &destination_rel)?;
+        let staged = free_path(temp_sibling(&destination, batch));
+        std::fs::rename(&destination, &staged)?;
+        if let Err(error) = delete_copied_db(db, &destination_lib, &destination_rel) {
+            let _ = std::fs::rename(&staged, &destination);
+            return Err(error);
+        }
+        if let Err(error) = remove_tree(&staged) {
+            log::warn!("폴더 생성 undo 임시 갈래 정리 보류 {}: {error}", staged.display());
+        }
     } else {
         if !destination.is_dir() {
             fail(&mut out, "되돌릴 폴더가 디스크에 없습니다".into());
@@ -982,8 +1062,15 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
         }
         match row.op.as_str() {
             "copy" => {
-                remove_tree(&destination)?;
-                delete_copied_db(db, &destination_lib, &destination_rel)?;
+                let staged = free_path(temp_sibling(&destination, batch));
+                std::fs::rename(&destination, &staged)?;
+                if let Err(error) = delete_copied_db(db, &destination_lib, &destination_rel) {
+                    let _ = std::fs::rename(&staged, &destination);
+                    return Err(error);
+                }
+                if let Err(error) = remove_tree(&staged) {
+                    log::warn!("폴더 복사 undo 임시 갈래 정리 보류 {}: {error}", staged.display());
+                }
             }
             "move" | "rename" => {
                 let wanted = source_root.join(&row.source_path);
@@ -1002,17 +1089,38 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                         std::fs::create_dir_all(p)?;
                     }
                     std::fs::rename(&destination, &target)?;
+                    if let Err(error) = move_db_rows(
+                        db,
+                        &destination_lib,
+                        &destination_rel,
+                        &source_lib,
+                        &restored_rel,
+                    ) {
+                        let _ = std::fs::rename(&target, &destination);
+                        return Err(error);
+                    }
                 } else {
                     copy_tree_verified(&destination, &target, batch, None)?;
-                    remove_tree(&destination)?;
+                    let staged = free_path(temp_sibling(&destination, batch));
+                    if let Err(error) = std::fs::rename(&destination, &staged) {
+                        let _ = remove_tree(&target);
+                        return Err(error.into());
+                    }
+                    if let Err(error) = move_db_rows(
+                        db,
+                        &destination_lib,
+                        &destination_rel,
+                        &source_lib,
+                        &restored_rel,
+                    ) {
+                        let _ = remove_tree(&target);
+                        let _ = std::fs::rename(&staged, &destination);
+                        return Err(error);
+                    }
+                    if let Err(error) = remove_tree(&staged) {
+                        log::warn!("폴더 이동 undo 임시 갈래 정리 보류 {}: {error}", staged.display());
+                    }
                 }
-                move_db_rows(
-                    db,
-                    &destination_lib,
-                    &destination_rel,
-                    &source_lib,
-                    &restored_rel,
-                )?;
             }
             "trash" => {
                 let wanted = source_root.join(&row.source_path);
@@ -1030,18 +1138,37 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                     .map_err(|_| bad("복원 경로 오류"))?
                     .to_string_lossy()
                     .into_owned();
-                if restored_rel != row.source_path {
-                    move_db_rows(
+                let moved_in_db = restored_rel != row.source_path;
+                if moved_in_db {
+                    if let Err(error) = move_db_rows(
                         db,
                         &source_lib,
                         &row.source_path,
                         &source_lib,
                         &restored_rel,
-                    )?;
+                    ) {
+                        let _ = std::fs::rename(&target, &destination);
+                        return Err(error);
+                    }
                 }
                 let rows = rows_in_subtree(db, source_lib.id, &restored_rel)?;
-                db.transaction(|tx|{for (id,_) in &rows{tx.execute("UPDATE files SET trashed_at=NULL,trash_path=NULL,trash_batch=NULL WHERE folder_id=?1 AND trash_batch=?2",rusqlite::params![id,batch])?;tx.execute("UPDATE folders SET scanned_at=CASE WHEN scanned_at=-2 THEN -1 ELSE scanned_at END WHERE id=?1",[id])?;}Ok(())})?;
-                refresh_counts(db, source_lib.id)?;
+                let changed = db.transaction(|tx|{for (id,_) in &rows{tx.execute("UPDATE files SET trashed_at=NULL,trash_path=NULL,trash_batch=NULL WHERE folder_id=?1 AND trash_batch=?2",rusqlite::params![id,batch])?;tx.execute("UPDATE folders SET scanned_at=CASE WHEN scanned_at=-2 THEN -1 ELSE scanned_at END WHERE id=?1",[id])?;}Ok(())});
+                if let Err(error) = changed {
+                    if moved_in_db {
+                        let _ = move_db_rows(
+                            db,
+                            &source_lib,
+                            &restored_rel,
+                            &source_lib,
+                            &row.source_path,
+                        );
+                    }
+                    let _ = std::fs::rename(&target, &destination);
+                    return Err(error);
+                }
+                if let Err(error) = refresh_counts(db, source_lib.id) {
+                    log::warn!("폴더 휴지통 undo 장수 갱신 보류: {error}");
+                }
             }
             _ => return Err(bad("알 수 없는 폴더 저널입니다")),
         }
@@ -1164,6 +1291,30 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("연결"));
+    }
+
+    #[test]
+    fn hidden_names_are_blocked_and_rename_cannot_change_libraries() {
+        let (_temp, db, la, lb) = setup();
+        let mut hidden = req(Action::Create, la.id, "");
+        hidden.name = Some(".acut".into());
+        assert!(preview(&db, &hidden).is_err());
+
+        let mut rename = req(Action::Rename, la.id, "부모/자식");
+        rename.destination_library_id = Some(lb.id);
+        rename.destination_parent = Some(String::new());
+        rename.name = Some("안전한이름".into());
+        let plan = preview(&db, &rename).unwrap();
+        assert_eq!(plan.destination, "부모/안전한이름");
+        let out = execute(&db, &rename, "이름 변경").unwrap();
+        assert_eq!((out.completed, out.failed), (1, 0));
+        assert!(la
+            .dir
+            .as_ref()
+            .unwrap()
+            .join("부모/안전한이름/0.jpg")
+            .is_file());
+        assert!(!lb.dir.as_ref().unwrap().join("안전한이름").exists());
     }
 
     #[test]

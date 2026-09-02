@@ -94,7 +94,7 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
     sourceLibraryId: target.sourceLibraryId,
     sourceDir: target.sourceDir,
     destinationLibraryId:
-      action === "move" || action === "copy" || action === "rename"
+      action === "move" || action === "copy"
         ? destinationLibraryId
         : null,
     destinationParent:
@@ -130,10 +130,15 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
         request,
         label: `${target.sourceName || "라이브러리"} — ${labels[action]}`,
       });
-      if (result.failed > 0) {
-        setError(result.first_error ?? "폴더 작업을 완료하지 못했습니다");
+      if (result.completed > 0) await onChanged();
+      if (result.failed > 0 || result.completed === 0 || result.first_error) {
+        setError(
+          result.first_error ??
+            (result.completed === 0
+              ? "실행된 폴더 작업이 없습니다. 충돌과 연결 상태를 확인하세요."
+              : "폴더 작업 일부를 완료하지 못했습니다"),
+        );
       } else {
-        await onChanged();
         onClose();
       }
     } catch (caught) {

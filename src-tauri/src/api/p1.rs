@@ -9,7 +9,11 @@ pub async fn folder_name_audit(
     state: State<'_, AppState>,
     library_id: i64,
 ) -> Result<Vec<FolderAuditItem>, String> {
-    p1::audit_folder_names(&state.db, library_id).map_err(err)
+    let db = std::sync::Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || p1::audit_folder_names(&db, library_id))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -18,14 +22,20 @@ pub async fn folder_name_apply(
     library_id: i64,
     source_dirs: Vec<String>,
 ) -> Result<FolderAuditOutcome, String> {
-    let Some(_guard) = super::job::try_start_wait(
-        &state.running,
-        "폴더 이름 감사",
-        std::time::Duration::from_secs(20),
-    ) else {
-        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
-    };
-    p1::apply_folder_names(&state.db, library_id, &source_dirs).map_err(err)
+    let db = std::sync::Arc::clone(&state.db);
+    let running = std::sync::Arc::clone(&state.running);
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(_guard) = super::job::try_start_wait(
+            &running,
+            "폴더 이름 감사",
+            std::time::Duration::from_secs(20),
+        ) else {
+            return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+        };
+        p1::apply_folder_names(&db, library_id, &source_dirs).map_err(err)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -35,5 +45,11 @@ pub async fn event_candidates(
     gap_minutes: u32,
     min_count: usize,
 ) -> Result<Vec<EventCandidate>, String> {
-    p1::event_candidates(&state.db, library_id, gap_minutes, min_count).map_err(err)
+    let db = std::sync::Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        p1::event_candidates(&db, library_id, gap_minutes, min_count)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(err)
 }

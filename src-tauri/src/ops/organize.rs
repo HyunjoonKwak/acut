@@ -108,7 +108,10 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
     };
 
     let batch_id = super::open_batch(db, "move", label)?;
-    let mut out = Outcome { batch_id, ..Default::default() };
+    let mut out = Outcome {
+        batch_id,
+        ..Default::default()
+    };
 
     // 목적지 폴더의 **볼륨** 기준 경로. 폴더 행은 이 값으로 유일하다.
     let dest_vol_dir = crate::media::cache::rel_path(&lib.rel_path, &dest.rel_dir);
@@ -132,33 +135,58 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
         if src == dest_path {
             continue; // 이미 제자리다
         }
+        let new_name = dest_path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| it.name.clone());
+        let occupied: bool = db.read(|c| {
+            c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM files WHERE folder_id=?1 AND name=?2 AND id<>?3)",
+                rusqlite::params![dest_folder, new_name, it.id],
+                |r| r.get(0),
+            )
+        })?;
+        if occupied {
+            out.failed += 1;
+            out.failed_ids.push(it.id);
+            out.first_error.get_or_insert_with(|| {
+                format!("목적지 DB에 같은 이름 기록이 있습니다: {new_name}")
+            });
+            continue;
+        }
 
         match move_with_sidecars(&src, &dest_path) {
             Ok(()) => {
-                let new_name = dest_path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| it.name.clone());
                 let to_rel = crate::media::cache::rel_path(&dest_vol_dir, &new_name);
-                // 도착 볼륨은 목적지 라이브러리의 것 — 볼륨을 넘어가면 둘이 다르다
-                super::record_to(
-                    db,
-                    batch_id,
-                    "move",
-                    it.id,
-                    &it.volume_uuid,
-                    &it.vol_rel,
-                    &lib.volume_uuid,
-                    Some(&to_rel),
-                    Ok(()),
-                )?;
-                db.write(|c| {
-                    c.execute(
+                let changed = db.transaction(|tx| {
+                    tx.execute(
+                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
+                         VALUES(?1,?2,'move',?3,?4,?5,?6,1)",
+                        rusqlite::params![batch_id,it.id,it.volume_uuid,it.vol_rel,lib.volume_uuid,to_rel],
+                    )?;
+                    tx.execute(
                         "UPDATE files SET folder_id = ?2, name = ?3 WHERE id = ?1",
                         rusqlite::params![it.id, dest_folder, new_name],
-                    )
-                })?;
-                out.moved += 1;
+                    )?;
+                    if it.library_id != dest.library_id {
+                        tx.execute("DELETE FROM thumbs WHERE file_id=?1", [it.id])?;
+                    }
+                    Ok(())
+                });
+                match changed {
+                    Ok(()) => out.moved += 1,
+                    Err(error) => {
+                        let rollback = move_with_sidecars(&dest_path, &src);
+                        out.failed += 1;
+                        out.failed_ids.push(it.id);
+                        out.first_error.get_or_insert_with(|| match rollback {
+                            Ok(()) => error.to_string(),
+                            Err(rollback) => format!(
+                                "DB 갱신 실패: {error}; 파일 원위치 복구도 실패: {rollback}"
+                            ),
+                        });
+                    }
+                }
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -186,7 +214,9 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
     libs.push(dest.library_id);
     libs.sort_unstable();
     libs.dedup();
-    recount(db, &libs)?;
+    if let Err(error) = recount(db, &libs) {
+        log::warn!("정리 뒤 폴더 장수 갱신 보류: {error}");
+    }
     Ok(out)
 }
 
@@ -350,8 +380,14 @@ mod tests {
 
     #[test]
     fn my_photos_are_flat_and_shared_is_by_year() {
-        assert_eq!(event_rel_dir_for(1, "2024-08-27", "거제"), "2024-08-27 거제");
-        assert_eq!(event_rel_dir_for(2, "2024-08-27", "거제"), "2024/2024-08-27 거제");
+        assert_eq!(
+            event_rel_dir_for(1, "2024-08-27", "거제"),
+            "2024-08-27 거제"
+        );
+        assert_eq!(
+            event_rel_dir_for(2, "2024-08-27", "거제"),
+            "2024/2024-08-27 거제"
+        );
         assert_eq!(event_rel_dir_for(0, "2024-08-27", ""), "2024/2024-08-27");
     }
 
@@ -366,7 +402,10 @@ mod tests {
     #[test]
     fn moves_files_and_repoints_the_row() {
         let (dir, db, lib, ids) = setup();
-        let dest = Dest { library_id: lib, rel_dir: event_rel_dir("2024-08-27", "거제통영 가족여행") };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: event_rel_dir("2024-08-27", "거제통영 가족여행"),
+        };
         let out = move_to(&db, &ids, &dest, "정리").unwrap();
         assert_eq!((out.moved, out.failed), (2, 0));
 
@@ -382,7 +421,10 @@ mod tests {
     fn partial_failure_reports_the_ids_that_can_be_retried() {
         let (dir, db, lib, ids) = setup();
         std::fs::remove_file(dir.path().join("작업대/20240827_120000.jpg")).unwrap();
-        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
         let out = move_to(&db, &ids, &dest, "정리").unwrap();
         assert_eq!((out.moved, out.failed), (1, 1));
         assert_eq!(out.failed_ids, vec![ids[0]]);
@@ -391,7 +433,10 @@ mod tests {
     #[test]
     fn folder_counts_are_updated() {
         let (_d, db, lib, ids) = setup();
-        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
         move_to(&db, &ids[..1], &dest, "정리").unwrap();
 
         let counts = lib_counts(&db);
@@ -407,7 +452,10 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("20240827_120000.jpg"), b"already here").unwrap();
 
-        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
         move_to(&db, &ids[..1], &dest, "정리").unwrap();
 
         assert_eq!(
@@ -426,9 +474,16 @@ mod tests {
     #[test]
     fn empty_folder_rows_are_forgotten() {
         let (_d, db, lib, ids) = setup();
-        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
         move_to(&db, &ids, &dest, "정리").unwrap();
-        assert_eq!(forget_empty_folders(&db, lib).unwrap(), 1, "빈 「작업대」 행이 사라진다");
+        assert_eq!(
+            forget_empty_folders(&db, lib).unwrap(),
+            1,
+            "빈 「작업대」 행이 사라진다"
+        );
     }
 
     #[test]
@@ -437,7 +492,11 @@ mod tests {
             event_folder_name("2024-08-27", " 거제통영 가족여행 "),
             "2024-08-27 거제통영 가족여행"
         );
-        assert_eq!(event_folder_name("2024-08-27", ""), "2024-08-27", "제목이 없으면 날짜만");
+        assert_eq!(
+            event_folder_name("2024-08-27", ""),
+            "2024-08-27",
+            "제목이 없으면 날짜만"
+        );
         assert_eq!(event_rel_dir("2024-08-27", "여행"), "2024/2024-08-27 여행");
     }
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { restoreFocusIfUnclaimed } from "./focus";
 
 export type MenuItem =
   | {
@@ -71,7 +72,9 @@ export default function ContextMenu({
       window.removeEventListener("mousedown", away);
       window.removeEventListener("keydown", esc);
       window.removeEventListener("scroll", onClose, true);
-      requestAnimationFrame(() => returnFocus.current?.focus());
+      requestAnimationFrame(() =>
+        restoreFocusIfUnclaimed(returnFocus.current),
+      );
     };
   }, [at, onClose]);
 

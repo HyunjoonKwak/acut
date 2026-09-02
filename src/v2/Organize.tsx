@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
 import { AREAS, nextArea } from "./areaItems";
@@ -53,11 +53,15 @@ export default function Organize({
   const destinationArea = libs.find((library) => library.id === dest)?.area;
   const publishing = sourceArea === 1 && destinationArea === 2;
   const titleId = useId();
+  const initialIds = useRef(ids).current;
 
   useEffect(() => {
-    invoke<string>("organize_date", { ids: workIds })
+    invoke<string>("organize_date", { ids: initialIds })
       .then(setDate)
       .catch(() => {});
+  }, [initialIds]);
+
+  useEffect(() => {
     invoke<Suggestion[]>("organize_suggest", { ids: workIds })
       .then(setTips)
       .catch(() => setTips([]));

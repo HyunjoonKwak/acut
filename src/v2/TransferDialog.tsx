@@ -85,10 +85,15 @@ export default function TransferDialog({ ids, sourceLibraryId, onChanged, onClos
         request,
         label: publish ? "내사진 → 공용 발행" : `사진 ${mode === "copy" ? "복사" : "이동"}`,
       });
+      if (out.completed > 0) await onChanged();
       if (out.failed > 0) {
         setError(`${out.completed}장 완료 · ${out.failed}장 실패 — ${out.first_error ?? ""}`);
+      } else if (out.completed === 0) {
+        const reason = out.already_published > 0
+          ? `${out.already_published}장이 이미 발행되어 건너뛰었습니다.`
+          : `${out.skipped}장을 충돌 때문에 건너뛰었습니다.`;
+        setError(`${reason} 미리보기와 충돌 정책을 확인하세요.`);
       } else {
-        await onChanged();
         onClose();
       }
     } catch (e) { setError(String(e)); }

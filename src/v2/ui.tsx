@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { restoreFocusIfUnclaimed } from "./focus";
 import { useUi } from "./uiStore";
 
 /**
@@ -159,7 +160,7 @@ export function Menu({
       useUi.getState().set({ menuOpen: false });
       window.removeEventListener("mousedown", away);
       window.removeEventListener("keydown", esc);
-      requestAnimationFrame(() => trigger?.focus());
+      requestAnimationFrame(() => restoreFocusIfUnclaimed(trigger));
     };
   }, [open, close]);
 

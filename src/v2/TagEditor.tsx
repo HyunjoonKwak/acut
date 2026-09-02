@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "./toastStore";
 
@@ -23,12 +23,21 @@ export default function TagEditor({
   } | null>(null);
   const [all, setAll] = useState<string[]>([]);
   const [draft, setDraft] = useState<{ fileId: number; text: string } | null>(null);
+  const currentId = useRef(id);
+  useEffect(() => {
+    currentId.current = id;
+  }, [id]);
   const mine = got?.fileId === id ? got.tags : [];
   const text = draft?.fileId === id ? draft.text : "";
 
   const reload = useCallback(async () => {
-    const tags = await invoke<{ id: number; name: string }[]>("tags_of", { id });
-    setGot({ fileId: id, tags });
+    const requestedId = id;
+    const tags = await invoke<{ id: number; name: string }[]>("tags_of", {
+      id: requestedId,
+    });
+    if (currentId.current === requestedId) {
+      setGot({ fileId: requestedId, tags });
+    }
   }, [id]);
   useEffect(() => {
     let live = true;
@@ -95,6 +104,7 @@ export default function TagEditor({
               <button
                 onClick={() => remove(t.id)}
                 title="떼기"
+                aria-label={`${t.name} 태그 떼기`}
                 className="text-fg-faint hover:text-drop"
               >
                 ✕

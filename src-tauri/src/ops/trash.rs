@@ -101,7 +101,10 @@ fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
 
 /// 이 파일들이 속한 라이브러리와 볼륨 마운트를 한 번에 찾아 둔다.
 fn lookups(db: &Db, items: &[Item]) -> Result<(LibrariesById, MountsByVolume)> {
-    let libs = libraries::list(db)?.into_iter().map(|l| (l.id, l)).collect();
+    let libs = libraries::list(db)?
+        .into_iter()
+        .map(|l| (l.id, l))
+        .collect();
     let mounts = items
         .iter()
         .map(|it| it.volume_uuid.clone())
@@ -153,9 +156,16 @@ pub fn sidecars(from: &Path, to: &Path) -> Vec<(PathBuf, PathBuf)> {
         return out;
     };
     let (fname, tname) = (fname.to_string_lossy(), tname.to_string_lossy());
-    let stem = |n: &str| n.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| n.to_string());
+    let stem = |n: &str| {
+        n.rsplit_once('.')
+            .map(|(s, _)| s.to_string())
+            .unwrap_or_else(|| n.to_string())
+    };
     for (a, b) in [
-        (format!("{}.xmp", stem(&fname)), format!("{}.xmp", stem(&tname))),
+        (
+            format!("{}.xmp", stem(&fname)),
+            format!("{}.xmp", stem(&tname)),
+        ),
         (format!("{fname}.xmp"), format!("{tname}.xmp")),
     ] {
         let p = from_dir.join(&a);
@@ -167,16 +177,63 @@ pub fn sidecars(from: &Path, to: &Path) -> Vec<(PathBuf, PathBuf)> {
     out
 }
 
-/// 파일과 그 사이드카를 함께 옮긴다. 사이드카는 최선 — 못 옮겨도 사진 이동은 성공이다
-/// (기록만 남긴다). 사진이 못 옮겨지면 사이드카도 건드리지 않는다.
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+fn sync_parent(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+/// 파일과 그 사이드카를 한 덩어리로 옮긴다.
+///
+/// 사이드카 목적지가 이미 있으면 이름을 임의로 비켜 쓰지 않는다. 실제 목적지를
+/// 저널이 모르는 상태에서 undo하면 무관한 XMP를 움직일 수 있기 때문이다. 중간
+/// 실패 때는 이미 옮긴 사이드카와 본 파일을 역순으로 원위치시킨다.
 pub fn move_with_sidecars(from: &Path, to: &Path) -> std::io::Result<()> {
     let cars = sidecars(from, to);
-    move_file(from, to)?;
-    for (a, b) in cars {
-        let b = free_path(b);
-        if let Err(e) = move_file(&a, &b) {
-            log::warn!("사이드카를 못 옮겼습니다 {} → {}: {e}", a.display(), b.display());
+    if to.exists() && !same_file(from, to) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("목적지 파일이 이미 있습니다: {}", to.display()),
+        ));
+    }
+    for (_, target) in &cars {
+        if target.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("목적지 사이드카가 이미 있습니다: {}", target.display()),
+            ));
         }
+    }
+    move_file(from, to)?;
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for (source, target) in cars {
+        if let Err(error) = move_file(&source, &target) {
+            let mut rollback_error = None;
+            for (old, new) in moved.iter().rev() {
+                if let Err(rollback) = move_file(new, old) {
+                    rollback_error.get_or_insert(rollback);
+                }
+            }
+            if let Err(rollback) = move_file(to, from) {
+                rollback_error.get_or_insert(rollback);
+            }
+            return Err(match rollback_error {
+                Some(rollback) => std::io::Error::other(format!(
+                    "사이드카 이동 실패: {error}; 원위치 복구도 실패: {rollback}"
+                )),
+                None => error,
+            });
+        }
+        moved.push((source, target));
     }
     Ok(())
 }
@@ -196,29 +253,58 @@ pub fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    if to.exists() && !same_file(from, to) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("목적지가 이미 있습니다: {}", to.display()),
+        ));
+    }
     match std::fs::rename(from, to) {
         Ok(()) => Ok(()),
-        Err(_) => {
-            // 다른 볼륨 — 복사한 뒤 크기가 맞는지 보고서야 원본을 지운다.
-            // 디스크가 차서 반만 써진 사본을 두고 원본을 지우면 사진이 사라진다.
+        Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
+            // 다른 볼륨 — 임시 파일을 완성·동기화하고 SHA-256까지 확인한 뒤
+            // 최종 이름으로 바꾼다. 원본 삭제가 실패하면 사본도 거둬 원상태를 지킨다.
             let want = std::fs::metadata(from)?.len();
-            let got = std::fs::copy(from, to)?;
-            if got != want || std::fs::metadata(to).map(|m| m.len()).unwrap_or(0) != want {
-                let _ = std::fs::remove_file(to);
+            let temp = to.with_file_name(format!(
+                ".{}.photo-desk-move-{}.tmp",
+                to.file_name().unwrap_or_default().to_string_lossy(),
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&temp);
+            let got = std::fs::copy(from, &temp)?;
+            if got != want || std::fs::metadata(&temp).map(|m| m.len()).unwrap_or(0) != want {
+                let _ = std::fs::remove_file(&temp);
                 return Err(std::io::Error::other(format!(
                     "복사가 끝까지 안 됐습니다 ({got} / {want} bytes) — 디스크가 찼나요?"
                 )));
             }
-            copy_mtime(from, to);
-            std::fs::remove_file(from)
+            let source_hash = crate::cull::hash::full(from)?;
+            let copied_hash = crate::cull::hash::full(&temp)?;
+            if source_hash != copied_hash {
+                let _ = std::fs::remove_file(&temp);
+                return Err(std::io::Error::other("사본 SHA-256이 원본과 다릅니다"));
+            }
+            copy_mtime(from, &temp);
+            std::fs::File::open(&temp)?.sync_all()?;
+            std::fs::rename(&temp, to)?;
+            sync_parent(to)?;
+            if let Err(error) = std::fs::remove_file(from) {
+                let _ = std::fs::remove_file(to);
+                return Err(error);
+            }
+            sync_parent(from)?;
+            Ok(())
         }
+        Err(error) => Err(error),
     }
 }
 
 /// 사본의 수정 시각을 원본대로 맞춘다. `fs::copy`는 내용만 옮겨 옮긴 날이 찍힌다 —
 /// 촬영일 없는 파일은 이 값으로 날짜를 잡으니 어긋나면 «오늘 찍은 사진»이 된다 (리뷰 H3)
 pub fn copy_mtime(from: &Path, to: &Path) {
-    let Ok(m) = std::fs::metadata(from).and_then(|m| m.modified()) else { return };
+    let Ok(m) = std::fs::metadata(from).and_then(|m| m.modified()) else {
+        return;
+    };
     if let Ok(f) = std::fs::File::options().write(true).open(to) {
         let _ = f.set_modified(m);
     }
@@ -229,14 +315,21 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
     let items = load(db, ids, false)?;
     if items.is_empty() {
         // 빈 배치를 남기지 않는다 — 되돌리기 목록에 «0장»이 쌓이고 사용자는 «안 된다»고 읽는다
-        return Ok(Outcome { first_error: Some("휴지통으로 옮길 사진이 없습니다".into()), ..Default::default() });
+        return Ok(Outcome {
+            first_error: Some("휴지통으로 옮길 사진이 없습니다".into()),
+            ..Default::default()
+        });
     }
     let batch_id = super::open_batch(db, "trash", label)?;
-    let mut out = Outcome { batch_id, ..Default::default() };
+    let mut out = Outcome {
+        batch_id,
+        ..Default::default()
+    };
     // 라이브러리·마운트는 한 번만 — 파일마다 찾으면 5천 장에 수천만 행 스캔·수만 syscall (리뷰 H16)
     let (libs, mounts) = lookups(db, &items)?;
     // 옮기고 나서 비는 폴더 — (폴더 행, 디스크 경로, 라이브러리 뿌리)
-    let mut touched: std::collections::BTreeMap<i64, (PathBuf, PathBuf)> = std::collections::BTreeMap::new();
+    let mut touched: std::collections::BTreeMap<i64, (PathBuf, PathBuf)> =
+        std::collections::BTreeMap::new();
 
     for it in &items {
         let lib = libs.get(&it.library_id);
@@ -245,10 +338,19 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
             lib.map(|l| l.rel_path.clone()),
             mounts.get(&it.volume_uuid).cloned().flatten(),
         ) else {
-            super::record(db, batch_id, "trash", it.id, &it.volume_uuid, &it.vol_rel, None,
-                Err("디스크가 연결되어 있지 않습니다"))?;
+            super::record(
+                db,
+                batch_id,
+                "trash",
+                it.id,
+                &it.volume_uuid,
+                &it.vol_rel,
+                None,
+                Err("디스크가 연결되어 있지 않습니다"),
+            )?;
             out.failed += 1;
-            out.first_error.get_or_insert("디스크가 연결되어 있지 않습니다".into());
+            out.first_error
+                .get_or_insert("디스크가 연결되어 있지 않습니다".into());
             continue;
         };
 
@@ -263,12 +365,22 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
         match move_with_sidecars(&src, &dest) {
             Ok(()) => {
                 if let Some(dir) = src.parent() {
-                    touched.entry(it.folder_id).or_insert_with(|| (dir.to_path_buf(), lib_dir.clone()));
+                    touched
+                        .entry(it.folder_id)
+                        .or_insert_with(|| (dir.to_path_buf(), lib_dir.clone()));
                 }
                 // 저널 경로는 언제나 볼륨 기준이다 — 되돌릴 때 마운트만 붙이면 된다
                 let to_vol_rel = crate::media::cache::rel_path(&lib_rel, &dest_rel);
-                super::record(db, batch_id, "trash", it.id, &it.volume_uuid, &it.vol_rel,
-                    Some(&to_vol_rel), Ok(()))?;
+                super::record(
+                    db,
+                    batch_id,
+                    "trash",
+                    it.id,
+                    &it.volume_uuid,
+                    &it.vol_rel,
+                    Some(&to_vol_rel),
+                    Ok(()),
+                )?;
                 db.write(|c| {
                     c.execute(
                         "UPDATE files SET trashed_at = strftime('%s','now'),
@@ -282,8 +394,16 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
             }
             Err(e) => {
                 let msg = e.to_string();
-                super::record(db, batch_id, "trash", it.id, &it.volume_uuid, &it.vol_rel, None,
-                    Err(&msg))?;
+                super::record(
+                    db,
+                    batch_id,
+                    "trash",
+                    it.id,
+                    &it.volume_uuid,
+                    &it.vol_rel,
+                    None,
+                    Err(&msg),
+                )?;
                 out.failed += 1;
                 out.first_error.get_or_insert(msg);
             }
@@ -320,10 +440,15 @@ pub fn prune_empty_dirs(dir: &Path, stop: &Path) -> usize {
     let mut n = 0;
     let mut cur = dir.to_path_buf();
     loop {
-        if cur == stop || !cur.starts_with(stop) || cur.file_name().map(|f| f == ".acut").unwrap_or(false) {
+        if cur == stop
+            || !cur.starts_with(stop)
+            || cur.file_name().map(|f| f == ".acut").unwrap_or(false)
+        {
             break;
         }
-        let Ok(entries) = std::fs::read_dir(&cur) else { break };
+        let Ok(entries) = std::fs::read_dir(&cur) else {
+            break;
+        };
         let mut junk = Vec::new();
         let mut other = false;
         for e in entries.flatten() {
@@ -357,10 +482,16 @@ pub fn prune_empty_dirs(dir: &Path, stop: &Path) -> usize {
 pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
     let items = load(db, ids, true)?;
     if items.is_empty() {
-        return Ok(Outcome { first_error: Some("휴지통에 되돌릴 사진이 없습니다".into()), ..Default::default() });
+        return Ok(Outcome {
+            first_error: Some("휴지통에 되돌릴 사진이 없습니다".into()),
+            ..Default::default()
+        });
     }
     let batch_id = super::open_batch(db, "restore", "휴지통에서 되돌리기")?;
-    let mut out = Outcome { batch_id, ..Default::default() };
+    let mut out = Outcome {
+        batch_id,
+        ..Default::default()
+    };
 
     let paths: std::collections::HashMap<i64, String> = db.read(|c| {
         let mut st = c.prepare("SELECT id, trash_path FROM files WHERE trashed_at IS NOT NULL")?;
@@ -378,7 +509,8 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
             paths.get(&it.id),
         ) else {
             out.failed += 1;
-            out.first_error.get_or_insert("되돌릴 위치를 알 수 없습니다".into());
+            out.first_error
+                .get_or_insert("되돌릴 위치를 알 수 없습니다".into());
             continue;
         };
 
@@ -392,13 +524,28 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
                     .strip_prefix(&mount)
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|_| it.vol_rel.clone());
-                super::record(db, batch_id, "restore", it.id, &it.volume_uuid, &from_vol_rel, Some(&to_vol_rel), Ok(()))?;
+                super::record(
+                    db,
+                    batch_id,
+                    "restore",
+                    it.id,
+                    &it.volume_uuid,
+                    &from_vol_rel,
+                    Some(&to_vol_rel),
+                    Ok(()),
+                )?;
                 // 그새 같은 이름이 생겨 «IMG_1 (2).jpg»로 돌아왔을 수 있다 — 행도 그 이름으로.
                 // 안 맞추면 다음 치우기·이름 바꾸기가 다른 사진에 걸린다 (리뷰 C5)
                 let new_name = dest
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| it.vol_rel.rsplit('/').next().unwrap_or(&it.vol_rel).to_string());
+                    .unwrap_or_else(|| {
+                        it.vol_rel
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&it.vol_rel)
+                            .to_string()
+                    });
                 db.write(|c| {
                     c.execute(
                         "UPDATE files SET trashed_at = NULL, trash_path = NULL, trash_batch = NULL,
@@ -427,10 +574,16 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
 pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
     let items = load(db, ids, true)?;
     if items.is_empty() {
-        return Ok(Outcome { first_error: Some("휴지통이 비어 있습니다".into()), ..Default::default() });
+        return Ok(Outcome {
+            first_error: Some("휴지통이 비어 있습니다".into()),
+            ..Default::default()
+        });
     }
     let batch_id = super::open_batch(db, "delete", "휴지통 비우기")?;
-    let mut out = Outcome { batch_id, ..Default::default() };
+    let mut out = Outcome {
+        batch_id,
+        ..Default::default()
+    };
 
     let paths: std::collections::HashMap<i64, String> = db.read(|c| {
         let mut st = c.prepare("SELECT id, trash_path FROM files WHERE trashed_at IS NOT NULL")?;
@@ -450,7 +603,8 @@ pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
         let victim = lib_dir.join(tp);
         if !is_inside(&victim, &trash_root(&lib_dir)) {
             out.failed += 1;
-            out.first_error.get_or_insert("휴지통 밖의 경로입니다".into());
+            out.first_error
+                .get_or_insert("휴지통 밖의 경로입니다".into());
             continue;
         }
         // 이미 사라진 파일은 성공으로 친다 — 목표는 "없는 상태"다
@@ -487,9 +641,11 @@ fn is_inside(path: &Path, root: &Path) -> bool {
     let Ok(root) = root.canonicalize() else {
         return false;
     };
-    let real = path
-        .canonicalize()
-        .or_else(|_| path.parent().map(Path::canonicalize).unwrap_or_else(|| path.canonicalize()));
+    let real = path.canonicalize().or_else(|_| {
+        path.parent()
+            .map(Path::canonicalize)
+            .unwrap_or_else(|| path.canonicalize())
+    });
     real.map(|p| p.starts_with(&root)).unwrap_or(false)
 }
 
@@ -501,7 +657,12 @@ pub fn summary(db: &Db, library_id: Option<i64>) -> Result<Summary> {
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id
              WHERE fi.trashed_at IS NOT NULL AND (?1 IS NULL OR fo.library_id = ?1)",
             [library_id],
-            |r| Ok(Summary { files: r.get(0)?, bytes: r.get(1)? }),
+            |r| {
+                Ok(Summary {
+                    files: r.get(0)?,
+                    bytes: r.get(1)?,
+                })
+            },
         )
     })
 }
@@ -552,7 +713,11 @@ pub fn pending_in_folders(db: &Db, folder_ids: &[i64]) -> Result<Vec<i64>> {
     if folder_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let list = folder_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    let list = folder_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
     db.read(|c| {
         let mut st = c.prepare(&format!(
             "SELECT id FROM files WHERE culling_flag = 2 AND trashed_at IS NULL AND folder_id IN ({list})"
@@ -572,7 +737,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("2020").join("여행");
         std::fs::create_dir_all(&a).unwrap();
-        for n in ["20200101_120000.jpg", "20200101_120001.jpg", "20200101_120002.jpg"] {
+        for n in [
+            "20200101_120000.jpg",
+            "20200101_120001.jpg",
+            "20200101_120002.jpg",
+        ] {
             std::fs::write(a.join(n), b"photo bytes ".repeat(10)).unwrap();
         }
         let db = Db::open(dir.path().join("t.db")).unwrap();
@@ -600,17 +769,32 @@ mod tests {
         assert!(dir.path().is_dir(), "라이브러리 뿌리는 남는다");
         assert_eq!(out.folders_removed, 2);
         let rows: i64 = db
-            .read(|c| c.query_row("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%여행'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%여행'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(rows, 1, "폴더 행은 남는다 — 휴지통 파일이 가리킨다");
 
         restore(&db, &ids[..1]).unwrap();
-        assert!(a.join("20200101_120000.jpg").is_file(), "되돌리면 폴더가 되살아난다");
+        assert!(
+            a.join("20200101_120000.jpg").is_file(),
+            "되돌리면 폴더가 되살아난다"
+        );
 
         // 나머지 둘을 비우면 — 폴더엔 아직 한 장이 있으니 행은 남는다
         empty(&db, &ids[1..]).unwrap();
         let rows: i64 = db
-            .read(|c| c.query_row("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%여행'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%여행'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(rows, 1);
     }
@@ -620,7 +804,11 @@ mod tests {
         let (_d, db, ids) = setup();
         let before = summary_by_library(&db).unwrap();
         assert_eq!(before.len(), 1);
-        assert_eq!((before[0].files, before[0].bytes), (0, 0), "비어도 줄은 나온다");
+        assert_eq!(
+            (before[0].files, before[0].bytes),
+            (0, 0),
+            "비어도 줄은 나온다"
+        );
         to_trash(&db, &ids, "휴지통으로").unwrap();
         let after = summary_by_library(&db).unwrap();
         assert_eq!(after[0].files, 3);
@@ -635,15 +823,23 @@ mod tests {
         let a = dir.path().join("2020/여행");
         std::fs::write(a.join("메모.txt"), b"keep me").unwrap();
         to_trash(&db, &ids, "치우기").unwrap();
-        assert!(a.join("메모.txt").is_file(), "사진이 아닌 파일이 있으면 폴더를 두어야 한다");
+        assert!(
+            a.join("메모.txt").is_file(),
+            "사진이 아닌 파일이 있으면 폴더를 두어야 한다"
+        );
     }
 
     #[test]
     fn pending_in_folders_scopes_to_the_given_folders() {
         let (_d, db, ids) = setup();
-        db.write(|c| c.execute("UPDATE files SET culling_flag = 2", [])).unwrap();
+        db.write(|c| c.execute("UPDATE files SET culling_flag = 2", []))
+            .unwrap();
         let fid: i64 = db
-            .read(|c| c.query_row("SELECT folder_id FROM files WHERE id = ?1", [ids[0]], |r| r.get(0)))
+            .read(|c| {
+                c.query_row("SELECT folder_id FROM files WHERE id = ?1", [ids[0]], |r| {
+                    r.get(0)
+                })
+            })
             .unwrap();
         assert_eq!(pending_in_folders(&db, &[fid]).unwrap().len(), 3);
         assert!(pending_in_folders(&db, &[fid + 1000]).unwrap().is_empty());
@@ -662,11 +858,17 @@ mod tests {
         assert!(!a.join("20200101_120000.xmp").exists(), "사이드카도 떠난다");
         assert!(!a.join("20200101_120001.jpg.xmp").exists());
         let t = trash_root(dir.path());
-        assert!(t.join("2020/여행/20200101_120000.xmp").is_file(), "휴지통에 같이 있다");
+        assert!(
+            t.join("2020/여행/20200101_120000.xmp").is_file(),
+            "휴지통에 같이 있다"
+        );
         assert!(t.join("2020/여행/20200101_120001.jpg.xmp").is_file());
 
         restore(&db, &ids[..2]).unwrap();
-        assert!(a.join("20200101_120000.xmp").is_file(), "되돌리면 같이 돌아온다");
+        assert!(
+            a.join("20200101_120000.xmp").is_file(),
+            "되돌리면 같이 돌아온다"
+        );
         assert!(a.join("20200101_120001.jpg.xmp").is_file());
         assert!(!t.join("2020/여행/20200101_120000.xmp").exists());
     }
@@ -680,7 +882,10 @@ mod tests {
         let t = trash_root(dir.path());
         assert!(t.join("2020/여행/20200101_120000.xmp").is_file());
         empty(&db, &ids[..1]).unwrap();
-        assert!(!t.join("2020/여행/20200101_120000.xmp").exists(), "사진과 함께 지워진다");
+        assert!(
+            !t.join("2020/여행/20200101_120000.xmp").exists(),
+            "사진과 함께 지워진다"
+        );
     }
 
     #[test]
@@ -696,7 +901,10 @@ mod tests {
             .collect();
         got.sort();
         assert_eq!(got, ["IMG_1 (2).CR2.xmp", "IMG_1 (2).xmp"]);
-        assert!(sidecars(&d.path().join("none.jpg"), &to).is_empty(), "없으면 없다");
+        assert!(
+            sidecars(&d.path().join("none.jpg"), &to).is_empty(),
+            "없으면 없다"
+        );
     }
 
     #[test]
@@ -712,7 +920,11 @@ mod tests {
 
     fn alive(db: &Db) -> i64 {
         db.read(|c| {
-            c.query_row("SELECT COUNT(*) FROM files WHERE trashed_at IS NULL", [], |r| r.get(0))
+            c.query_row(
+                "SELECT COUNT(*) FROM files WHERE trashed_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
         })
         .unwrap()
     }
@@ -727,7 +939,9 @@ mod tests {
         assert_eq!((out.moved, out.failed), (1, 0));
         assert!(!src.exists(), "원래 자리에서는 사라져야 한다");
         assert!(
-            trash_root(dir.path()).join("2020/여행/20200101_120000.jpg").is_file(),
+            trash_root(dir.path())
+                .join("2020/여행/20200101_120000.jpg")
+                .is_file(),
             "휴지통에 폴더 구조 그대로 들어간다"
         );
         // 행은 남아 있다 — 평점·판정을 잃지 않기 위해서다
@@ -753,7 +967,11 @@ mod tests {
         assert_eq!(alive(&db), 3);
 
         let rating: i32 = db
-            .read(|c| c.query_row("SELECT rating FROM files WHERE id=?1", [ids[0]], |r| r.get(0)))
+            .read(|c| {
+                c.query_row("SELECT rating FROM files WHERE id=?1", [ids[0]], |r| {
+                    r.get(0)
+                })
+            })
             .unwrap();
         assert_eq!(rating, 4, "판정이 살아 있어야 되돌리기가 의미 있다");
     }
@@ -779,8 +997,12 @@ mod tests {
         let out = to_trash(&db, &ids, "시험").unwrap();
         assert_eq!(out.moved, 2, "둘 다 옮겨져야 한다");
         // 폴더 구조를 그대로 쓰므로 애초에 부딪히지 않는다
-        assert!(trash_root(dir.path()).join("2020/여행/20200101_120000.jpg").is_file());
-        assert!(trash_root(dir.path()).join("2021/여행/20200101_120000.jpg").is_file());
+        assert!(trash_root(dir.path())
+            .join("2020/여행/20200101_120000.jpg")
+            .is_file());
+        assert!(trash_root(dir.path())
+            .join("2021/여행/20200101_120000.jpg")
+            .is_file());
     }
 
     #[test]
@@ -821,13 +1043,19 @@ mod tests {
     fn summary_and_pending() {
         let (_d, db, ids) = setup();
         db.write(|c| {
-            c.execute("UPDATE files SET culling_flag=2 WHERE id IN (?1,?2)", [ids[0], ids[1]])
+            c.execute(
+                "UPDATE files SET culling_flag=2 WHERE id IN (?1,?2)",
+                [ids[0], ids[1]],
+            )
         })
         .unwrap();
         assert_eq!(pending(&db, None).unwrap().len(), 2);
 
         to_trash(&db, &ids[..2], "시험").unwrap();
-        assert!(pending(&db, None).unwrap().is_empty(), "치운 것은 대기가 아니다");
+        assert!(
+            pending(&db, None).unwrap().is_empty(),
+            "치운 것은 대기가 아니다"
+        );
         let s = summary(&db, None).unwrap();
         assert_eq!(s.files, 2);
         assert!(s.bytes > 0);
@@ -860,7 +1088,6 @@ mod tests {
         assert_eq!((again.moved, again.failed), (0, 0));
     }
 
-
     #[test]
     fn restore_records_the_renamed_file_when_the_slot_is_taken() {
         let (dir, db, ids) = setup();
@@ -875,7 +1102,10 @@ mod tests {
         let name: String = db
             .read(|c| c.query_row("SELECT name FROM files WHERE id=?1", [ids[0]], |r| r.get(0)))
             .unwrap();
-        assert_eq!(name, "20200101_120000 (2).jpg", "행이 실제 파일 이름을 가리킨다");
+        assert_eq!(
+            name, "20200101_120000 (2).jpg",
+            "행이 실제 파일 이름을 가리킨다"
+        );
         assert!(dir.path().join("2020/여행").join(&name).is_file());
     }
 }

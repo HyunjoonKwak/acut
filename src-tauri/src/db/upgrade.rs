@@ -19,9 +19,46 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_nas_pulls(c)?;
     add_gallery_transition_p0(c)?;
     add_gallery_transition_p1(c)?;
+    add_release_091_integrity(c)?;
     rename_old_labels(c)?;
     migrate_taken_at_to_utc(c)?;
     Ok(())
+}
+
+/// 0.9.1 무결성 보강. 0.9.0 저널은 해시가 없으므로 NULL로 남겨 두고 undo에서
+/// 보수적으로 거절한다. 새 작업만 완전한 before/after 및 copy manifest를 가진다.
+fn add_release_091_integrity(c: &Connection) -> rusqlite::Result<()> {
+    for (column, ddl) in [
+        (
+            "before_sha256",
+            "ALTER TABLE capture_date_journal ADD COLUMN before_sha256 TEXT",
+        ),
+        (
+            "after_sha256",
+            "ALTER TABLE capture_date_journal ADD COLUMN after_sha256 TEXT",
+        ),
+        (
+            "undone_at",
+            "ALTER TABLE capture_date_journal ADD COLUMN undone_at INTEGER",
+        ),
+    ] {
+        if !has_column(c, "capture_date_journal", column)? {
+            c.execute_batch(ddl)?;
+        }
+    }
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS copy_manifest (
+            batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+            file_id INTEGER NOT NULL,
+            seq INTEGER NOT NULL,
+            to_vol TEXT NOT NULL,
+            to_path TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            is_main INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (batch_id,file_id,seq),
+            UNIQUE (batch_id,to_vol,to_path)
+         );",
+    )
 }
 
 /// Gallery→Desk P1 폴더명 감사의 부모→자식 배치 연결. 신규·기존 DB 모두 멱등이다.
@@ -101,7 +138,17 @@ fn migrate_taken_at_to_utc(c: &Connection) -> rusqlite::Result<()> {
             "SELECT fi.id, fi.name, fi.kind, fi.taken_at_source, fi.taken_at, fo.rel_path
              FROM files fi JOIN folders fo ON fo.id = fi.folder_id",
         )?;
-        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
@@ -113,7 +160,12 @@ fn migrate_taken_at_to_utc(c: &Connection) -> rusqlite::Result<()> {
             let migrated = match source {
                 0 if kind != 1 => crate::media::taken_at::floating_civil_to_unix(old),
                 1 => crate::media::taken_at::from_filename(&name)
-                    .or_else(|| folder.rsplit('/').next().and_then(crate::media::taken_at::from_filename))
+                    .or_else(|| {
+                        folder
+                            .rsplit('/')
+                            .next()
+                            .and_then(crate::media::taken_at::from_filename)
+                    })
                     .unwrap_or(old),
                 _ => old,
             };
@@ -283,7 +335,9 @@ fn add_faces_at(c: &Connection) -> rusqlite::Result<()> {
     if !has_column(c, "files", "faces_at")? {
         c.execute_batch("ALTER TABLE files ADD COLUMN faces_at INTEGER")?;
     }
-    c.execute_batch("CREATE INDEX IF NOT EXISTS idx_files_faces_at ON files(faces_at) WHERE faces_at IS NULL;")
+    c.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_files_faces_at ON files(faces_at) WHERE faces_at IS NULL;",
+    )
 }
 
 /// NAS 1차 구역에서 내려받은 것의 원장 — 비울 때 «우리가 받은 것»만 고른다 (5단계)
@@ -329,9 +383,8 @@ fn add_library_id(c: &Connection) -> rusqlite::Result<()> {
 /// 예: `MERGE/사진통합작업/연도별/…`가 전부라면 루트는 `MERGE/사진통합작업`.
 fn backfill_libraries(c: &Connection) -> rusqlite::Result<()> {
     let orphan_volumes: Vec<String> = {
-        let mut st = c.prepare(
-            "SELECT DISTINCT volume_uuid FROM folders WHERE library_id IS NULL",
-        )?;
+        let mut st =
+            c.prepare("SELECT DISTINCT volume_uuid FROM folders WHERE library_id IS NULL")?;
         let it = st.query_map([], |r| r.get::<_, String>(0))?;
         it.collect::<rusqlite::Result<Vec<_>>>()?
     };
@@ -463,6 +516,33 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn release_091_integrity_upgrade_is_idempotent_on_a_090_database() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("schema.sql")).unwrap();
+        c.execute_batch(
+            "ALTER TABLE capture_date_journal DROP COLUMN before_sha256;
+             ALTER TABLE capture_date_journal DROP COLUMN after_sha256;
+             ALTER TABLE capture_date_journal DROP COLUMN undone_at;
+             DROP TABLE copy_manifest;",
+        )
+        .unwrap();
+
+        add_release_091_integrity(&c).unwrap();
+        add_release_091_integrity(&c).unwrap();
+        for column in ["before_sha256", "after_sha256", "undone_at"] {
+            assert!(has_column(&c, "capture_date_journal", column).unwrap());
+        }
+        let table: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='copy_manifest'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table, 1);
+    }
+
     /// 이 순서를 틀리면 앱이 아예 뜨지 않는다. `schema.sql`이 먼저 도는데
     /// 구버전 DB에는 그 시점에 `library_id`가 없어 배치 전체가 실패했다.
     #[test]
@@ -514,7 +594,8 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        db.write(|c| c.execute("UPDATE files SET image_hash='abc'", [])).unwrap();
+        db.write(|c| c.execute("UPDATE files SET image_hash='abc'", []))
+            .unwrap();
     }
 
     #[test]
@@ -524,10 +605,12 @@ mod tests {
         {
             let c = Connection::open(&path).unwrap();
             c.execute_batch(include_str!("schema.sql")).unwrap();
-            c.execute_batch("ALTER TABLE groups DROP COLUMN done_at;").unwrap();
+            c.execute_batch("ALTER TABLE groups DROP COLUMN done_at;")
+                .unwrap();
         }
         let db = Db::open(&path).expect("done_at 전 DB도 열려야 한다");
-        db.write(|c| c.execute("UPDATE groups SET done_at = 1", [])).unwrap();
+        db.write(|c| c.execute("UPDATE groups SET done_at = 1", []))
+            .unwrap();
     }
 
     /// 업그레이드가 나중에 더하는 칸을 schema.sql 이 먼저 참조하면 구버전 DB 가 안 열린다.
@@ -560,12 +643,25 @@ mod tests {
         // 다시 열어 보정을 한 번 더 돌린다 (실제로 앱을 껐다 켜는 것과 같다)
         let db = Db::open(&path).unwrap();
         let status = |cell: &str| -> String {
-            db.read(|c| c.query_row("SELECT status FROM places WHERE cell=?1", [cell], |r| r.get(0))).unwrap()
+            db.read(|c| {
+                c.query_row("SELECT status FROM places WHERE cell=?1", [cell], |r| {
+                    r.get(0)
+                })
+            })
+            .unwrap()
         };
-        assert_eq!(status("1,1"), "unresolved", "아직 물어볼 자리를 굳히면 안 된다");
+        assert_eq!(
+            status("1,1"),
+            "unresolved",
+            "아직 물어볼 자리를 굳히면 안 된다"
+        );
         assert_eq!(status("2,2"), "ok");
         assert_eq!(status("3,3"), "ok");
-        assert_eq!(status("4,4"), "none", "값이 비었는데 성공이라고 적힌 행은 고친다");
+        assert_eq!(
+            status("4,4"),
+            "none",
+            "값이 비었는데 성공이라고 적힌 행은 고친다"
+        );
     }
 
     /// 갓 만든 DB 와 옛 DB 를 올린 것이 **같은 모양**이어야 한다.
@@ -649,16 +745,31 @@ mod tests {
         );
 
         // 이 시험이 실제로 무언가를 지키는지 — 지명 인덱스가 양쪽에 다 있어야 한다
-        assert!(want.contains(&"index idx_files_geo".to_string()), "새 DB 에 지명 인덱스가 없습니다");
-        assert!(want.iter().any(|x| x.starts_with("table places(")), "새 DB 에 places 표가 없습니다");
+        assert!(
+            want.contains(&"index idx_files_geo".to_string()),
+            "새 DB 에 지명 인덱스가 없습니다"
+        );
+        assert!(
+            want.iter().any(|x| x.starts_with("table places(")),
+            "새 DB 에 places 표가 없습니다"
+        );
     }
 
     /// 새 칸을 넣을 때마다 이 목록에 더한다 — 사람이 기억하지 않아도 시험이 잡게.
     #[test]
     fn schema_never_mentions_a_column_that_upgrade_adds_later() {
         let schema = include_str!("schema.sql");
-        for col in ["trashed_at", "trash_path", "trash_batch", "faces_at", "image_hash",
-                    "done_at", "geo_country", "geo_admin1", "geo_admin2"] {
+        for col in [
+            "trashed_at",
+            "trash_path",
+            "trash_batch",
+            "faces_at",
+            "image_hash",
+            "done_at",
+            "geo_country",
+            "geo_admin1",
+            "geo_admin2",
+        ] {
             for line in schema.lines() {
                 let l = line.trim();
                 if l.starts_with("CREATE INDEX") && l.contains(col) {
@@ -723,14 +834,18 @@ mod tests {
         let statuses: Vec<(String, String)> = db
             .read(|c| {
                 let mut st = c.prepare("SELECT cell,status FROM places ORDER BY cell")?;
-                let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                let rows = st
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })
             .unwrap();
         assert_eq!(
             statuses,
-            vec![("10.00,20.00".into(), "none".into()), ("37.28,127.05".into(), "ok".into())]
+            vec![
+                ("10.00,20.00".into(), "none".into()),
+                ("37.28,127.05".into(), "ok".into())
+            ]
         );
 
         // 중간 수정 빌드가 이미 status='ok'를 붙인 DB도 다음 실행에서 복구한다.
@@ -739,7 +854,13 @@ mod tests {
         drop(db);
         let reopened = Db::open(&path).unwrap();
         let repaired: String = reopened
-            .read(|c| c.query_row("SELECT status FROM places WHERE cell='10.00,20.00'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT status FROM places WHERE cell='10.00,20.00'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(repaired, "none");
     }
@@ -771,7 +892,9 @@ mod tests {
                     "SELECT cell, status, source, precision, resolved_at FROM places ORDER BY cell",
                 )?;
                 let out = st
-                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+                    .query_map([], |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                    })?
                     .collect::<rusqlite::Result<Vec<_>>>();
                 out
             })
@@ -779,8 +902,20 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                ("10.00,20.00".into(), "none".into(), "nominatim".into(), None, 222),
-                ("37.28,127.05".into(), "ok".into(), "nominatim".into(), Some("remote".into()), 111),
+                (
+                    "10.00,20.00".into(),
+                    "none".into(),
+                    "nominatim".into(),
+                    None,
+                    222
+                ),
+                (
+                    "37.28,127.05".into(),
+                    "ok".into(),
+                    "nominatim".into(),
+                    Some("remote".into()),
+                    111
+                ),
             ],
             "기존 캐시는 값이 그대로이고 출처만 붙는다"
         );
@@ -788,7 +923,13 @@ mod tests {
         drop(db);
         let again = Db::open(&path).unwrap();
         let n: i64 = again
-            .read(|c| c.query_row("SELECT COUNT(*) FROM places WHERE source='nominatim'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM places WHERE source='nominatim'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(n, 2);
     }
@@ -809,25 +950,46 @@ mod tests {
     fn old_floating_photo_dates_are_migrated_once() {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(dir.path().join("t.db")).unwrap();
-        let old = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
-            .and_hms_opt(18, 0, 0).unwrap().and_utc().timestamp();
+        let old = chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(18, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
         db.write(|c| {
             c.execute_batch("DELETE FROM settings WHERE key='internal.taken_at_utc_v1';")?;
-            c.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','v','library')", [])?;
-            c.execute("INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','p','p',1)", [])?;
+            c.execute(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','v','library')",
+                [],
+            )?;
+            c.execute(
+                "INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','p','p',1)",
+                [],
+            )?;
             c.execute(
                 "INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at)
                  VALUES(1,1,'photo.jpg',1,0,?1,0,0)",
                 [old],
             )?;
             migrate_taken_at_to_utc(c)
-        }).unwrap();
+        })
+        .unwrap();
 
-        let migrated: i64 = db.read(|c| c.query_row("SELECT taken_at FROM files", [], |r| r.get(0))).unwrap();
-        assert_eq!(migrated, crate::media::taken_at::civil_to_unix(2024, 1, 1, 18, 0, 0));
+        let migrated: i64 = db
+            .read(|c| c.query_row("SELECT taken_at FROM files", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(
+            migrated,
+            crate::media::taken_at::civil_to_unix(2024, 1, 1, 18, 0, 0)
+        );
         db.write(migrate_taken_at_to_utc).unwrap();
-        let again: i64 = db.read(|c| c.query_row("SELECT taken_at FROM files", [], |r| r.get(0))).unwrap();
-        assert_eq!(again, migrated, "두 번 열어도 다시 시간대를 적용하면 안 된다");
+        let again: i64 = db
+            .read(|c| c.query_row("SELECT taken_at FROM files", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(
+            again, migrated,
+            "두 번 열어도 다시 시간대를 적용하면 안 된다"
+        );
     }
 
     #[test]

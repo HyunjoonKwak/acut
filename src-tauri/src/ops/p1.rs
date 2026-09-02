@@ -204,16 +204,29 @@ pub fn apply_folder_names(
             conflict_policy: folder::ConflictPolicy::Skip,
         };
         let label = format!("{} → {}", item.current_name, item.proposed_name);
-        let result = folder::execute(db, &request, &label)?;
+        let result = match folder::execute(db, &request, &label) {
+            Ok(result) => result,
+            Err(error) => {
+                out.failed += 1;
+                out.first_error.get_or_insert(error.to_string());
+                continue;
+            }
+        };
         if result.completed == 1 {
             let seq = out.completed as i64;
-            db.write(|connection| {
+            if let Err(error) = db.write(|connection| {
                 connection.execute(
                     "INSERT INTO folder_audit_children(parent_batch_id,child_batch_id,seq)
                      VALUES(?1,?2,?3)",
                     rusqlite::params![parent, result.batch_id, seq],
                 )
-            })?;
+            }) {
+                // 자식 배치는 이미 완성됐다. 연결 저장만 실패하면 자식 자체는 최근
+                // 작업에 남으므로 개별 undo가 가능하다. 부모를 열린 채 숨기지 않는다.
+                out.failed += 1;
+                out.first_error.get_or_insert(error.to_string());
+                continue;
+            }
             out.completed += 1;
         } else {
             out.failed += 1;

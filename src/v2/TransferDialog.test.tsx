@@ -37,4 +37,27 @@ describe("임의 이동·복사와 공용 발행", () => {
     expect(previewCall?.[1]).toMatchObject({ request: { mode: "copy", publish: true, destinationLibraryId: 2 } });
     await waitFor(() => expect(vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "transfer_execute")).toHaveLength(0));
   });
+
+  it("전부 건너뛴 실행을 성공처럼 닫지 않고 이유를 보여 준다", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === "transfer_preview") return {
+        mode: "copy", publish: true, source_area: 1, destination_area: 2,
+        drive_sync_warning: true,
+        items: [{ id: 3, source: "mine/a.jpg", destination: "a.jpg", planned_name: "a.jpg", conflict: "already_published", action: "skip", source_sha256: "abc" }],
+      };
+      if (cmd === "transfer_execute") return {
+        batch_id: 0, completed: 0, failed: 0, skipped: 1,
+        already_published: 1, first_error: null, failed_ids: [],
+      };
+      return null;
+    });
+    const onChanged = vi.fn();
+    const onClose = vi.fn();
+    render(<TransferDialog ids={[3]} sourceLibraryId={1} onChanged={onChanged} onClose={onClose} />);
+    await userEvent.click(screen.getByRole("button", { name: "충돌 미리보기" }));
+    await userEvent.click(await screen.findByRole("button", { name: "복사 실행" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("이미 발행");
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

@@ -75,14 +75,12 @@ pub struct TransferOutcome {
 #[derive(Debug, Clone)]
 struct Item {
     id: i64,
-    folder_id: i64,
     library_id: i64,
     source_area: i32,
     volume_uuid: String,
     vol_rel: String,
     name: String,
     size: i64,
-    full_hash: Option<String>,
 }
 
 fn validate_rel(rel: &str) -> Result<String> {
@@ -108,6 +106,7 @@ fn validate_rel(rel: &str) -> Result<String> {
     if clean.split('/').any(|part| {
         part.is_empty()
             || part == "."
+            || part.starts_with('.')
             || part.contains(':')
             || part.chars().any(|c| (c as u32) < 0x20)
     }) {
@@ -118,27 +117,74 @@ fn validate_rel(rel: &str) -> Result<String> {
     Ok(clean)
 }
 
+fn destination_inside(root: &Path, rel: &str) -> Result<PathBuf> {
+    let root = root
+        .canonicalize()
+        .map_err(|_| DbError::Invalid("목적지 라이브러리 경로를 확인할 수 없습니다".into()))?;
+    if !root.is_dir() {
+        return Err(DbError::Invalid(
+            "목적지 라이브러리가 폴더가 아닙니다".into(),
+        ));
+    }
+    let destination = if rel.is_empty() {
+        root.clone()
+    } else {
+        root.join(rel)
+    };
+    let mut ancestor = destination.as_path();
+    while !ancestor.exists() {
+        ancestor = ancestor.parent().ok_or_else(|| {
+            DbError::Invalid("목적지의 기존 부모 폴더를 확인할 수 없습니다".into())
+        })?;
+    }
+    let real = ancestor.canonicalize()?;
+    if !real.starts_with(&root) {
+        return Err(DbError::Invalid(
+            "심볼릭 링크를 통해 라이브러리 밖으로 쓸 수 없습니다".into(),
+        ));
+    }
+    if destination.exists() {
+        let real_destination = destination.canonicalize()?;
+        if !real_destination.starts_with(&root) || !real_destination.is_dir() {
+            return Err(DbError::Invalid(
+                "목적지가 라이브러리 밖이거나 폴더가 아닙니다".into(),
+            ));
+        }
+        return Ok(real_destination);
+    }
+    Ok(destination)
+}
+
 fn load(db: &Db, ids: &[i64]) -> Result<Vec<Item>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let marks = std::iter::repeat_n("?", ids.len())
-        .collect::<Vec<_>>()
-        .join(",");
-    db.read(|c| {
-        let mut st = c.prepare(&format!(
-            "SELECT fi.id,fi.folder_id,fo.library_id,l.area,fo.volume_uuid,
-                    fo.rel_path || CASE WHEN fo.rel_path='' THEN '' ELSE '/' END || fi.name,
-                    fi.name,fi.size,fi.full_hash
-             FROM files fi JOIN folders fo ON fo.id=fi.folder_id JOIN libraries l ON l.id=fo.library_id
-             WHERE fi.trashed_at IS NULL AND fi.id IN ({marks}) ORDER BY fi.id"
-        ))?;
-        let rows = st.query_map(rusqlite::params_from_iter(ids.iter()), |r| Ok(Item {
-            id:r.get(0)?,folder_id:r.get(1)?,library_id:r.get(2)?,source_area:r.get(3)?,
-            volume_uuid:r.get(4)?,vol_rel:r.get(5)?,name:r.get(6)?,size:r.get(7)?,full_hash:r.get(8)?,
-        }))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-    })
+    let mut out = Vec::new();
+    // SQLite 빌드별 bind 상한보다 충분히 작게 나눠, 큰 전체 선택도 오류 대신
+    // 같은 규칙으로 처리한다.
+    for chunk in ids.chunks(5_000) {
+        let marks = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut rows = db.read(|c| {
+            let mut st = c.prepare(&format!(
+                "SELECT fi.id,fo.library_id,l.area,fo.volume_uuid,
+                        fo.rel_path || CASE WHEN fo.rel_path='' THEN '' ELSE '/' END || fi.name,
+                        fi.name,fi.size
+                 FROM files fi JOIN folders fo ON fo.id=fi.folder_id JOIN libraries l ON l.id=fo.library_id
+                 WHERE fi.trashed_at IS NULL AND fi.id IN ({marks}) ORDER BY fi.id"
+            ))?;
+            let rows = st.query_map(rusqlite::params_from_iter(chunk.iter()), |r| Ok(Item {
+                id:r.get(0)?,library_id:r.get(1)?,source_area:r.get(2)?,
+                volume_uuid:r.get(3)?,vol_rel:r.get(4)?,name:r.get(5)?,size:r.get(6)?,
+            }))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })?;
+        out.append(&mut rows);
+    }
+    out.sort_by_key(|item| item.id);
+    out.dedup_by_key(|item| item.id);
+    Ok(out)
 }
 
 fn mount_path(it: &Item) -> Result<PathBuf> {
@@ -154,17 +200,8 @@ fn mount_path(it: &Item) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn hash(db: &Db, it: &Item, path: &Path) -> Result<String> {
-    let h = crate::cull::hash::full(path)?;
-    if it.full_hash.as_deref() != Some(&h) {
-        db.write(|c| {
-            c.execute(
-                "UPDATE files SET full_hash=?2 WHERE id=?1",
-                rusqlite::params![it.id, h],
-            )
-        })?;
-    }
-    Ok(h)
+fn hash(path: &Path) -> Result<String> {
+    Ok(crate::cull::hash::full(path)?)
 }
 
 fn dest(db: &Db, request: &Request) -> Result<(crate::db::libraries::Library, String, PathBuf)> {
@@ -175,7 +212,7 @@ fn dest(db: &Db, request: &Request) -> Result<(crate::db::libraries::Library, St
         .dir
         .clone()
         .ok_or_else(|| DbError::Invalid("목적지 디스크가 연결되어 있지 않습니다".into()))?;
-    let full = if rel.is_empty() { dir } else { dir.join(&rel) };
+    let full = destination_inside(&dir, &rel)?;
     Ok((lib, rel, full))
 }
 
@@ -195,6 +232,7 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
     let publish =
         request.publish || (source_area == Some(1) && lib.area == 2 && request.mode == Mode::Copy);
     let mut out = Vec::with_capacity(items.len());
+    let mut reserved = std::collections::HashSet::new();
     for it in items {
         let source_path = match mount_path(&it) {
             Ok(p) => p,
@@ -216,7 +254,7 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
             }
         };
         let source_hash = if publish {
-            Some(hash(db, &it, &source_path)?)
+            Some(hash(&source_path)?)
         } else {
             None
         };
@@ -225,7 +263,7 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
             None => None,
         };
         let wanted = dir.join(&it.name);
-        let (conflict, action, planned) = if let Some(path) = existing_publication {
+        let (mut conflict, mut action, mut planned) = if let Some(path) = existing_publication {
             let full = lib.dir.as_ref().unwrap().join(&path);
             let valid = full.is_file()
                 && source_hash
@@ -243,6 +281,23 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
         } else {
             ("none", "run", it.name.clone())
         };
+        let key = planned.to_lowercase();
+        if action != "skip" && reserved.contains(&key) {
+            match request.conflict_policy {
+                ConflictPolicy::Skip => {
+                    conflict = "batch_name_exists";
+                    action = "skip";
+                }
+                ConflictPolicy::Rename => {
+                    planned = free_name(&dir, &planned, &reserved);
+                    conflict = "batch_name_exists";
+                    action = "rename";
+                }
+            }
+        }
+        if action != "skip" {
+            reserved.insert(planned.to_lowercase());
+        }
         out.push(PreviewItem {
             id: it.id,
             source: it.vol_rel,
@@ -272,6 +327,35 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
     })
 }
 
+fn free_name(
+    dir: &Path,
+    wanted_name: &str,
+    reserved: &std::collections::HashSet<String>,
+) -> String {
+    let wanted = Path::new(wanted_name);
+    let stem = wanted
+        .file_stem()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| wanted_name.to_string());
+    let extension = wanted
+        .extension()
+        .map(|value| value.to_string_lossy().into_owned());
+    for number in 2..10_000 {
+        let name = match &extension {
+            Some(extension) => format!("{stem} ({number}).{extension}"),
+            None => format!("{stem} ({number})"),
+        };
+        if !reserved.contains(&name.to_lowercase()) && !dir.join(&name).exists() {
+            return name;
+        }
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f");
+    match extension {
+        Some(extension) => format!("{stem} ({stamp}).{extension}"),
+        None => format!("{stem} ({stamp})"),
+    }
+}
+
 fn conflict_plan(wanted: &Path, policy: ConflictPolicy) -> (&'static str, &'static str, String) {
     match policy {
         ConflictPolicy::Skip => (
@@ -298,6 +382,12 @@ fn conflict_plan(wanted: &Path, policy: ConflictPolicy) -> (&'static str, &'stat
 }
 
 fn copy_verified(from: &Path, to: &Path) -> std::io::Result<String> {
+    if to.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("목적지가 이미 있습니다: {}", to.display()),
+        ));
+    }
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -319,24 +409,50 @@ fn copy_verified(from: &Path, to: &Path) -> std::io::Result<String> {
         return Err(std::io::Error::other("사본 SHA-256이 원본과 다릅니다"));
     }
     copy_mtime(from, &temp);
+    std::fs::File::open(&temp)?.sync_all()?;
+    if to.exists() {
+        let _ = std::fs::remove_file(&temp);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("복사 중 목적지가 생겼습니다: {}", to.display()),
+        ));
+    }
     std::fs::rename(&temp, to)?;
+    if let Some(parent) = to.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
     Ok(source_hash)
 }
 
-fn copy_with_sidecars(from: &Path, to: &Path) -> std::io::Result<String> {
+#[derive(Debug)]
+struct CopiedSidecar {
+    target: PathBuf,
+    sha256: String,
+}
+
+fn copy_with_sidecars(from: &Path, to: &Path) -> std::io::Result<(String, Vec<CopiedSidecar>)> {
     let pairs = sidecars(from, to);
+    if let Some((_, target)) = pairs.iter().find(|(_, target)| target.exists()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("목적지 사이드카가 이미 있습니다: {}", target.display()),
+        ));
+    }
     let hash = copy_verified(from, to)?;
-    for (src, want) in pairs {
-        let target = free_path(want);
-        if let Err(e) = copy_verified(&src, &target) {
-            log::warn!(
-                "사이드카 복사 실패 {} → {}: {e}",
-                src.display(),
-                target.display()
-            );
+    let mut copied = Vec::new();
+    for (source, target) in pairs {
+        match copy_verified(&source, &target) {
+            Ok(sha256) => copied.push(CopiedSidecar { target, sha256 }),
+            Err(error) => {
+                for sidecar in &copied {
+                    let _ = std::fs::remove_file(&sidecar.target);
+                }
+                let _ = std::fs::remove_file(to);
+                return Err(error);
+            }
         }
     }
-    Ok(hash)
+    Ok((hash, copied))
 }
 
 fn ensure_folder(db: &Db, lib: &crate::db::libraries::Library, rel: &str) -> Result<i64> {
@@ -421,19 +537,26 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
             );
             match request.mode {
                 Mode::Move => {
+                    let occupied: bool = db.read(|c| {
+                        c.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM files WHERE folder_id=?1 AND name=?2 AND id<>?3)",
+                            rusqlite::params![folder,p.planned_name,it.id],
+                            |r| r.get(0),
+                        )
+                    })?;
+                    if occupied {
+                        return Err(DbError::Invalid(format!(
+                            "목적지 DB에 같은 이름 기록이 있습니다: {}",
+                            p.planned_name
+                        )));
+                    }
                     move_with_sidecars(&source, &target)?;
-                    super::record_to(
-                        db,
-                        batch,
-                        "move",
-                        it.id,
-                        &it.volume_uuid,
-                        &it.vol_rel,
-                        &lib.volume_uuid,
-                        Some(&dest_vol_rel),
-                        Ok(()),
-                    )?;
-                    db.transaction(|tx| {
+                    let changed = db.transaction(|tx| {
+                        tx.execute(
+                            "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
+                             VALUES(?1,?2,'move',?3,?4,?5,?6,1)",
+                            rusqlite::params![batch,it.id,it.volume_uuid,it.vol_rel,lib.volume_uuid,dest_vol_rel],
+                        )?;
                         tx.execute(
                             "UPDATE files SET folder_id=?2,name=?3 WHERE id=?1",
                             rusqlite::params![it.id, folder, p.planned_name],
@@ -445,12 +568,23 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                             tx.execute("DELETE FROM thumbs WHERE file_id=?1", [it.id])?;
                         }
                         Ok(())
-                    })?;
+                    });
+                    if let Err(error) = changed {
+                        return match move_with_sidecars(&target, &source) {
+                            Ok(()) => Err(error),
+                            Err(rollback) => Err(DbError::Invalid(format!(
+                                "DB 갱신 실패: {error}; 파일 원위치 복구도 실패: {rollback}"
+                            ))),
+                        };
+                    }
                 }
                 Mode::Copy => {
-                    let full = copy_with_sidecars(&source, &target)?;
+                    let (full, copied_sidecars) = copy_with_sidecars(&source, &target)?;
                     if p.source_sha256.as_deref().is_some_and(|h| h != full) {
                         let _ = std::fs::remove_file(&target);
+                        for sidecar in &copied_sidecars {
+                            let _ = std::fs::remove_file(&sidecar.target);
+                        }
                         return Err(DbError::Invalid(
                             "미리보기 뒤 원본 내용이 바뀌었습니다".into(),
                         ));
@@ -459,16 +593,37 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                         Ok(id) => id,
                         Err(e) => {
                             let _ = std::fs::remove_file(&target);
-                            crate::ops::trash::remove_sidecars(&target);
+                            for sidecar in &copied_sidecars {
+                                let _ = std::fs::remove_file(&sidecar.target);
+                            }
                             return Err(e);
                         }
                     };
+                    let destination_vol_dir = crate::media::cache::rel_path(&lib.rel_path, &rel);
                     let recorded = db.transaction(|tx| {
                         tx.execute(
                             "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
                              VALUES(?1,?2,'copy',?3,?4,?5,?6,1)",
                             rusqlite::params![batch,new_id,it.volume_uuid,it.vol_rel,lib.volume_uuid,dest_vol_rel],
                         )?;
+                        tx.execute(
+                            "INSERT INTO copy_manifest(batch_id,file_id,seq,to_vol,to_path,sha256,is_main)
+                             VALUES(?1,?2,0,?3,?4,?5,1)",
+                            rusqlite::params![batch,new_id,lib.volume_uuid,dest_vol_rel,full],
+                        )?;
+                        for (index, sidecar) in copied_sidecars.iter().enumerate() {
+                            let name = sidecar
+                                .target
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            let path = crate::media::cache::rel_path(&destination_vol_dir, &name);
+                            tx.execute(
+                                "INSERT INTO copy_manifest(batch_id,file_id,seq,to_vol,to_path,sha256,is_main)
+                                 VALUES(?1,?2,?3,?4,?5,?6,0)",
+                                rusqlite::params![batch,new_id,index as i64+1,lib.volume_uuid,path,sidecar.sha256],
+                            )?;
+                        }
                         if plan.publish {
                             let dest_path=if rel.is_empty(){p.planned_name.clone()}else{format!("{rel}/{}",p.planned_name)};
                             tx.execute("INSERT INTO publication_ledger(source_file_id,source_sha256,destination_library_id,destination_path,destination_sha256,batch_id) VALUES(?1,?2,?3,?4,?2,?5) ON CONFLICT(source_sha256,destination_library_id,destination_path) DO UPDATE SET destination_sha256=excluded.destination_sha256,batch_id=excluded.batch_id,created_at=strftime('%s','now')",rusqlite::params![it.id,full,lib.id,dest_path,batch])?;
@@ -478,7 +633,9 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                     if let Err(e) = recorded {
                         let _ = db.write(|c| c.execute("DELETE FROM files WHERE id=?1", [new_id]));
                         let _ = std::fs::remove_file(&target);
-                        crate::ops::trash::remove_sidecars(&target);
+                        for sidecar in &copied_sidecars {
+                            let _ = std::fs::remove_file(&sidecar.target);
+                        }
                         return Err(e);
                     }
                 }
@@ -515,42 +672,159 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
         .chain(std::iter::once(lib.id))
         .collect::<std::collections::BTreeSet<_>>();
     for id in &affected {
-        db.write(|c|c.execute("UPDATE folders SET file_count=(SELECT COUNT(*) FROM files WHERE files.folder_id=folders.id AND files.trashed_at IS NULL) WHERE library_id=?1",[id]))?;
+        if let Err(error) = db.write(|c|c.execute("UPDATE folders SET file_count=(SELECT COUNT(*) FROM files WHERE files.folder_id=folders.id AND files.trashed_at IS NULL) WHERE library_id=?1",[id])) {
+            log::warn!("이동·복사 뒤 폴더 장수 갱신 보류: {error}");
+        }
     }
     for id in affected {
-        crate::ops::organize::forget_empty_folders(db, id)?;
+        if let Err(error) = crate::ops::organize::forget_empty_folders(db, id) {
+            log::warn!("이동·복사 뒤 빈 폴더 정리 보류: {error}");
+        }
     }
     Ok(out)
 }
 
 pub fn undo_copy(db: &Db, batch_id: i64) -> Result<Outcome> {
-    let rows:Vec<(i64,String,String)>=db.read(|c|{let mut st=c.prepare("SELECT file_id,COALESCE(to_vol,from_vol),to_path FROM journal WHERE batch_id=?1 AND ok=1 AND file_id IS NOT NULL AND to_path IS NOT NULL ORDER BY id DESC")?;let rows=st.query_map([batch_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;rows.collect::<rusqlite::Result<Vec<_>>>()})?;
+    #[derive(Debug)]
+    struct CopyRow {
+        id: i64,
+        volume: String,
+        path: String,
+        expected: Option<String>,
+    }
+    #[derive(Debug)]
+    struct Artifact {
+        volume: String,
+        path: String,
+        sha256: String,
+    }
+    let rows: Vec<CopyRow> = db.read(|c| {
+        let mut st = c.prepare(
+            "SELECT j.file_id,COALESCE(j.to_vol,j.from_vol),j.to_path,fi.full_hash
+             FROM journal j LEFT JOIN files fi ON fi.id=j.file_id
+             WHERE j.batch_id=?1 AND j.ok=1 AND j.file_id IS NOT NULL
+               AND j.to_path IS NOT NULL ORDER BY j.id DESC",
+        )?;
+        let rows = st.query_map([batch_id], |r| {
+            Ok(CopyRow {
+                id: r.get(0)?,
+                volume: r.get(1)?,
+                path: r.get(2)?,
+                expected: r.get(3)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+    })?;
     let mut out = Outcome {
         batch_id,
         ..Default::default()
     };
-    for (id, vol, rel) in rows {
+    for row in rows {
         let result = (|| -> Result<()> {
-            let mount = crate::db::volumes::find_mount(&vol)
+            let mount = crate::db::volumes::find_mount(&row.volume)
                 .ok_or_else(|| DbError::Invalid("사본 디스크가 연결되어 있지 않습니다".into()))?;
-            let path = mount.join(&rel);
-            if path.exists() {
-                std::fs::remove_file(&path)?;
-                crate::ops::trash::remove_sidecars(&path);
+            let main = mount.join(&row.path);
+            let mut artifacts: Vec<Artifact> = db.read(|c| {
+                let mut st = c.prepare(
+                    "SELECT to_vol,to_path,sha256 FROM copy_manifest
+                     WHERE batch_id=?1 AND file_id=?2 ORDER BY seq",
+                )?;
+                let rows = st.query_map(rusqlite::params![batch_id, row.id], |r| {
+                    Ok(Artifact {
+                        volume: r.get(0)?,
+                        path: r.get(1)?,
+                        sha256: r.get(2)?,
+                    })
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })?;
+            if artifacts.is_empty() {
+                let expected = row.expected.clone().ok_or_else(|| {
+                    DbError::Invalid("사본의 원래 SHA-256 기록이 없어 지우지 않았습니다".into())
+                })?;
+                if !crate::ops::trash::sidecars(&main, &main).is_empty() {
+                    return Err(DbError::Invalid(
+                        "0.9.0 사본의 사이드카 경로 기록이 없어 안전하게 되돌릴 수 없습니다".into(),
+                    ));
+                }
+                artifacts.push(Artifact {
+                    volume: row.volume.clone(),
+                    path: row.path.clone(),
+                    sha256: expected,
+                });
             }
-            db.write(|c| c.execute("DELETE FROM files WHERE id=?1", [id]))?;
+            let mut paths = Vec::with_capacity(artifacts.len());
+            for artifact in &artifacts {
+                let artifact_mount =
+                    crate::db::volumes::find_mount(&artifact.volume).ok_or_else(|| {
+                        DbError::Invalid("사본 디스크가 연결되어 있지 않습니다".into())
+                    })?;
+                let path = artifact_mount.join(&artifact.path);
+                if !path.is_file() {
+                    return Err(DbError::Invalid(format!(
+                        "되돌릴 사본이 없습니다: {}",
+                        artifact.path
+                    )));
+                }
+                if crate::cull::hash::full(&path)? != artifact.sha256 {
+                    return Err(DbError::Invalid(format!(
+                        "사본 내용이 작업 뒤 바뀌어 지우지 않았습니다: {}",
+                        artifact.path
+                    )));
+                }
+                paths.push(path);
+            }
+
+            // 영구 삭제 전에 같은 폴더 안의 숨은 이름으로 원자적으로 치워 둔다.
+            // DB 갱신이 실패하면 전부 제자리로 돌릴 수 있다.
+            let mut staged = Vec::with_capacity(paths.len());
+            for path in paths {
+                let temp = free_path(path.with_file_name(format!(
+                    ".{}.photo-desk-undo-{batch_id}.tmp",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                )));
+                if let Err(error) = std::fs::rename(&path, &temp) {
+                    for (original, staged_path) in staged.iter().rev() {
+                        let _ = std::fs::rename(staged_path, original);
+                    }
+                    return Err(error.into());
+                }
+                staged.push((path, temp));
+            }
+            let changed = db.transaction(|tx| {
+                tx.execute("DELETE FROM files WHERE id=?1", [row.id])?;
+                tx.execute(
+                    "UPDATE journal SET ok=0 WHERE batch_id=?1 AND file_id=?2 AND ok=1",
+                    rusqlite::params![batch_id, row.id],
+                )?;
+                Ok(())
+            });
+            if let Err(error) = changed {
+                for (original, staged_path) in staged.iter().rev() {
+                    let _ = std::fs::rename(staged_path, original);
+                }
+                return Err(error);
+            }
+            for (_, staged_path) in staged {
+                if let Err(error) = std::fs::remove_file(&staged_path) {
+                    log::warn!(
+                        "되돌린 사본 임시 파일을 지우지 못했습니다 {}: {error}",
+                        staged_path.display()
+                    );
+                }
+            }
             Ok(())
         })();
         match result {
             Ok(()) => out.moved += 1,
             Err(e) => {
                 out.failed += 1;
-                out.failed_ids.push(id);
+                out.failed_ids.push(row.id);
                 out.first_error.get_or_insert(e.to_string());
             }
         }
     }
-    if out.moved > 0 || rows_is_empty(db, batch_id)? {
+    if rows_is_empty(db, batch_id)? {
         db.write(|c| {
             c.execute(
                 "DELETE FROM publication_ledger WHERE batch_id=?1",
@@ -718,5 +992,157 @@ mod tests {
         assert_eq!((undo.moved, undo.failed), (1, 0));
         assert!(d.path().join("내사진/a.jpg").is_file());
         assert!(d.path().join("내사진/a.xmp").is_file());
+    }
+
+    #[test]
+    fn undo_refuses_a_copy_changed_after_the_operation() {
+        let (d, db, _mine, shared, ids) = setup();
+        let req = Request {
+            ids: ids[..1].to_vec(),
+            destination_library_id: shared,
+            destination_dir: "변경".into(),
+            mode: Mode::Copy,
+            conflict_policy: ConflictPolicy::Skip,
+            publish: false,
+        };
+        let out = execute(&db, &req, "복사").unwrap();
+        let target = d.path().join("공용/변경/a.jpg");
+        std::fs::write(&target, b"edited after copy").unwrap();
+        let undone = undo_copy(&db, out.batch_id).unwrap();
+        assert_eq!((undone.moved, undone.failed), (0, 1));
+        assert_eq!(std::fs::read(&target).unwrap(), b"edited after copy");
+        assert!(d.path().join("공용/변경/a.xmp").is_file());
+    }
+
+    #[test]
+    fn copy_sidecar_collision_never_overwrites_or_deletes_the_existing_file() {
+        let (d, db, _mine, shared, ids) = setup();
+        std::fs::create_dir_all(d.path().join("공용/충돌")).unwrap();
+        let existing = d.path().join("공용/충돌/a.xmp");
+        std::fs::write(&existing, b"someone else's metadata").unwrap();
+        let req = Request {
+            ids: ids[..1].to_vec(),
+            destination_library_id: shared,
+            destination_dir: "충돌".into(),
+            mode: Mode::Copy,
+            conflict_policy: ConflictPolicy::Skip,
+            publish: false,
+        };
+        let out = execute(&db, &req, "사이드카 충돌").unwrap();
+        assert_eq!((out.completed, out.failed), (0, 1));
+        assert!(!d.path().join("공용/충돌/a.jpg").exists());
+        assert_eq!(
+            std::fs::read(&existing).unwrap(),
+            b"someone else's metadata"
+        );
+    }
+
+    #[test]
+    fn undo_refuses_a_changed_copied_sidecar_and_keeps_the_whole_copy() {
+        let (d, db, _mine, shared, ids) = setup();
+        let req = Request {
+            ids: ids[..1].to_vec(),
+            destination_library_id: shared,
+            destination_dir: "sidecar".into(),
+            mode: Mode::Copy,
+            conflict_policy: ConflictPolicy::Skip,
+            publish: false,
+        };
+        let out = execute(&db, &req, "사이드카 복사").unwrap();
+        let sidecar = d.path().join("공용/sidecar/a.xmp");
+        std::fs::write(&sidecar, b"edited metadata").unwrap();
+        let undone = undo_copy(&db, out.batch_id).unwrap();
+        assert_eq!((undone.moved, undone.failed), (0, 1));
+        assert!(d.path().join("공용/sidecar/a.jpg").is_file());
+        assert_eq!(std::fs::read(&sidecar).unwrap(), b"edited metadata");
+    }
+
+    #[test]
+    fn preview_reserves_names_within_the_same_batch() {
+        let d = tempfile::tempdir().unwrap();
+        let mine = d.path().join("내사진");
+        let shared = d.path().join("공용");
+        std::fs::create_dir_all(mine.join("one")).unwrap();
+        std::fs::create_dir_all(mine.join("two")).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(mine.join("one/a.jpg"), b"first").unwrap();
+        std::fs::write(mine.join("two/a.jpg"), b"second").unwrap();
+        let db = Db::open(d.path().join("t.db")).unwrap();
+        scan_test(&db, &mine, 1, |_| {}).unwrap();
+        scan_test(&db, &shared, 2, |_| {}).unwrap();
+        let libs = crate::db::libraries::list(&db).unwrap();
+        let shared_id = libs.iter().find(|library| library.area == 2).unwrap().id;
+        let ids = db
+            .read(|c| {
+                let mut statement = c.prepare("SELECT id FROM files ORDER BY id")?;
+                let rows = statement
+                    .query_map([], |row| row.get(0))?
+                    .collect::<rusqlite::Result<Vec<i64>>>()?;
+                Ok(rows)
+            })
+            .unwrap();
+        let plan = preview(
+            &db,
+            &Request {
+                ids,
+                destination_library_id: shared_id,
+                destination_dir: String::new(),
+                mode: Mode::Copy,
+                conflict_policy: ConflictPolicy::Rename,
+                publish: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(plan.items[0].planned_name, "a.jpg");
+        assert_eq!(plan.items[1].planned_name, "a (2).jpg");
+        assert_eq!(plan.items[1].conflict, "batch_name_exists");
+    }
+
+    #[test]
+    fn a_db_name_conflict_is_found_before_a_move_touches_the_file() {
+        let (d, db, _mine, shared, ids) = setup();
+        let destination = crate::db::libraries::get(&db, shared).unwrap().unwrap();
+        std::fs::create_dir_all(d.path().join("공용/blocked")).unwrap();
+        let folder = ensure_folder(&db, &destination, "blocked").unwrap();
+        clone_row(&db, ids[0], folder, "a.jpg", "ghost").unwrap();
+        let out = execute(
+            &db,
+            &Request {
+                ids: ids[..1].to_vec(),
+                destination_library_id: shared,
+                destination_dir: "blocked".into(),
+                mode: Mode::Move,
+                conflict_policy: ConflictPolicy::Skip,
+                publish: false,
+            },
+            "이동",
+        )
+        .unwrap();
+        assert_eq!((out.completed, out.failed), (0, 1));
+        assert!(d.path().join("내사진/a.jpg").is_file());
+        assert!(!d.path().join("공용/blocked/a.jpg").exists());
+    }
+
+    #[test]
+    fn a_destination_symlink_cannot_escape_the_library() {
+        use std::os::unix::fs::symlink;
+
+        let (d, db, _mine, shared, ids) = setup();
+        let outside = d.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, d.path().join("공용/escape")).unwrap();
+        let error = preview(
+            &db,
+            &Request {
+                ids: ids[..1].to_vec(),
+                destination_library_id: shared,
+                destination_dir: "escape".into(),
+                mode: Mode::Copy,
+                conflict_policy: ConflictPolicy::Skip,
+                publish: false,
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("밖"));
     }
 }

@@ -121,10 +121,7 @@ impl Db {
     /// 옛 파일을 계속 보는 연결이 생긴다. SQLite의 online backup API로 쓰기
     /// 연결에 페이지를 부어 넣는다 — 다른 연결은 다음 읽기부터 새 내용을 본다.
     pub fn restore_from(&self, src: &Path) -> Result<()> {
-        let from = Connection::open_with_flags(
-            src,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
+        let from = Connection::open_with_flags(src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mut c = self.write.lock().unwrap_or_else(|e| e.into_inner());
         {
             let b = rusqlite::backup::Backup::new(&from, &mut c)?;
@@ -168,11 +165,10 @@ impl Db {
     /// 유휴(작업 스위치가 빈) 때만 부를 것.
     pub fn checkpoint_truncate(&self) -> Result<bool> {
         self.write(|c| {
-            let (busy, _log, _ckpt): (i64, i64, i64) = c.query_row(
-                "PRAGMA wal_checkpoint(TRUNCATE)",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )?;
+            let (busy, _log, _ckpt): (i64, i64, i64) =
+                c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
             Ok(busy == 0)
         })
     }
@@ -181,7 +177,9 @@ impl Db {
     pub fn wal_size(&self) -> u64 {
         let mut p = self.path.clone().into_os_string();
         p.push("-wal");
-        std::fs::metadata(std::path::PathBuf::from(p)).map(|m| m.len()).unwrap_or(0)
+        std::fs::metadata(std::path::PathBuf::from(p))
+            .map(|m| m.len())
+            .unwrap_or(0)
     }
 }
 
@@ -213,15 +211,25 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert!(db.wal_size() > 1024 * 1024, "WAL 이 자랐어야 한다: {}", db.wal_size());
+        assert!(
+            db.wal_size() > 1024 * 1024,
+            "WAL 이 자랐어야 한다: {}",
+            db.wal_size()
+        );
 
-        assert!(db.checkpoint_truncate().unwrap(), "읽기가 없으니 잘려야 한다");
+        assert!(
+            db.checkpoint_truncate().unwrap(),
+            "읽기가 없으니 잘려야 한다"
+        );
         assert_eq!(db.wal_size(), 0, "TRUNCATE 뒤 WAL 은 0 바이트");
 
         // 자른 뒤에도 읽기·쓰기가 멀쩡하다
-        let n: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM blob_t", [], |r| r.get(0))).unwrap();
+        let n: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM blob_t", [], |r| r.get(0)))
+            .unwrap();
         assert_eq!(n, 8);
-        db.write(|c| c.execute("INSERT INTO blob_t(x) VALUES(x'00')", [])).unwrap();
+        db.write(|c| c.execute("INSERT INTO blob_t(x) VALUES(x'00')", []))
+            .unwrap();
     }
 
     #[test]
@@ -241,8 +249,8 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            n, 23,
-            "테이블 23개가 만들어져야 한다 (schema.sql 22 + upgrade의 nas_pulls)"
+            n, 24,
+            "테이블 24개가 만들어져야 한다 (schema.sql 23 + upgrade의 nas_pulls)"
         );
     }
 
@@ -251,14 +259,22 @@ mod tests {
     #[test]
     #[ignore = "실제 DB 사본 필요"]
     fn real_open_time() {
-        let Ok(p) = std::env::var("ACUT_DB_COPY") else { return };
+        let Ok(p) = std::env::var("ACUT_DB_COPY") else {
+            return;
+        };
         for i in 0..3 {
             let t = std::time::Instant::now();
             let db = Db::open(&p).unwrap();
             let open = t.elapsed();
             let t2 = std::time::Instant::now();
-            let n: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))).unwrap();
-            eprintln!("열기 {i}: {:.0}ms · COUNT(files)={n} {:.0}ms", open.as_secs_f64() * 1000.0, t2.elapsed().as_secs_f64() * 1000.0);
+            let n: i64 = db
+                .read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)))
+                .unwrap();
+            eprintln!(
+                "열기 {i}: {:.0}ms · COUNT(files)={n} {:.0}ms",
+                open.as_secs_f64() * 1000.0,
+                t2.elapsed().as_secs_f64() * 1000.0
+            );
         }
     }
 
@@ -266,11 +282,15 @@ mod tests {
     fn foreign_keys_are_on_for_every_connection() {
         let (_d, db) = temp_db();
         // 쓰기 연결
-        let w: i64 = db.write(|c| c.query_row("PRAGMA foreign_keys", [], |r| r.get(0))).unwrap();
+        let w: i64 = db
+            .write(|c| c.query_row("PRAGMA foreign_keys", [], |r| r.get(0)))
+            .unwrap();
         assert_eq!(w, 1, "쓰기 연결에서 켜져 있어야 한다");
         // 읽기 연결 — 풀 전체를 확인한다
         for _ in 0..READ_POOL_SIZE * 2 {
-            let r: i64 = db.read(|c| c.query_row("PRAGMA foreign_keys", [], |r| r.get(0))).unwrap();
+            let r: i64 = db
+                .read(|c| c.query_row("PRAGMA foreign_keys", [], |r| r.get(0)))
+                .unwrap();
             assert_eq!(r, 1, "읽기 연결에서도 켜져 있어야 한다");
         }
     }
@@ -279,7 +299,10 @@ mod tests {
     fn cascade_delete_actually_works() {
         let (_d, db) = temp_db();
         db.write(|c| {
-            c.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')", [])?;
+            c.execute(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')",
+                [],
+            )?;
             c.execute(
                 "INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1)",
                 [],
@@ -308,7 +331,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = Arc::new(Db::open(dir.path().join("t.db")).unwrap());
         db.write(|c| {
-            c.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')", [])
+            c.execute(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')",
+                [],
+            )
         })
         .unwrap();
 

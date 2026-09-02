@@ -60,13 +60,20 @@ describe("정리 부분 실패", () => {
 
     const button = screen.getByRole("button", { name: "옮기기" });
     await waitFor(() => expect(button).toBeEnabled());
+    const date = screen.getByLabelText("날짜");
+    await userEvent.clear(date);
+    await userEvent.type(date, "2025-12-31");
     await userEvent.click(button);
     await waitFor(() => expect(screen.getByText(/1장을 이벤트 폴더로 옮깁니다/)).toBeInTheDocument());
+    expect(date).toHaveValue("2025-12-31");
     await userEvent.click(button);
 
     const calls = vi.mocked(invoke).mock.calls.filter(([command]) => command === "organize_move");
     expect(calls[0]?.[1]).toMatchObject({ ids: [1, 2, 3] });
     expect(calls[1]?.[1]).toMatchObject({ ids: [3] });
+    expect(
+      vi.mocked(invoke).mock.calls.filter(([command]) => command === "organize_date"),
+    ).toHaveLength(1);
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 });

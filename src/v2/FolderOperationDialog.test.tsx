@@ -39,4 +39,33 @@ describe("FolderOperationDialog", () => {
     expect(screen.getByText(/Drive 동기화 폴더/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "폴더 복사 실행" })).toBeEnabled();
   });
+
+  it("실행 결과가 0건이면 성공처럼 닫지 않는다", async () => {
+    invoke
+      .mockResolvedValueOnce({
+        source: "2026/여행", destination: "2026/여행2", planned_name: "여행2",
+        conflict: "none", action: "run", files: 20, directories: 3,
+        bytes: 2048, cross_volume: false, drive_sync_warning: false,
+      })
+      .mockResolvedValueOnce({
+        batch_id: 0, completed: 0, failed: 0, files: 20, directories: 3,
+        bytes: 2048, first_error: "실행 직전 충돌", manifest_sha256: null,
+      });
+    const onChanged = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <FolderOperationDialog
+        target={{ action: "rename", sourceLibraryId: 1, sourceDir: "2026/여행", sourceName: "여행" }}
+        onChanged={onChanged}
+        onClose={onClose}
+      />,
+    );
+    await userEvent.clear(screen.getByLabelText("폴더 이름"));
+    await userEvent.type(screen.getByLabelText("폴더 이름"), "여행2");
+    await userEvent.click(screen.getByRole("button", { name: "충돌 미리보기" }));
+    await userEvent.click(await screen.findByRole("button", { name: "이름 변경 실행" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("실행 직전 충돌");
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

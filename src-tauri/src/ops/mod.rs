@@ -17,6 +17,7 @@ pub mod organize;
 pub mod xmp;
 pub mod rename;
 pub mod trash;
+pub mod transfer;
 pub mod undo;
 
 use crate::db::conn::{Db, Result};

@@ -19,6 +19,7 @@ pub mod update;
 pub mod smart;
 pub mod tags;
 pub mod trash;
+pub mod transfer;
 pub mod video_protocol;
 
 use crate::db::conn::Db;

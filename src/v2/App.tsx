@@ -20,6 +20,7 @@ import OffloadDialog from "./OffloadDialog";
 import HuskDialog from "./HuskDialog";
 import Organize from "./Organize";
 import CaptureDateDialog from "./CaptureDateDialog";
+import TransferDialog from "./TransferDialog";
 import PhotoGrid from "./PhotoGrid";
 import Preview from "./Preview";
 import SettingsView from "./SettingsView";
@@ -290,6 +291,7 @@ export default function App() {
       comparing: s.comparing,
       organizing: s.organizing,
       captureDate: s.captureDate,
+      transfer: s.transfer,
       importing: s.importing,
       helping: s.helping,
       dropped: s.dropped,
@@ -486,6 +488,18 @@ export default function App() {
             await ops.after();
           }}
           onClose={() => ui.set({ captureDate: null })}
+        />
+      )}
+      {ui.transfer !== null && (
+        <TransferDialog
+          ids={ui.transfer.ids}
+          sourceLibraryId={ui.transfer.sourceLibraryId}
+          onChanged={async () => {
+            useSelection.getState().clearPicked();
+            await ops.after();
+            await useData.getState().loadFolders();
+          }}
+          onClose={() => ui.set({ transfer: null })}
         />
       )}
       {ui.textSearch !== null && ui.similarFor === null && (

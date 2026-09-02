@@ -41,7 +41,19 @@ fn add_gallery_transition_p0(c: &Connection) -> rusqlite::Result<()> {
             file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
             taken_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-         );",
+         );
+         CREATE TABLE IF NOT EXISTS publication_ledger (
+            id INTEGER PRIMARY KEY,
+            source_file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
+            source_sha256 TEXT NOT NULL,
+            destination_library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+            destination_path TEXT NOT NULL,
+            destination_sha256 TEXT NOT NULL,
+            batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            UNIQUE(source_sha256,destination_library_id,destination_path)
+         );
+         CREATE INDEX IF NOT EXISTS idx_publication_hash ON publication_ledger(source_sha256,destination_library_id);",
     )
 }
 

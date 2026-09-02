@@ -131,6 +131,15 @@ export default function SelectionPanel({
       >
         촬영일 감사
       </PanelBtn>
+      {libId !== null && (
+        <PanelBtn
+          onClick={() =>
+            setUi({ transfer: { ids: [...picked], sourceLibraryId: libId } })
+          }
+        >
+          이동·복사
+        </PanelBtn>
+      )}
       <button
         onClick={() => setUi({ organizing: true })}
         disabled={libId === null}

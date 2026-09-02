@@ -107,6 +107,9 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
     if kind == "capture_date" {
         return crate::ops::capture_date::undo(db, batch_id);
     }
+    if kind == "copy" || kind == "publish" {
+        return crate::ops::transfer::undo_copy(db, batch_id);
+    }
 
     // 가져오기는 되돌릴 곳이 없다. 원본은 카드에 그대로 있고, 되돌린다는 건
     // 「들여온 벌을 무른다」는 뜻이다. 그렇다고 지워 버리면 그것대로 되돌릴

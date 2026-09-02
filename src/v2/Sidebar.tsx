@@ -19,6 +19,7 @@ import { useSelection } from "./selectionStore";
 import { Label, QuickRow } from "./ui";
 import { useView, type Filter } from "./viewStore";
 import type { Bucket, GeoStats, Library } from "./types";
+import { useViewportW } from "./useViewportW";
 
 /**
  * 왼쪽 — 레일과 그 갈래의 패널, 그리고 폭 조절 손잡이.
@@ -45,6 +46,10 @@ export default function Sidebar({
   const [libId] = usePref("libId");
   const [sort] = usePref("sort");
   const dragPanel = useRef(false);
+  const viewportW = useViewportW();
+  // 최소 창에서도 사진 영역과 타임라인이 쓸 폭을 남긴다.
+  const panelMax = Math.max(160, Math.min(480, viewportW - 430));
+  const visiblePanelW = Math.min(panelW, panelMax);
 
   const libs = useData((s) => s.libs);
   // 갈래 표시의 숫자는 모든 라이브러리 합 — 고른 것만 세면 다른 쪽 휴지통이 숨는다
@@ -127,7 +132,7 @@ export default function Sidebar({
       {panelOpen && (
         <aside
           className="shrink-0 bg-chrome border-r border-line overflow-y-auto py-2"
-          style={{ width: panelW }}
+          style={{ width: visiblePanelW }}
         >
           <Label>{sourceTitle(source)}</Label>
 
@@ -260,16 +265,34 @@ export default function Sidebar({
       {/* 폭 조절 — 잡고 끌면 사이드바가 넓어진다 */}
       {panelOpen && (
         <div
+          role="separator"
+          tabIndex={0}
+          aria-label="사이드바 폭"
+          aria-orientation="vertical"
+          aria-valuemin={160}
+          aria-valuemax={panelMax}
+          aria-valuenow={visiblePanelW}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId);
             dragPanel.current = true;
           }}
           onPointerMove={(e) => {
             if (!dragPanel.current) return;
-            setPanelW(Math.max(160, Math.min(480, e.clientX - 48)));
+            setPanelW(Math.max(160, Math.min(panelMax, e.clientX - 48)));
           }}
           onPointerUp={() => (dragPanel.current = false)}
-          className="w-1 shrink-0 cursor-col-resize hover:bg-accent"
+          onKeyDown={(e) => {
+            let next = visiblePanelW;
+            if (e.key === "ArrowLeft") next -= 16;
+            else if (e.key === "ArrowRight") next += 16;
+            else if (e.key === "Home") next = 160;
+            else if (e.key === "End") next = panelMax;
+            else return;
+            e.preventDefault();
+            e.stopPropagation();
+            setPanelW(Math.max(160, Math.min(panelMax, next)));
+          }}
+          className="w-1 shrink-0 cursor-col-resize hover:bg-accent focus:bg-focus focus:outline-none"
         />
       )}
     </>

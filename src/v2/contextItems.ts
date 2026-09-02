@@ -15,14 +15,19 @@ export function contextItems(
   ids: number[],
   rows: FileRow[],
   act: {
-    markOne: (id: number, patch: Mark) => void;
+    markOne: (id: number, patch: Mark) => Promise<void>;
     trashFiles: (ids: number[]) => Promise<boolean>;
   },
 ): MenuItem[] {
   const n = ids.length;
   const many = n > 1 ? ` ${n.toLocaleString()}장` : "";
-  const mark = (patch: Mark) => () =>
-    ids.forEach((id) => act.markOne(id, patch));
+  const mark = (patch: Mark) => async () => {
+    try {
+      await Promise.all(ids.map((id) => act.markOne(id, patch)));
+    } catch (e) {
+      toast(`판정을 저장하지 못했습니다 — ${String(e)}`, "drop");
+    }
+  };
   const ui = useUi.getState;
 
   return [

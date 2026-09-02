@@ -20,20 +20,30 @@ export default function InfoPanel({
   file: FileRow | null;
   onClose: () => void;
 }) {
-  const [detail, setDetail] = useState<Detail | null>(null);
+  // 상세는 반드시 어느 사진 것인지와 함께 둔다. A를 읽는 중 B로 옮겼을 때
+  // A의 메모가 B의 CommentBox 초기값이 되면 B에 그대로 덮어쓸 수 있다.
+  const [got, setGot] = useState<{
+    id: number;
+    detail: Detail | null;
+    error: string | null;
+  } | null>(null);
   const id = file?.id ?? null;
+  const detail = id !== null && got?.id === id ? got.detail : null;
+  const error = id !== null && got?.id === id ? got.error : null;
 
   useEffect(() => {
     let live = true;
     if (id === null) {
-      queueMicrotask(() => live && setDetail(null));
+      queueMicrotask(() => live && setGot(null));
       return () => {
         live = false;
       };
     }
     invoke<Detail>("file_detail", { id })
-      .then((d) => live && setDetail(d))
-      .catch(() => live && setDetail(null));
+      .then((d) => live && setGot({ id, detail: d, error: null }))
+      .catch((e) =>
+        live && setGot({ id, detail: null, error: String(e) }),
+      );
     return () => {
       live = false;
     };
@@ -59,7 +69,11 @@ export default function InfoPanel({
 
       {!file || !detail ? (
         <div className="px-4 py-6 text-fg-faint text-[12.5px]">
-          {file ? "읽는 중…" : "사진을 고르면 여기에 상세가 뜹니다"}
+          {error
+            ? `상세 정보를 읽지 못했습니다 — ${error}`
+            : file
+              ? "읽는 중…"
+              : "사진을 고르면 여기에 상세가 뜹니다"}
         </div>
       ) : (
         <div className="px-4 pb-4">
@@ -81,7 +95,11 @@ export default function InfoPanel({
             id={file.id}
             initial={detail.comment ?? ""}
             onSaved={(c) =>
-              setDetail((d) => (d ? { ...d, comment: c } : d))
+              setGot((d) =>
+                d?.id === file.id && d.detail
+                  ? { ...d, detail: { ...d.detail, comment: c } }
+                  : d,
+              )
             }
           />
           <CameraRows detail={detail} />

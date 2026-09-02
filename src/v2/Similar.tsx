@@ -24,7 +24,7 @@ export default function Similar({
   query: SimilarQuery;
   /** 결과를 새 기준으로 */
   onPick: (id: number) => void;
-  onMark: (id: number, patch: Mark) => void;
+  onMark: (id: number, patch: Mark) => Promise<void>;
   onClose: () => void;
 }) {
   // 결과를 «어느 기준에 대한 것인지»와 함께 둔다. 기준이 바뀌면 안 맞아

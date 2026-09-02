@@ -17,6 +17,7 @@ type Layout = ReturnType<typeof useGridLayout>;
  */
 export default function PhotoGrid({
   loading,
+  error,
   empty,
   layout,
   baseIndex,
@@ -28,8 +29,11 @@ export default function PhotoGrid({
   onOpen,
   onContext,
   onSeek,
+  onRetry,
 }: {
   loading: boolean;
+  /** 목록 조회가 실패했다 — 빈 사진 목록과 구분해 다시 시도할 수 있게 한다 */
+  error: string | null;
   /** 등록된 라이브러리가 하나도 없다 */
   empty: boolean;
   layout: Layout;
@@ -44,6 +48,7 @@ export default function PhotoGrid({
   onOpen: (index: number) => void;
   onContext: (id: number, e: React.MouseEvent) => void;
   onSeek: (index: number) => void;
+  onRetry: () => void;
 }) {
   const selected = useSelection((s) => s.selected);
   const picked = useSelection((s) => s.picked);
@@ -87,6 +92,23 @@ export default function PhotoGrid({
         onScroll={onScroll}
         className="flex-1 overflow-y-auto p-2.5"
       >
+        {error && (
+          <div
+            role="alert"
+            className="sticky top-0 z-20 mx-auto mb-2 flex max-w-2xl items-center gap-3 rounded-lg bg-raised px-3 py-2 text-[13px] text-fg ring-1 ring-drop/60 shadow-lg"
+          >
+            <span className="min-w-0 flex-1">
+              사진을 불러오지 못했습니다
+              <span className="ml-2 text-fg-mute break-all">{error}</span>
+            </span>
+            <button
+              onClick={onRetry}
+              className="h-control shrink-0 rounded-md px-3 text-fg ring-1 ring-line-strong hover:bg-hover"
+            >
+              다시 시도
+            </button>
+          </div>
+        )}
         {empty && (
           <div className="h-full flex items-center justify-center text-fg-mute">
             「라이브러리 추가」로 사진 폴더를 등록하세요

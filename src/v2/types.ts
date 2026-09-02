@@ -97,6 +97,8 @@ export type Outcome = {
   failed: number;
   bytes: number;
   first_error: string | null;
+  /** 부분 실패한 사진. 지원하지 않는 예전 응답에서는 없을 수 있다. */
+  failed_ids?: number[];
 };
 
 export type Bucket = {

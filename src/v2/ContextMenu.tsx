@@ -35,6 +35,7 @@ export default function ContextMenu({
   onClose: () => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
 
   /// 화면 밖으로 나가지 않게 자리를 잡는다.
   ///
@@ -54,6 +55,10 @@ export default function ContextMenu({
 
   useEffect(() => {
     if (!at) return;
+    returnFocus.current = document.activeElement as HTMLElement | null;
+    const frame = requestAnimationFrame(() =>
+      box.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus(),
+    );
     const away = (e: MouseEvent) => {
       if (!box.current?.contains(e.target as Node)) onClose();
     };
@@ -62,9 +67,11 @@ export default function ContextMenu({
     window.addEventListener("keydown", esc);
     window.addEventListener("scroll", onClose, true);
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener("mousedown", away);
       window.removeEventListener("keydown", esc);
       window.removeEventListener("scroll", onClose, true);
+      requestAnimationFrame(() => returnFocus.current?.focus());
     };
   }, [at, onClose]);
 
@@ -73,15 +80,37 @@ export default function ContextMenu({
   return (
     <div
       ref={box}
+      role="menu"
+      aria-label="사진 작업"
+      onKeyDown={(e) => {
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+        const rows = Array.from(
+          box.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ?? [],
+        );
+        if (rows.length === 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const i = rows.indexOf(document.activeElement as HTMLElement);
+        const next =
+          e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? rows.length - 1
+              : e.key === "ArrowDown"
+                ? (i + 1 + rows.length) % rows.length
+                : (i - 1 + rows.length) % rows.length;
+        rows[next]?.focus();
+      }}
       className="fixed z-50 min-w-[180px] bg-raised rounded-md ring-1 ring-line-strong shadow-2xl py-1"
       style={{ left: pos?.left ?? at.x, top: pos?.top ?? at.y }}
     >
       {items.map((it, i) =>
         it.kind === "sep" ? (
-          <div key={i} className="h-px bg-line-strong my-1" />
+          <div key={i} role="separator" className="h-px bg-line-strong my-1" />
         ) : (
           <button
             key={i}
+            role="menuitem"
             onClick={() => {
               it.run();
               onClose();

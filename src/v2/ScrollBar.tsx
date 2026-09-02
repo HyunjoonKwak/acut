@@ -130,13 +130,48 @@ export default function ScrollBar({
       ? null
       : bucketAt(items, yToIndex(hoverY, h, total));
   const curY = empty ? 0 : (Math.min(at, total - 1) / total) * h;
+  const currentBucket = empty ? null : bucketAt(items, Math.min(at, total - 1));
+
+  const onTimelineKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (empty) return;
+    const current = Math.min(at, total - 1);
+    const month = items.findIndex(
+      (b) => current >= b.start && current < b.start + b.count,
+    );
+    let next: number | null = null;
+    if (e.key === "ArrowDown")
+      next = items[Math.min(items.length - 1, Math.max(0, month + 1))]?.start ?? current;
+    else if (e.key === "ArrowUp")
+      next = items[Math.max(0, month < 0 ? 0 : month - 1)]?.start ?? current;
+    else if (e.key === "PageDown") next = Math.min(total - 1, current + Math.max(1, pageSize));
+    else if (e.key === "PageUp") next = Math.max(0, current - Math.max(1, pageSize));
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = Math.max(0, total - Math.max(1, pageSize));
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onSeek(next);
+  };
 
   return (
     <div className="w-[58px] shrink-0 flex relative bg-rail border-l border-line select-none">
       {/* 연·월 눈금 — 누르거나 끌면 그 달로 간다 */}
       <div
         ref={colRef}
-        className="flex-1 relative cursor-row-resize touch-none"
+        role="slider"
+        tabIndex={empty ? -1 : 0}
+        aria-label="사진 촬영일 타임라인"
+        aria-orientation="vertical"
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, total - 1)}
+        aria-valuenow={empty ? 0 : Math.min(at, total - 1)}
+        aria-valuetext={
+          currentBucket
+            ? `${currentBucket.year}년 ${currentBucket.month}월, 전체 ${total.toLocaleString()}장 중 ${Math.min(at, total - 1) + 1}번째`
+            : "사진 없음"
+        }
+        className="flex-1 relative cursor-row-resize touch-none focus:outline-none focus:ring-1 focus:ring-inset focus:ring-focus"
+        onKeyDown={onTimelineKey}
         onPointerMove={(e) => {
           setHoverY(e.clientY - e.currentTarget.getBoundingClientRect().top);
           if (dragging.current === "marks")
@@ -162,11 +197,11 @@ export default function ScrollBar({
               <span
                 className="font-mono tabular-nums"
                 style={{
-                  fontSize: m.isYear ? 10 : 9,
+                  fontSize: m.isYear ? 11 : 10,
                   fontWeight: m.isYear ? 700 : 400,
                   color: m.isYear
                     ? "var(--color-fg-dim)"
-                    : "var(--color-fg-faint)",
+                    : "var(--color-fg-mute)",
                 }}
               >
                 {m.label}

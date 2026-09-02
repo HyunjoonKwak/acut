@@ -154,8 +154,9 @@ export default function StatusActions({
           align="right"
           up
           width={230}
-          trigger={() => (
+          trigger={(_, props) => (
             <button
+              {...props}
               title="더보기 — NAS 받기·되돌리기·썸네일 없음"
               className="h-5 px-2 rounded text-fg-dim ring-1 ring-line-strong hover:bg-hover"
             >

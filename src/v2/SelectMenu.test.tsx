@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SelectMenu from "./SelectMenu";
 import { useSelection } from "./selectionStore";
@@ -24,6 +24,7 @@ const ROWS = [
 
 const base = {
   rows: ROWS,
+  matched: ROWS.length,
   compareIds: [],
   markPicked: () => {},
   onTrash: async () => true,
@@ -54,5 +55,26 @@ describe("선택 메뉴", () => {
     await userEvent.click(screen.getByRole("button", { name: /4장 선택/ }));
     await userEvent.click(screen.getByText("고른 것 남김"));
     expect(markPicked).toHaveBeenCalledWith({ cullingFlag: 1 });
+  });
+
+  it("전체 결과가 아직 안 내려왔으면 선택 범위를 숨기지 않는다", async () => {
+    render(<SelectMenu {...base} matched={4452} />);
+    await userEvent.click(screen.getByRole("button", { name: /선택/ }));
+    expect(
+      screen.getByRole("menuitem", { name: /불러온 4장 모두 고르기/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("메뉴를 열면 첫 항목에 초점이 가고 화살표로 이동한다", async () => {
+    render(<SelectMenu {...base} />);
+    const trigger = screen.getByRole("button", { name: /선택/ });
+    await userEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const items = screen.getAllByRole("menuitem");
+    await waitFor(() => expect(items[0]).toHaveFocus());
+    await userEvent.keyboard("{ArrowDown}");
+    expect(items[1]).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 });

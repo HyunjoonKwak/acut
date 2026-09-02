@@ -1,17 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
 import { AREAS, nextArea } from "./areaItems";
+import type { Outcome } from "./types";
 
 type Suggestion = { title: string; why: string; score: number };
-export type OrganizeOutcome = {
-  batch_id: number;
-  moved: number;
+export type OrganizeOutcome = Outcome & {
   copied: number;
-  failed: number;
   already_published: number;
-  bytes: number;
-  first_error: string | null;
   mode: "move" | "publish_copy";
 };
 
@@ -30,10 +26,14 @@ export default function Organize({
   ids: number[];
   /** 옮겨 넣을 라이브러리 */
   libraryId: number;
-  onDone: (o: OrganizeOutcome) => void;
+  onDone: (o: OrganizeOutcome) => void | Promise<void>;
   onClose: () => void;
 }) {
   const libs = useData((s) => s.libs);
+  // 부분 실패 뒤 목록을 다시 읽으면 깊은 페이지의 실패 사진은 전역 선택에서
+  // 빠질 수 있다. 이 창은 자기 작업 대상을 따로 들고 있어 실패한 것만 확실히
+  // 다시 시도한다.
+  const [workIds, setWorkIds] = useState(ids);
   // 목적지 — 흐름의 다음 칸이 기본. 작업대에서 정리하면 내사진, 내사진에서면 공용.
   // 그 영역에 라이브러리가 없으면 지금 라이브러리에 그대로.
   const [dest, setDest] = useState<number>(() => {
@@ -52,15 +52,16 @@ export default function Organize({
   const sourceArea = libs.find((library) => library.id === libraryId)?.area;
   const destinationArea = libs.find((library) => library.id === dest)?.area;
   const publishing = sourceArea === 1 && destinationArea === 2;
+  const titleId = useId();
 
   useEffect(() => {
-    invoke<string>("organize_date", { ids })
+    invoke<string>("organize_date", { ids: workIds })
       .then(setDate)
       .catch(() => {});
-    invoke<Suggestion[]>("organize_suggest", { ids })
+    invoke<Suggestion[]>("organize_suggest", { ids: workIds })
       .then(setTips)
       .catch(() => setTips([]));
-  }, [ids]);
+  }, [workIds]);
 
   useEffect(() => {
     if (!date) return;
@@ -75,20 +76,23 @@ export default function Organize({
     setError(null);
     try {
       const o = await invoke<OrganizeOutcome>("organize_move", {
-        ids,
+        ids: workIds,
         libraryId: dest,
         date,
         title,
       });
-      if (o.failed > 0) setError(`${o.failed}장 실패 — ${o.first_error ?? ""}`);
-      onDone(o);
+      if (o.failed > 0) {
+        setError(`${o.failed}장 실패 — ${o.first_error ?? ""}`);
+        setWorkIds(o.failed_ids?.length ? o.failed_ids : workIds);
+      }
+      await onDone(o);
       if (o.failed === 0) onClose();
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
     }
-  }, [ids, dest, date, title, onDone, onClose]);
+  }, [workIds, dest, date, title, onDone, onClose]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -101,11 +105,18 @@ export default function Organize({
 
   return (
     <div className="absolute inset-0 z-40 bg-canvas/95 backdrop-blur-sm flex items-center justify-center p-6">
-      <div className="w-[520px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="w-[520px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5"
+      >
         <div className="flex items-baseline gap-2 mb-4">
-          <span className="text-[16px] font-semibold text-fg">정리</span>
+          <span id={titleId} className="text-[16px] font-semibold text-fg">
+            정리
+          </span>
           <span className="text-[13px] text-fg-mute">
-            {ids.length.toLocaleString()}장을 이벤트 폴더로 {publishing ? "복사합니다" : "옮깁니다"}
+            {workIds.length.toLocaleString()}장을 이벤트 폴더로 {publishing ? "복사합니다" : "옮깁니다"}
           </span>
         </div>
 
@@ -203,7 +214,11 @@ export default function Organize({
           {preview || "날짜를 정하세요"}
         </div>
 
-        {error && <div className="text-[13px] text-drop mb-3">{error}</div>}
+        {error && (
+          <div role="alert" className="text-[13px] text-drop mb-3">
+            {error}
+          </div>
+        )}
 
         {publishing && (
           <div className="mb-3 rounded bg-raised px-2.5 py-2 text-[12.5px] text-fg-dim ring-1 ring-line">

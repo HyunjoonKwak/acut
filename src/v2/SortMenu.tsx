@@ -14,8 +14,8 @@ export default function SortMenu({
   return (
     <Menu
       align="right"
-      trigger={() => (
-        <Btn title={`정렬: ${sortLabel(value)}`}>
+      trigger={(_, props) => (
+        <Btn {...props} title={`정렬: ${sortLabel(value)}`}>
           <span className="text-fg-mute">{value.desc ? "↓" : "↑"}</span>
           {!compact && sortLabel(value)}
         </Btn>

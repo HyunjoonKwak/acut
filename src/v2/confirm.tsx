@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Btn } from "./ui";
 import { ConfirmCtx, type Ask, type AskFn } from "./confirmContext";
 
@@ -15,6 +15,10 @@ import { ConfirmCtx, type Ask, type AskFn } from "./confirmContext";
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const [ask, setAsk] = useState<Ask | null>(null);
   const answer = useRef<((ok: boolean) => void) | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   const request = useCallback<AskFn>((a) => {
     return new Promise<boolean>((resolve) => {
@@ -22,6 +26,9 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       // 어느 쪽에 답한 건지 알 수 없다.
       answer.current?.(false);
       answer.current = resolve;
+      // autoFocus가 확인 단추로 옮기기 전에 기억해야 한다. effect에서 잡으면
+      // 이미 확인 단추가 activeElement라 닫힌 뒤 사라진 노드에 초점을 주게 된다.
+      returnFocus.current = document.activeElement as HTMLElement | null;
       setAsk(a);
     });
   }, []);
@@ -32,6 +39,13 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     setAsk(null);
   }, []);
 
+  useEffect(() => {
+    if (!ask) return;
+    return () => {
+      requestAnimationFrame(() => returnFocus.current?.focus());
+    };
+  }, [ask]);
+
   return (
     <ConfirmCtx.Provider value={request}>
       {children}
@@ -41,18 +55,40 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
           onPointerDown={() => close(false)}
         >
           <div
+            ref={box}
             role="dialog"
             aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={ask.lines?.length ? descriptionId : undefined}
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
+              // 확인창 뒤의 격자 단축키(P/X/별점)가 함께 실행되면 안 된다.
+              e.stopPropagation();
               if (e.key === "Escape") close(false);
-              if (e.key === "Enter") close(true);
+              if (e.key !== "Tab") return;
+              const focusable = Array.from(
+                box.current?.querySelectorAll<HTMLElement>(
+                  "button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)",
+                ) ?? [],
+              );
+              if (focusable.length === 0) return;
+              const first = focusable[0];
+              const last = focusable[focusable.length - 1];
+              if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+              } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+              }
             }}
             className="w-[380px] max-w-[90vw] rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl p-5"
           >
-            <div className="text-[15px] font-semibold text-fg">{ask.title}</div>
+            <div id={titleId} className="text-[15px] font-semibold text-fg">
+              {ask.title}
+            </div>
             {ask.lines && ask.lines.length > 0 && (
-              <ul className="mt-3 space-y-1">
+              <ul id={descriptionId} className="mt-3 space-y-1">
                 {ask.lines.map((l, i) => (
                   <li
                     key={i}

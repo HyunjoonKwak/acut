@@ -29,6 +29,7 @@ export function usePhotoList(
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   /// 첫 쪽이 실제로 도착했나. `loading` 은 처음에 `false` 라 그것만 보면 «아직 아무것도
   /// 안 불렀다»와 «다 불렀다»가 같아 보인다 — 시작 시간을 그 값으로 재던 때는 첫
   /// 그리드가 라이브러리 목록이 온 순간으로 기록됐다 (실측 2026-09-01).
@@ -70,6 +71,7 @@ export function usePhotoList(
     pending.current = null;
     const free = take();
     setLoading(true);
+    setError(null);
     try {
       const p = await invoke<Page>("files_page", {
         filter,
@@ -82,6 +84,8 @@ export function usePhotoList(
       setCursor(p.next);
       setDone(!p.next);
       setBaseIndex(0);
+    } catch (e) {
+      if (g === gen.current) setError(String(e));
     } finally {
       if (g === gen.current) {
         setLoading(false);
@@ -106,6 +110,9 @@ export function usePhotoList(
       setRows((prev) => [...prev, ...p.rows]);
       setCursor(p.next);
       setDone(!p.next);
+      setError(null);
+    } catch (e) {
+      if (g === gen.current) setError(String(e));
     } finally {
       free();
     }
@@ -139,8 +146,11 @@ export function usePhotoList(
           setCursor(p.next);
           setDone(!p.next);
           setBaseIndex(want);
+          setError(null);
           cb.current.onSeek?.();
         }
+      } catch (e) {
+        if (g === gen.current) setError(String(e));
       } finally {
         free();
       }
@@ -161,7 +171,8 @@ export function usePhotoList(
     setCursor(null);
     setDone(false);
     setLoaded(false);
-    loadFirst();
+    setError(null);
+    void loadFirst();
     cb.current.onReload?.();
   }, [opts.enabled, loadFirst]);
 
@@ -222,6 +233,7 @@ export function usePhotoList(
   return {
     rows,
     loading,
+    error,
     loaded,
     baseIndex,
     loadFirst,

@@ -14,6 +14,7 @@ pub struct OrganizeOutcome {
     pub already_published: usize,
     pub bytes: i64,
     pub first_error: Option<String>,
+    pub failed_ids: Vec<i64>,
     pub mode: String,
 }
 
@@ -100,6 +101,7 @@ pub async fn organize_move(
             already_published: out.already_published,
             bytes: out.bytes,
             first_error: out.first_error,
+            failed_ids: out.failed_ids,
             mode: "publish_copy".into(),
             ..Default::default()
         });
@@ -122,6 +124,7 @@ pub async fn organize_move(
         failed: out.failed,
         bytes: out.bytes,
         first_error: out.first_error,
+        failed_ids: out.failed_ids,
         mode: "move".into(),
         ..Default::default()
     })

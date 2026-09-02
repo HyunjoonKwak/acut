@@ -8,6 +8,7 @@ import { usePref } from "./prefs";
 import CommentBox from "./CommentBox";
 import { CameraRows, DetailRows, Sep } from "./detail";
 import type { Detail } from "./detailText";
+import { toast } from "./toastStore";
 
 
 export default function Viewer({
@@ -28,7 +29,7 @@ export default function Viewer({
   onMark: (
     id: number,
     patch: { rating?: number; cullingFlag?: number; favorite?: boolean },
-  ) => void;
+  ) => Promise<void>;
   /// 켜면 창 전체를 덮는다. 끄면 콘텐츠 영역만 덮어 폴더 목록이 남는다.
   fullScreen: boolean;
   onToggleFullScreen: () => void;
@@ -45,7 +46,8 @@ export default function Viewer({
   const [loopVideo] = usePref("loopVideo");
   const id = ids[index];
   const player = useRef<HTMLVideoElement>(null);
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [got, setGot] = useState<{ id: number; detail: Detail } | null>(null);
+  const detail = id != null && got?.id === id ? got.detail : null;
   /// 화면에 뜬 원본 — 히스토그램이 다시 디코드하지 않고 이걸 읽는다
   const imgRef = useRef<HTMLImageElement | null>(null);
   const getShownImage = useCallback(() => imgRef.current, []);
@@ -117,9 +119,13 @@ export default function Viewer({
 
   useEffect(() => {
     if (id == null) return;
+    let live = true;
     invoke<Detail>("file_detail", { id })
-      .then(setDetail)
-      .catch(() => setDetail(null));
+      .then((d) => live && setGot({ id, detail: d }))
+      .catch(() => live && setGot(null));
+    return () => {
+      live = false;
+    };
   }, [id]);
 
   const step = useCallback(
@@ -133,17 +139,23 @@ export default function Viewer({
   const mark = useCallback(
     (patch: Parameters<typeof onMark>[1]) => {
       if (id == null) return;
-      onMark(id, patch);
-      setDetail((d) =>
-        d
-          ? {
-              ...d,
-              rating: patch.rating ?? d.rating,
-              cullingFlag: patch.cullingFlag ?? d.cullingFlag,
-              favorite: patch.favorite ?? d.favorite,
-            }
-          : d,
-      );
+      void onMark(id, patch)
+        .then(() =>
+          setGot((d) =>
+            d?.id === id
+              ? {
+                  ...d,
+                  detail: {
+                    ...d.detail,
+                    rating: patch.rating ?? d.detail.rating,
+                    cullingFlag: patch.cullingFlag ?? d.detail.cullingFlag,
+                    favorite: patch.favorite ?? d.detail.favorite,
+                  },
+                }
+              : d,
+          ),
+        )
+        .catch((e) => toast(`판정을 저장하지 못했습니다 — ${String(e)}`, "drop"));
     },
     [id, onMark],
   );
@@ -409,7 +421,13 @@ export default function Viewer({
               key={id}
               id={id}
               initial={detail.comment ?? ""}
-              onSaved={(c) => setDetail((d) => (d ? { ...d, comment: c } : d))}
+              onSaved={(c) =>
+                setGot((d) =>
+                  d?.id === id
+                    ? { ...d, detail: { ...d.detail, comment: c } }
+                    : d,
+                )
+              }
             />
             <CameraRows detail={detail} />
 
@@ -484,7 +502,11 @@ export default function Viewer({
           name={detail.name}
           onSubmit={async (n) => {
             const next = await onRename(id, n);
-            setDetail((d) => (d ? { ...d, name: next } : d));
+            setGot((d) =>
+              d?.id === id
+                ? { ...d, detail: { ...d.detail, name: next } }
+                : d,
+            );
           }}
           onClose={() => setRenaming(false)}
         />
@@ -492,4 +514,3 @@ export default function Viewer({
     </div>
   );
 }
-

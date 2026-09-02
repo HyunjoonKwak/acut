@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "./toastStore";
 
 /**
  * 한 장의 태그 — 인스펙터 안.
@@ -16,16 +17,28 @@ export default function TagEditor({
   /** 목록의 장수가 달라질 수 있어 바깥에 알린다 */
   onChanged?: () => void;
 }) {
-  const [mine, setMine] = useState<{ id: number; name: string }[]>([]);
+  const [got, setGot] = useState<{
+    fileId: number;
+    tags: { id: number; name: string }[];
+  } | null>(null);
   const [all, setAll] = useState<string[]>([]);
-  const [text, setText] = useState("");
+  const [draft, setDraft] = useState<{ fileId: number; text: string } | null>(null);
+  const mine = got?.fileId === id ? got.tags : [];
+  const text = draft?.fileId === id ? draft.text : "";
 
-  const reload = useCallback(() => {
-    invoke<{ id: number; name: string }[]>("tags_of", { id })
-      .then(setMine)
-      .catch(() => setMine([]));
+  const reload = useCallback(async () => {
+    const tags = await invoke<{ id: number; name: string }[]>("tags_of", { id });
+    setGot({ fileId: id, tags });
   }, [id]);
-  useEffect(reload, [reload]);
+  useEffect(() => {
+    let live = true;
+    invoke<{ id: number; name: string }[]>("tags_of", { id })
+      .then((tags) => live && setGot({ fileId: id, tags }))
+      .catch(() => live && setGot({ fileId: id, tags: [] }));
+    return () => {
+      live = false;
+    };
+  }, [id]);
   useEffect(() => {
     invoke<{ name: string }[]>("tags_list")
       .then((t) => setAll(t.map((x) => x.name)))
@@ -35,16 +48,24 @@ export default function TagEditor({
   const add = async (name: string) => {
     const n = name.trim();
     if (!n) return;
-    await invoke("tag_add", { ids: [id], name: n });
-    setText("");
-    reload();
-    onChanged?.();
+    try {
+      await invoke("tag_add", { ids: [id], name: n });
+      setDraft({ fileId: id, text: "" });
+      await reload();
+      onChanged?.();
+    } catch (e) {
+      toast(String(e), "drop");
+    }
   };
 
   const remove = async (tagId: number) => {
-    await invoke("tag_remove", { ids: [id], tagId });
-    reload();
-    onChanged?.();
+    try {
+      await invoke("tag_remove", { ids: [id], tagId });
+      await reload();
+      onChanged?.();
+    } catch (e) {
+      toast(String(e), "drop");
+    }
   };
 
   // 이미 붙은 것은 뺀 추천 — 앞 글자가 맞는 것만
@@ -84,7 +105,7 @@ export default function TagEditor({
       )}
       <input
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => setDraft({ fileId: id, text: e.target.value })}
         onKeyDown={(e) => {
           // 뷰어의 단축키(0–5, P, X…)로 새지 않게 여기서 막는다
           e.stopPropagation();

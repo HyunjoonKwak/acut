@@ -94,6 +94,7 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
         return Ok(Outcome {
             failed: items.len(),
             first_error: Some("등록되지 않은 라이브러리입니다".into()),
+            failed_ids: items.iter().map(|it| it.id).collect(),
             ..Default::default()
         });
     };
@@ -101,6 +102,7 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
         return Ok(Outcome {
             failed: items.len(),
             first_error: Some("디스크가 연결되어 있지 않습니다".into()),
+            failed_ids: items.iter().map(|it| it.id).collect(),
             ..Default::default()
         });
     };
@@ -120,6 +122,7 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
     for it in &items {
         let Some(mount) = crate::db::volumes::find_mount(&it.volume_uuid) else {
             out.failed += 1;
+            out.failed_ids.push(it.id);
             out.first_error
                 .get_or_insert("디스크가 연결되어 있지 않습니다".into());
             continue;
@@ -170,6 +173,7 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
                     Err(&msg),
                 )?;
                 out.failed += 1;
+                out.failed_ids.push(it.id);
                 out.first_error.get_or_insert(msg);
             }
         }
@@ -372,6 +376,16 @@ mod tests {
 
         // DB도 새 폴더를 가리켜야 한다 — 재스캔을 기다리지 않는다
         assert_eq!(lib_rel_of(&db, ids[0]), "2024/2024-08-27 거제통영 가족여행");
+    }
+
+    #[test]
+    fn partial_failure_reports_the_ids_that_can_be_retried() {
+        let (dir, db, lib, ids) = setup();
+        std::fs::remove_file(dir.path().join("작업대/20240827_120000.jpg")).unwrap();
+        let dest = Dest { library_id: lib, rel_dir: "2024/행사".into() };
+        let out = move_to(&db, &ids, &dest, "정리").unwrap();
+        assert_eq!((out.moved, out.failed), (1, 1));
+        assert_eq!(out.failed_ids, vec![ids[0]]);
     }
 
     #[test]

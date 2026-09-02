@@ -109,10 +109,14 @@ export default function App() {
   useEffect(() => {
     const d = useData.getState();
     (async () => {
-      await d.refreshLibs();
-      mark("libs");
-      d.refreshCache();
-      d.refreshTags();
+      try {
+        await d.refreshLibs();
+        mark("libs");
+        d.refreshCache();
+        d.refreshTags();
+      } catch (e) {
+        toast(`라이브러리를 불러오지 못했습니다 — ${String(e)}`, "drop");
+      }
     })();
   }, []);
   // 옛 캐시 옮기기는 첫 화면 뒤에 — 외부 SSD를 깨우느라 콜드 스타트에서 1.7초를
@@ -315,6 +319,10 @@ export default function App() {
       .getState()
       .set({ ctxIds: target, ctxAt: { x: e.clientX, y: e.clientY } });
   }, []);
+  const closeContext = useCallback(
+    () => useUi.getState().set({ ctxAt: null }),
+    [],
+  );
   const ctxItems = useMemo(
     () =>
       contextItems(ui.ctxIds, rows, { markOne, trashFiles: ops.trashFiles }),
@@ -428,6 +436,7 @@ export default function App() {
               <div className="flex-1 flex min-h-0 min-w-0">
                 <PhotoGrid
                   loading={list.loading}
+                  error={list.error}
                   empty={libs.length === 0}
                   layout={layout}
                   baseIndex={list.baseIndex}
@@ -439,6 +448,7 @@ export default function App() {
                   onOpen={openAt}
                   onContext={openContext}
                   onSeek={list.seekTo}
+                  onRetry={loadFirst}
                 />
                 {infoPanel && (
                   <InfoPanel
@@ -468,7 +478,15 @@ export default function App() {
                 else if (o.already_published > 0)
                   toast(`${o.already_published.toLocaleString()}장은 이미 공용에 있습니다`, "ok");
                 else toast(`${o.moved.toLocaleString()}장 옮겼습니다`, "ok");
-                useSelection.getState().clearPicked();
+                if (o.failed > 0) {
+                  // 성공한 것은 목록에서 빠지고 실패한 것만 다시 시도할 수 있게 남긴다.
+                  // 예전 백엔드 응답이면 원래 선택을 보존한다.
+                  useSelection
+                    .getState()
+                    .setPicked(o.failed_ids?.length ? o.failed_ids : pickedIds);
+                } else {
+                  useSelection.getState().clearPicked();
+                }
                 await ops.after();
               }}
               onClose={() => ui.set({ organizing: false })}
@@ -489,7 +507,7 @@ export default function App() {
       <ContextMenu
         at={ui.ctxAt}
         items={ctxItems}
-        onClose={() => ui.set({ ctxAt: null })}
+        onClose={closeContext}
       />
       <Toasts />
       <BlockingJob />

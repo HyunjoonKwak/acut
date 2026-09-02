@@ -90,6 +90,7 @@ export default function Toolbar({
   const setPicks = useView((s) => s.setPicks);
   const setUi = useUi((s) => s.set);
   const [libId] = usePref("libId");
+  const [source] = usePref("source");
   const [sort, setSort] = usePref("sort");
   const [group, setGroup] = usePref("group");
   const [gridStyle, setGridStyle] = usePref("gridStyle");
@@ -102,6 +103,19 @@ export default function Toolbar({
   const s1 = w < 1280;
   const s2 = w < 1080;
   const s3 = w < 880;
+
+  // 설정에서는 사진 목록이 보이지 않는다. 그 상태에서 정렬·선택·고르기를
+  // 남겨 두면 숨은 선택에 작업할 수 있고 현재 위치도 «내사진»으로 거짓말한다.
+  if (source === "settings") {
+    return (
+      <div className="h-12 shrink-0 flex items-center gap-2 px-3 bg-chrome border-b border-line">
+        <span className="text-[15px] font-semibold text-fg">설정</span>
+        <div className="flex-1" />
+        <JobChip narrow={s2} />
+        <NasBadge />
+      </div>
+    );
+  }
 
   return (
     <div className="h-12 shrink-0 flex items-center gap-2 px-3 bg-chrome border-b border-line">
@@ -158,6 +172,7 @@ export default function Toolbar({
           <Sep />
           <SelectMenu
             rows={rows}
+            matched={matched}
             compareIds={compareIds}
             markPicked={markPicked}
             onTrash={onTrash}

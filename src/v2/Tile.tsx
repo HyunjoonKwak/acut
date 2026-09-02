@@ -101,6 +101,7 @@ export default function Tile({
 
   return (
     <button
+      aria-label={`${file.name}, ${captionText(file, "dateSize")}${isVideo ? ", 영상" : ""}${file.culling_flag === 1 ? ", 남김" : file.culling_flag === 2 ? ", 제외" : ""}${file.favorite ? ", 즐겨찾기" : ""}`}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}

@@ -33,12 +33,12 @@
   /* 글자 — 네 단계 (base-content를 바탕에 섞은 것) */
   --color-fg: #ecf9ff;
   --color-fg-dim: #a4afb5; /* 보조 설명 */
-  --color-fg-mute: #767e84; /* 숫자·라벨 */
-  --color-fg-faint: #50575d; /* 꺼진 것 */
+  --color-fg-mute: #929ba1; /* 숫자·라벨 — raised 위 5.6:1 */
+  --color-fg-faint: #838c92; /* 작은 힌트도 raised 위 4.6:1 */
 
   /* 뜻이 있는 색 — daisyUI primary / warning / error / info */
   --color-accent: #605dff; /* 지금 고른 것·진행 */
-  --color-accent-fg: #f1f0ff;
+  --color-accent-fg: #ffffff; /* accent 위 4.66:1 */
   --color-keep: #fcb700; /* 남김·별점 */
   /* 됨·연결됨 — 남김(호박색)과 헷갈리지 않는 초록 */
   --color-ok: #3ecf8e;

@@ -16,7 +16,7 @@ export function useGridKeys(opts: {
   rows: FileRow[];
   cols: number;
   compareIds: number[];
-  markOne: (id: number, patch: Mark) => void;
+  markOne: (id: number, patch: Mark) => Promise<void>;
   /** 여러 장을 골랐을 때 — 화면(선택 패널·메뉴)이 P·X·F를 «고른 것»에 붙여 두었다 */
   markMany: (ids: number[], patch: Mark) => Promise<void>;
   undoLast: () => void;
@@ -111,7 +111,7 @@ export function useGridKeys(opts: {
       const mark = (patch: Mark) =>
         many
           ? void markMany([...sel.picked], patch).catch((err) => toast(String(err), "drop"))
-          : markOne(r.id, patch);
+          : void markOne(r.id, patch).catch((err) => toast(String(err), "drop"));
       if (/^[0-5]$/.test(e.key)) mark({ rating: +e.key });
       else if (e.key === "p")
         mark({ cullingFlag: many ? 1 : r.culling_flag === 1 ? 0 : 1 });

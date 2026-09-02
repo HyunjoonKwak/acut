@@ -52,6 +52,8 @@ type Store = {
   similarFor: number | null;
   /** 글로 찾기 — 물은 글. null이면 닫힘 */
   textSearch: string | null;
+  /** 툴바·상태바의 팝오버 메뉴 — 열린 동안 격자 단축키를 막는다 */
+  menuOpen: boolean;
   set: (p: Partial<Omit<Store, "set">>) => void;
 };
 
@@ -80,6 +82,7 @@ export const useUi = create<Store>()((set) => ({
   dragging: false,
   similarFor: null,
   textSearch: null,
+  menuOpen: false,
   set: (p) => set(p),
 }));
 
@@ -106,5 +109,6 @@ export const useOverlayOpen = () =>
       s.offload !== null ||
       s.husks !== null ||
       s.areaPick !== null ||
-      s.ctxAt !== null,
+      s.ctxAt !== null ||
+      s.menuOpen,
   );

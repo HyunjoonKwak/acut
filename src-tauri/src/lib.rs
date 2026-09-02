@@ -43,6 +43,22 @@ pub fn native_mark(slot: usize) {
 }
 
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+/// 웹 화면과 DB 상태를 만들 수 없는 시작 오류는 웹 토스트로 알릴 수 없다.
+/// 빈 창이나 갑작스러운 종료 대신 네이티브 오류창을 남기고, 사용자가 읽은 뒤
+/// 끝낸다. DB를 임시로 새로 만들면 기존 판정이 사라진 것처럼 보여 더 위험하다.
+fn show_startup_error(app: &tauri::App, message: String) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    let handle = app.handle().clone();
+    app.dialog()
+        .message(message)
+        .title("Photo Desk를 시작할 수 없습니다")
+        .kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -84,15 +100,38 @@ pub fn run() {
             let app_data_dir = app
                 .handle()
                 .path()
-                .app_data_dir()
-                .expect("Failed to get app data directory");
+                .app_data_dir();
+            let app_data_dir = match app_data_dir {
+                Ok(path) => path,
+                Err(e) => {
+                    show_startup_error(
+                        app,
+                        format!(
+                            "앱 데이터 폴더를 찾지 못했습니다.\n\n원인: {e}\n\nMac을 다시 시작한 뒤에도 같으면 앱 지원 폴더의 권한을 확인하세요."
+                        ),
+                    );
+                    return Ok(());
+                }
+            };
 
             // One-time migration from the legacy bundle identifier
             migrate_legacy_app_data(&app_data_dir);
             native_mark(1);
 
-            let v2 = db::conn::Db::open(app_data_dir.join("acut-v2.db"))
-                .expect("데이터베이스를 열 수 없습니다");
+            let db_path = app_data_dir.join("acut-v2.db");
+            let v2 = match db::conn::Db::open(&db_path) {
+                Ok(db) => db,
+                Err(e) => {
+                    show_startup_error(
+                        app,
+                        format!(
+                            "사진 기록 데이터베이스를 열지 못했습니다. 새 데이터베이스로 덮어쓰지 않았습니다.\n\n경로: {}\n원인: {e}\n\n자동 백업은 같은 폴더의 backups 안에 있습니다.",
+                            db_path.display()
+                        ),
+                    );
+                    return Ok(());
+                }
+            };
             native_mark(2);
             app.manage(api::AppState::new(v2, app_data_dir.clone()));
             api::job::set_emitter(app.handle().clone());

@@ -36,24 +36,36 @@ export function useOps(cb: {
     async (cmd: string, args: Record<string, unknown>, doing: string) => {
       const { setBusy } = useData.getState();
       setBusy(doing);
+      let r: Outcome;
       try {
-        const r = await invoke<Outcome>(cmd, args);
-        setBusy("");
-        if (r.failed > 0)
-          toast(
-            `${r.moved}장 처리 · ${r.failed}장 실패 — ${r.first_error ?? ""}`,
-            "drop",
-          );
-        else if (r.moved > 0)
-          toast(`${r.moved.toLocaleString()}장 처리했습니다`);
-        // 할 일이 없었던 것도 말한다 — 조용히 끝나면 «안 되는 것 같아»가 된다
-        else toast(r.first_error ?? "처리할 것이 없습니다");
-        await after();
-        useData.getState().refreshTrash(usePrefs.getState().libId);
+        r = await invoke<Outcome>(cmd, args);
       } catch (e) {
         setBusy("");
         toast(String(e), "drop");
+        return false;
       }
+      setBusy("");
+      if (r.failed > 0)
+        toast(
+          `${r.moved}장 처리 · ${r.failed}장 실패 — ${r.first_error ?? ""}`,
+          "drop",
+        );
+      else if (r.moved > 0)
+        toast(`${r.moved.toLocaleString()}장 처리했습니다`);
+      // 할 일이 없었던 것도 말한다 — 조용히 끝나면 «안 되는 것 같아»가 된다
+      else toast(r.first_error ?? "처리할 것이 없습니다");
+
+      try {
+        await after();
+        await useData.getState().refreshTrash(usePrefs.getState().libId);
+      } catch (e) {
+        // 파일 작업은 이미 끝났다. 뒤의 조회 실패를 작업 실패로 돌려주면
+        // 사용자가 같은 파일을 다시 처리하게 되므로 둘을 구분한다.
+        toast(`처리는 끝났지만 화면을 새로 읽지 못했습니다 — ${String(e)}`, "drop");
+      }
+      // 부분 실패도 완료로 돌려주면 호출부가 선택을 전부 지워 재시도할
+      // 대상을 잃는다. 모두 처리됐을 때만 선택을 풀게 한다.
+      return r.failed === 0;
     },
     [after],
   );
@@ -67,8 +79,7 @@ export function useOps(cb: {
         confirmLabel: "옮기기",
       });
       if (!ok) return false;
-      await runTrashOp("trash_files", { ids }, "휴지통으로 옮기는 중…");
-      return true;
+      return runTrashOp("trash_files", { ids }, "휴지통으로 옮기는 중…");
     },
     [ask, runTrashOp],
   );
@@ -121,8 +132,7 @@ export function useOps(cb: {
   const restoreFiles = useCallback(
     async (ids: number[]) => {
       if (ids.length === 0) return false;
-      await runTrashOp("trash_restore", { libraryId: null, ids }, "되돌리는 중…");
-      return true;
+      return runTrashOp("trash_restore", { libraryId: null, ids }, "되돌리는 중…");
     },
     [runTrashOp],
   );
@@ -138,8 +148,7 @@ export function useOps(cb: {
         danger: true,
       });
       if (!ok) return false;
-      await runTrashOp("trash_empty", { libraryId: null, ids }, "지우는 중…");
-      return true;
+      return runTrashOp("trash_empty", { libraryId: null, ids }, "지우는 중…");
     },
     [ask, runTrashOp],
   );

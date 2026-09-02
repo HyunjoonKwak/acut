@@ -90,13 +90,13 @@ export default function PlaceTree({
     <div className="py-1">
       {pending > 0 && (
         <div className="px-3 pb-2 text-[12px] text-fg-mute leading-snug">
-          아직 지명 처리가 필요한 사진 {pending.toLocaleString()}장 — 설정 › 탐색의
+          모든 라이브러리에서 아직 지명 처리가 필요한 사진 {pending.toLocaleString()}장 — 설정 › 탐색의
           «지명 채우기»로 좌표에 지명을 붙입니다.
         </div>
       )}
       {unavailable > 0 && (
         <div className="px-3 pb-2 text-[12px] text-fg-mute leading-snug">
-          서버에서 지명을 찾지 못한 사진 {unavailable.toLocaleString()}장은 좌표로만
+          모든 라이브러리에서 서버가 지명을 찾지 못한 사진 {unavailable.toLocaleString()}장은 좌표로만
           지도에 표시됩니다.
         </div>
       )}

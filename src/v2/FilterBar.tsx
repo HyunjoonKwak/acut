@@ -51,8 +51,8 @@ export default function FilterButton({
     <Menu
       align="right"
       width={250}
-      trigger={() => (
-        <Btn active={on} title="찾기">
+      trigger={(_, props) => (
+        <Btn {...props} active={on} title="찾기">
           <span className={on ? "text-accent" : undefined}>⌕</span>
           {!compact && "찾기"}
           {on && <span className="w-1.5 h-1.5 rounded-full bg-accent" />}

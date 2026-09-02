@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
+import { useUi } from "./uiStore";
 
 /**
  * 화면 부품 — 버튼·메뉴·구분선.
@@ -17,44 +25,32 @@ const TONE: Record<Tone, string> = {
   drop: "text-drop ring-1 ring-drop/40 hover:bg-drop/10",
 };
 
-export function Btn({
-  children,
-  onClick,
-  tone = "plain",
-  hint,
-  title,
-  disabled,
-  active,
-  autoFocus,
-}: {
-  children: React.ReactNode;
-  onClick?: () => void;
+type BtnProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   tone?: Tone;
   /** 단축키 표시 */
   hint?: string;
-  title?: string;
-  disabled?: boolean;
   /** 켜져 있는 상태 (보기 방식처럼 토글되는 것) */
   active?: boolean;
-  /** 뜨자마자 손이 가야 하는 버튼 (물음 상자의 확인) */
-  autoFocus?: boolean;
-}) {
+};
+
+export const Btn = forwardRef<HTMLButtonElement, BtnProps>(function Btn(
+  { children, tone = "plain", hint, active, className = "", ...button },
+  ref,
+) {
   return (
     <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      autoFocus={autoFocus}
+      ref={ref}
+      {...button}
       className={`h-control px-2.5 rounded-md text-[13.5px] whitespace-nowrap
         inline-flex items-center gap-1.5 transition-colors
         disabled:opacity-35 disabled:pointer-events-none
-        ${active && tone === "plain" ? "bg-hover text-fg ring-1 ring-line-strong" : TONE[tone]}`}
+        ${active && tone === "plain" ? "bg-hover text-fg ring-1 ring-line-strong" : TONE[tone]} ${className}`}
     >
       {children}
       {hint && <Kbd>{hint}</Kbd>}
     </button>
   );
-}
+});
 
 /** 아이콘만 있는 정사각 버튼 */
 export function IconBtn({
@@ -117,7 +113,12 @@ export function Menu({
   width,
   up = false,
 }: {
-  trigger: (open: boolean) => React.ReactNode;
+  trigger: (
+    open: boolean,
+    props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+      ref: React.Ref<HTMLButtonElement>;
+    },
+  ) => React.ReactNode;
   children: (close: () => void) => React.ReactNode;
   align?: "left" | "right";
   width?: number;
@@ -126,31 +127,90 @@ export function Menu({
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+
+  const close = useCallback(() => setOpen(false), []);
 
   useEffect(() => {
     if (!open) return;
     const away = (e: MouseEvent) => {
-      if (!box.current?.contains(e.target as Node)) setOpen(false);
+      if (!box.current?.contains(e.target as Node)) close();
     };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    };
+    const trigger = triggerRef.current;
+    useUi.getState().set({ menuOpen: true });
+    const frame = requestAnimationFrame(() => {
+      const first = menuRef.current?.querySelector<HTMLElement>(
+        "input, [role='menuitem']:not(:disabled)",
+      );
+      first?.focus();
+    });
     window.addEventListener("mousedown", away);
     window.addEventListener("keydown", esc);
     return () => {
+      cancelAnimationFrame(frame);
+      useUi.getState().set({ menuOpen: false });
       window.removeEventListener("mousedown", away);
       window.removeEventListener("keydown", esc);
+      requestAnimationFrame(() => trigger?.focus());
     };
-  }, [open]);
+  }, [open, close]);
+
+  const moveInMenu = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>(
+        "[role='menuitem']:not(:disabled)",
+      ) ?? [],
+    );
+    if (items.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? items.length - 1
+          : e.key === "ArrowDown"
+            ? (i + 1 + items.length) % items.length
+            : (i - 1 + items.length) % items.length;
+    items[next]?.focus();
+  };
 
   return (
     <div ref={box} className="relative">
-      <div onClick={() => setOpen((o) => !o)}>{trigger(open)}</div>
+      {trigger(open, {
+        ref: triggerRef,
+        "aria-haspopup": "menu",
+        "aria-expanded": open,
+        "aria-controls": open ? menuId : undefined,
+        onClick: () => (open ? close() : setOpen(true)),
+        onKeyDown: (e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setOpen(true);
+          }
+        },
+      })}
       {open && (
         <div
+          ref={menuRef}
+          id={menuId}
+          role="menu"
+          onKeyDown={moveInMenu}
           className={`absolute ${up ? "bottom-full mb-1.5" : "top-9"} z-40 bg-raised rounded-lg ring-1 ring-line-strong
             shadow-2xl shadow-black/50 py-1 ${align === "right" ? "right-0" : "left-0"}`}
           style={{ minWidth: width ?? 150 }}
         >
-          {children(() => setOpen(false))}
+          {children(close)}
         </div>
       )}
     </div>
@@ -173,6 +233,7 @@ export function MenuItem({
 }) {
   return (
     <button
+      role="menuitem"
       onClick={onClick}
       className={`flex w-full items-center gap-3 px-3 py-1.5 text-[13.5px] text-left
         hover:bg-hover transition-colors
@@ -185,7 +246,7 @@ export function MenuItem({
 }
 
 export function MenuSep() {
-  return <div className="h-px bg-line my-1" />;
+  return <div role="separator" className="h-px bg-line my-1" />;
 }
 
 /**

@@ -1,8 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import { ConfirmProvider } from "./confirm";
 import { useConfirm } from "./confirmContext";
+
+function Trigger() {
+  const ask = useConfirm();
+  return (
+    <button onClick={() => void ask({ title: "정말 옮길까요?" })}>
+      작업 열기
+    </button>
+  );
+}
 
 /** 물어보고 답을 밖으로 보내는 버튼 */
 function Asker({
@@ -44,7 +53,7 @@ const setup = (danger = true) => {
   return { onResult, user: userEvent.setup() };
 };
 
-describe("물음 상자", () => {
+describe("확인 창", () => {
   it("무엇이 사라지는지 줄 단위로 보여 준다", async () => {
     const { user } = setup();
     await user.click(screen.getByText("열기"));
@@ -90,5 +99,26 @@ describe("물음 상자", () => {
     const { user } = setup();
     await user.click(screen.getByText("열기"));
     expect(screen.getByRole("button", { name: "등록 지우기" })).toHaveFocus();
+  });
+
+  it("뒤쪽 단축키를 막고 닫히면 원래 단추로 초점을 돌린다", async () => {
+    const behind = vi.fn();
+    render(
+      <div onKeyDown={behind}>
+        <ConfirmProvider>
+          <Trigger />
+        </ConfirmProvider>
+      </div>,
+    );
+    const trigger = screen.getByRole("button", { name: "작업 열기" });
+    await userEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "정말 옮길까요?" });
+    const confirm = screen.getByRole("button", { name: "확인" });
+    await waitFor(() => expect(confirm).toHaveFocus());
+
+    fireEvent.keyDown(dialog, { key: "p" });
+    expect(behind).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 });

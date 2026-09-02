@@ -22,7 +22,7 @@ export default function ViewerHost({
   onMark: (
     id: number,
     patch: { rating?: number; cullingFlag?: number; favorite?: boolean },
-  ) => void;
+  ) => Promise<void>;
   kindOf?: (id: number) => number | undefined;
   onRename?: (id: number, name: string) => Promise<string>;
 }) {

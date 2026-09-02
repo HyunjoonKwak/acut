@@ -13,11 +13,14 @@ import type { FileRow, Mark } from "./types";
  */
 export default function SelectMenu({
   rows,
+  matched,
   compareIds,
   markPicked,
   onTrash,
 }: {
   rows: FileRow[];
+  /** 현재 조건 전체 장수 — 아직 불러오지 않은 사진이 있음을 정확히 말한다 */
+  matched: number;
   /** 나란히 놓을 것 — 목록 순서로 앞의 넷 */
   compareIds: number[];
   markPicked: (patch: Mark) => void;
@@ -26,6 +29,10 @@ export default function SelectMenu({
   const picked = useSelection((s) => s.picked);
   const setUi = useUi((s) => s.set);
   const n = picked.size;
+  const allLabel =
+    matched > rows.length
+      ? `불러온 ${rows.length.toLocaleString()}장 모두 고르기`
+      : "모두 고르기";
 
   const pickWhere = (keep: (r: FileRow) => boolean) =>
     useSelection.getState().setPicked(rows.filter(keep).map((r) => r.id));
@@ -34,8 +41,8 @@ export default function SelectMenu({
     <Menu
       align="right"
       width={210}
-      trigger={() => (
-        <Btn active={n > 0} title="선택">
+      trigger={(_, props) => (
+        <Btn {...props} active={n > 0} title="선택">
           <span className={n > 0 ? "text-accent" : undefined}>☑</span>
           {n > 0 ? `${n.toLocaleString()}장 선택` : "선택"}
         </Btn>
@@ -49,7 +56,7 @@ export default function SelectMenu({
         return (
           <>
             <MenuItem hint="⌘A" onClick={run(() => pickWhere(() => true))}>
-              모두 고르기
+              {allLabel}
             </MenuItem>
             <MenuItem
               onClick={run(() => pickWhere((r) => !picked.has(r.id)))}

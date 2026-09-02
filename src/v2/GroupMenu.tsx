@@ -16,8 +16,12 @@ export default function GroupMenu({
   return (
     <Menu
       align="right"
-      trigger={() => (
-        <Btn active={on} title={on ? `묶기: ${cur.label}` : "묶어 보기"}>
+      trigger={(_, props) => (
+        <Btn
+          {...props}
+          active={on}
+          title={on ? `묶기: ${cur.label}` : "묶어 보기"}
+        >
           <span className={on ? "text-accent" : undefined}>▤</span>
           {!compact && (on ? cur.label : "묶기")}
         </Btn>

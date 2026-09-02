@@ -1,4 +1,7 @@
+import { createContext, useContext, useId } from "react";
 import { usePref, type Prefs } from "./prefs";
+
+const RowLabel = createContext<string | null>(null);
 
 /** 설정 화면의 조각들 — 갈래 파일들이 함께 쓴다 */
 export function Section({
@@ -32,17 +35,22 @@ export function Row({
   hint?: string;
   children: React.ReactNode;
 }) {
+  const labelId = useId();
   return (
     <div className="flex items-center gap-4 px-4 py-2.5">
       <div className="flex-1 min-w-0">
-        <div className="text-[14px] text-fg">{label}</div>
+        <div id={labelId} className="text-[14px] text-fg">
+          {label}
+        </div>
         {hint && (
           <div className="text-[12.5px] text-fg-mute leading-snug mt-0.5">
             {hint}
           </div>
         )}
       </div>
-      <div className="shrink-0 flex items-center gap-2">{children}</div>
+      <RowLabel.Provider value={labelId}>
+        <div className="shrink-0 flex items-center gap-2">{children}</div>
+      </RowLabel.Provider>
     </div>
   );
 }
@@ -55,6 +63,7 @@ export function Select<K extends keyof Prefs>({
   options: { v: Prefs[K]; label: string }[];
 }) {
   const [value, set] = usePref(k);
+  const labelId = useContext(RowLabel);
   return (
     <select
       value={String(value)}
@@ -62,7 +71,8 @@ export function Select<K extends keyof Prefs>({
         const o = options.find((x) => String(x.v) === e.target.value);
         if (o) set(o.v);
       }}
-      aria-label={String(k)}
+      aria-labelledby={labelId ?? undefined}
+      aria-label={labelId ? undefined : String(k)}
       className="h-control min-w-[140px] px-2 rounded-md bg-raised text-[13.5px] text-fg ring-1 ring-line outline-none focus:ring-accent"
     >
       {options.map((o) => (
@@ -76,12 +86,14 @@ export function Select<K extends keyof Prefs>({
 
 export function Toggle({ k }: { k: keyof Prefs }) {
   const [value, set] = usePref(k);
+  const labelId = useContext(RowLabel);
   const on = Boolean(value);
   return (
     <button
       role="switch"
       aria-checked={on}
-      aria-label={String(k)}
+      aria-labelledby={labelId ?? undefined}
+      aria-label={labelId ? undefined : String(k)}
       onClick={() => (set as (v: boolean) => void)(!on)}
       className={`relative w-9 h-5 rounded-full transition-colors ${on ? "bg-accent" : "bg-line-strong"}`}
     >
@@ -95,4 +107,3 @@ export function Toggle({ k }: { k: keyof Prefs }) {
 }
 
 // ── 갈래들 ──────────────────────────────────────────────────────────────
-

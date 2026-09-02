@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fmtBytes, megapixels } from "./format";
 import Histogram from "./Histogram";
+import { toast } from "./toastStore";
 
 type Detail = {
   name: string;
@@ -39,7 +40,7 @@ export default function Compare({
 }: {
   /** 나란히 놓을 사진들 (2–4장) */
   ids: number[];
-  onMark: (id: number, patch: Mark) => void;
+  onMark: (id: number, patch: Mark) => Promise<void>;
   onClose: () => void;
 }) {
   const [details, setDetails] = useState<Map<number, Detail>>(new Map());
@@ -69,19 +70,24 @@ export default function Compare({
 
   const mark = useCallback(
     (id: number, patch: Mark) => {
-      onMark(id, patch);
-      setDetails((prev) => {
-        const d = prev.get(id);
-        if (!d) return prev;
-        const next = new Map(prev);
-        next.set(id, {
-          ...d,
-          rating: patch.rating ?? d.rating,
-          cullingFlag: patch.cullingFlag ?? d.cullingFlag,
-          favorite: patch.favorite ?? d.favorite,
+      void onMark(id, patch)
+        .then(() => {
+          setDetails((prev) => {
+            const d = prev.get(id);
+            if (!d) return prev;
+            const next = new Map(prev);
+            next.set(id, {
+              ...d,
+              rating: patch.rating ?? d.rating,
+              cullingFlag: patch.cullingFlag ?? d.cullingFlag,
+              favorite: patch.favorite ?? d.favorite,
+            });
+            return next;
+          });
+        })
+        .catch((e) => {
+          toast(`판정을 저장하지 못했습니다 — ${String(e)}`, "drop");
         });
-        return next;
-      });
     },
     [onMark],
   );

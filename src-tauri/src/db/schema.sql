@@ -352,6 +352,7 @@ CREATE TABLE IF NOT EXISTS publication_ledger (
     UNIQUE(source_sha256, destination_library_id, destination_path)
 );
 CREATE INDEX IF NOT EXISTS idx_publication_hash ON publication_ledger(source_sha256, destination_library_id);
+CREATE INDEX IF NOT EXISTS idx_publication_batch ON publication_ledger(batch_id);
 
 -- 사진 복사 undo가 실제로 만든 파일만 지우도록 남기는 완전한 산출물 목록.
 -- 0번은 본 파일, 그 뒤는 XMP sidecar다. 파일 행을 먼저 지워도 검증·복구 자료가

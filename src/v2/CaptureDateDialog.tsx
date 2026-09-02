@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useModalFocus } from "./focus";
 
 type AuditItem = {
   id: number;
@@ -39,6 +40,7 @@ export default function CaptureDateDialog({
   onClose: () => void;
 }) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<AuditItem[]>([]);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [manualAt, setManualAt] = useState(localInput());
@@ -67,11 +69,7 @@ export default function CaptureDateDialog({
   }, [target]);
 
   useEffect(() => void load(), [load]);
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [onClose]);
+  useModalFocus(dialogRef, onClose);
 
   const chosen = useMemo(() => rows.filter((r) => checked.has(r.id)), [rows, checked]);
   const run = async (manual: boolean) => {
@@ -103,7 +101,7 @@ export default function CaptureDateDialog({
 
   return (
     <div className="fixed inset-0 z-[65] bg-canvas/95 backdrop-blur-sm flex items-center justify-center p-6">
-      <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-[920px] max-w-full max-h-[86vh] flex flex-col bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-[920px] max-w-full max-h-[86vh] flex flex-col bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
         <div className="flex items-baseline gap-2 mb-3">
           <h2 id={titleId} className="text-[16px] font-semibold text-fg">촬영일 감사·교정</h2>
           <span className="text-[13px] text-fg-mute">먼저 읽기만 한 dry-run 결과입니다</span>

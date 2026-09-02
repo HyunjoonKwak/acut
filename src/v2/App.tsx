@@ -297,6 +297,7 @@ export default function App() {
       ctxAt: s.ctxAt,
       comparing: s.comparing,
       organizing: s.organizing,
+      organizeSelection: s.organizeSelection,
       captureDate: s.captureDate,
       transfer: s.transfer,
       folderOperation: s.folderOperation,
@@ -460,10 +461,10 @@ export default function App() {
             </>
           )}
 
-          {ui.organizing && libId !== null && (
+          {ui.organizing && (ui.organizeSelection?.libraryId ?? libId) !== null && (
             <Organize
-              ids={pickedIds}
-              libraryId={libId}
+              ids={ui.organizeSelection?.ids ?? pickedIds}
+              libraryId={ui.organizeSelection?.libraryId ?? libId!}
               onDone={async (o) => {
                 if (o.failed > 0)
                   toast(
@@ -483,13 +484,19 @@ export default function App() {
                   // 예전 백엔드 응답이면 원래 선택을 보존한다.
                   useSelection
                     .getState()
-                    .setPicked(o.failed_ids?.length ? o.failed_ids : pickedIds);
+                    .setPicked(
+                      o.failed_ids?.length
+                        ? o.failed_ids
+                        : (ui.organizeSelection?.ids ?? pickedIds),
+                    );
                 } else {
                   useSelection.getState().clearPicked();
                 }
                 await ops.after();
               }}
-              onClose={() => ui.set({ organizing: false })}
+              onClose={() =>
+                ui.set({ organizing: false, organizeSelection: null })
+              }
             />
           )}
 
@@ -562,7 +569,14 @@ export default function App() {
             setLibId(ui.eventDiscovery!.libraryId);
             useSelection.getState().setPicked(chosen);
             useSelection.getState().setSelected(chosen[0] ?? null);
-            ui.set({ eventDiscovery: null, organizing: true });
+            ui.set({
+              eventDiscovery: null,
+              organizing: true,
+              organizeSelection: {
+                ids: chosen,
+                libraryId: ui.eventDiscovery!.libraryId,
+              },
+            });
           }}
           onClose={() => ui.set({ eventDiscovery: null })}
         />

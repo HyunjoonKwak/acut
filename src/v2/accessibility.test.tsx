@@ -32,4 +32,20 @@ describe("키보드와 접근성 이름", () => {
     fireEvent.keyDown(timeline, { key: "End" });
     expect(onSeek).toHaveBeenLastCalledWith(25);
   });
+
+  it("빈 타임라인에 남은 초점의 방향키가 뒤 격자로 새지 않는다", () => {
+    const behind = vi.fn();
+    const onSeek = vi.fn();
+    render(
+      <div onKeyDown={behind}>
+        <ScrollBar buckets={[]} offset={0} pageSize={1} onSeek={onSeek} />
+      </div>,
+    );
+    const timeline = screen.getByRole("slider", {
+      name: "사진 촬영일 타임라인",
+    });
+    fireEvent.keyDown(timeline, { key: "ArrowDown" });
+    expect(behind).not.toHaveBeenCalled();
+    expect(onSeek).not.toHaveBeenCalled();
+  });
 });

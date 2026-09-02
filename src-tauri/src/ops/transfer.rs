@@ -381,7 +381,11 @@ fn conflict_plan(wanted: &Path, policy: ConflictPolicy) -> (&'static str, &'stat
     }
 }
 
-fn copy_verified(from: &Path, to: &Path) -> std::io::Result<String> {
+fn copy_verified(
+    from: &Path,
+    to: &Path,
+    expected_source_hash: Option<&str>,
+) -> std::io::Result<String> {
     if to.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
@@ -402,7 +406,13 @@ fn copy_verified(from: &Path, to: &Path) -> std::io::Result<String> {
         let _ = std::fs::remove_file(&temp);
         return Err(std::io::Error::other("사본 크기가 원본과 다릅니다"));
     }
-    let source_hash = crate::cull::hash::full(from)?;
+    // 발행은 미리보기 직후 실행 계획을 만들며 원본을 이미 해시했다. 그 값을
+    // 재사용해 같은 큰 파일을 실행 안에서 또 읽지 않는다. 일반 복사는 여기서
+    // 한 번 계산한다.
+    let source_hash = match expected_source_hash {
+        Some(hash) => hash.to_string(),
+        None => crate::cull::hash::full(from)?,
+    };
     let dest_hash = crate::cull::hash::full(&temp)?;
     if source_hash != dest_hash {
         let _ = std::fs::remove_file(&temp);
@@ -430,7 +440,11 @@ struct CopiedSidecar {
     sha256: String,
 }
 
-fn copy_with_sidecars(from: &Path, to: &Path) -> std::io::Result<(String, Vec<CopiedSidecar>)> {
+fn copy_with_sidecars(
+    from: &Path,
+    to: &Path,
+    expected_source_hash: Option<&str>,
+) -> std::io::Result<(String, Vec<CopiedSidecar>)> {
     let pairs = sidecars(from, to);
     if let Some((_, target)) = pairs.iter().find(|(_, target)| target.exists()) {
         return Err(std::io::Error::new(
@@ -438,10 +452,10 @@ fn copy_with_sidecars(from: &Path, to: &Path) -> std::io::Result<(String, Vec<Co
             format!("목적지 사이드카가 이미 있습니다: {}", target.display()),
         ));
     }
-    let hash = copy_verified(from, to)?;
+    let hash = copy_verified(from, to, expected_source_hash)?;
     let mut copied = Vec::new();
     for (source, target) in pairs {
-        match copy_verified(&source, &target) {
+        match copy_verified(&source, &target, None) {
             Ok(sha256) => copied.push(CopiedSidecar { target, sha256 }),
             Err(error) => {
                 for sidecar in &copied {
@@ -496,6 +510,16 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
             ..Default::default()
         });
     }
+    let planned = plan
+        .items
+        .iter()
+        .map(|item| (item.id, item))
+        .collect::<std::collections::HashMap<_, _>>();
+    if planned.len() != items.len() || items.iter().any(|item| !planned.contains_key(&item.id)) {
+        return Err(DbError::Invalid(
+            "실행 계획과 현재 사진 목록이 달라졌습니다. 다시 미리보기 하세요".into(),
+        ));
+    }
     let (lib, rel, dir) = dest(db, request)?;
     std::fs::create_dir_all(&dir)?;
     let folder = ensure_folder(db, &lib, &rel)?;
@@ -511,7 +535,10 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
         batch_id: batch,
         ..Default::default()
     };
-    for (it, p) in items.iter().zip(&plan.items) {
+    for it in &items {
+        let p = planned
+            .get(&it.id)
+            .expect("위에서 실행 계획과 사진 ID를 모두 대조했다");
         if p.action == "skip" {
             out.skipped += 1;
             if p.conflict == "already_published" {
@@ -579,7 +606,8 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                     }
                 }
                 Mode::Copy => {
-                    let (full, copied_sidecars) = copy_with_sidecars(&source, &target)?;
+                    let (full, copied_sidecars) =
+                        copy_with_sidecars(&source, &target, p.source_sha256.as_deref())?;
                     if p.source_sha256.as_deref().is_some_and(|h| h != full) {
                         let _ = std::fs::remove_file(&target);
                         for sidecar in &copied_sidecars {

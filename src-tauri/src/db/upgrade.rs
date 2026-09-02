@@ -57,7 +57,8 @@ fn add_release_091_integrity(c: &Connection) -> rusqlite::Result<()> {
             is_main INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (batch_id,file_id,seq),
             UNIQUE (batch_id,to_vol,to_path)
-         );",
+         );
+         CREATE INDEX IF NOT EXISTS idx_publication_batch ON publication_ledger(batch_id);",
     )
 }
 
@@ -104,6 +105,7 @@ fn add_gallery_transition_p0(c: &Connection) -> rusqlite::Result<()> {
             UNIQUE(source_sha256,destination_library_id,destination_path)
          );
          CREATE INDEX IF NOT EXISTS idx_publication_hash ON publication_ledger(source_sha256,destination_library_id);
+         CREATE INDEX IF NOT EXISTS idx_publication_batch ON publication_ledger(batch_id);
          CREATE TABLE IF NOT EXISTS folder_journal (
             batch_id INTEGER PRIMARY KEY REFERENCES batches(id) ON DELETE CASCADE,
             op TEXT NOT NULL,
@@ -541,6 +543,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(table, 1);
+        let index: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_publication_batch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
     }
 
     /// 이 순서를 틀리면 앱이 아예 뜨지 않는다. `schema.sql`이 먼저 도는데

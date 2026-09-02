@@ -1,5 +1,6 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useModalFocus } from "./focus";
 
 type AuditItem = {
   source_dir: string;
@@ -31,6 +32,7 @@ export default function FolderNameAuditDialog({
   onClose: () => void;
 }) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState<AuditItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -62,11 +64,7 @@ export default function FolderNameAuditDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId]);
 
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [onClose]);
+  useModalFocus(dialogRef, onClose);
 
   const apply = async () => {
     if (selected.size === 0) return;
@@ -99,6 +97,8 @@ export default function FolderNameAuditDialog({
   return (
     <div className="fixed inset-0 z-[68] bg-canvas/95 backdrop-blur-sm flex items-center justify-center p-6">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

@@ -27,7 +27,9 @@ pub enum DbError {
     #[error("SQLite 오류: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("데이터베이스 폴더를 만들 수 없습니다: {0}")]
-    CreateDir(#[from] std::io::Error),
+    CreateDir(std::io::Error),
+    #[error("파일 시스템 오류: {0}")]
+    Io(#[from] std::io::Error),
     /// 값이 규칙에 안 맞아 DB까지 갈 것도 없는 경우 (빈 이름 따위).
     /// 그대로 사용자에게 보여 줄 문장이어야 한다.
     #[error("{0}")]
@@ -48,7 +50,7 @@ impl Db {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            std::fs::create_dir_all(dir).map_err(DbError::CreateDir)?;
         }
 
         // 쓰기 연결이 먼저 열려야 스키마가 만들어진다.
@@ -252,6 +254,49 @@ mod tests {
             n, 24,
             "테이블 24개가 만들어져야 한다 (schema.sql 23 + upgrade의 nas_pulls)"
         );
+
+        db.read(|connection| {
+            for (table, column) in [
+                ("capture_date_journal", "before_sha256"),
+                ("capture_date_journal", "after_sha256"),
+                ("capture_date_journal", "undone_at"),
+                ("copy_manifest", "sha256"),
+            ] {
+                let found: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",
+                    rusqlite::params![table, column],
+                    |row| row.get(0),
+                )?;
+                assert!(found, "{table}.{column} 열이 있어야 한다");
+            }
+            for index in ["idx_publication_hash", "idx_publication_batch"] {
+                let found: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name=?1)",
+                    [index],
+                    |row| row.get(0),
+                )?;
+                assert!(found, "{index} 인덱스가 있어야 한다");
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn filesystem_errors_are_not_mislabelled_as_database_directory_failures() {
+        let io = DbError::from(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "fixture denied",
+        ));
+        assert!(io.to_string().starts_with("파일 시스템 오류:"));
+
+        let create = DbError::CreateDir(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "fixture denied",
+        ));
+        assert!(create
+            .to_string()
+            .starts_with("데이터베이스 폴더를 만들 수 없습니다:"));
     }
 
     /// 실제 DB 사본을 여는 데 얼마나 걸리나 — 시작 시간의 첫 구간.

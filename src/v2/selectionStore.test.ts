@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { useSelection } from "./selectionStore.ts";
+import { useUi } from "./uiStore.ts";
 
 const reset = () =>
   useSelection.setState({ selected: null, picked: new Set() });
@@ -81,4 +82,19 @@ test("목록 안에 남은 선택은 그대로, 목록 밖으로 나간 것은 �
   S().setPicked([30, 40]);
   S().focusWithin([]);
   assert.deepEqual([...S().picked].sort(), [30, 40], "빈 목록(새로 읽는 중)은 아무것도 안 한다");
+});
+
+test("이벤트 자동 발견의 정리 대상은 그리드 쪽 전환으로 잘리지 않는다", () => {
+  reset();
+  useUi.setState({
+    organizing: true,
+    organizeSelection: { ids: [10, 20, 30], libraryId: 7 },
+  });
+  S().setPicked([10, 20, 30]);
+  S().focusWithin([10]);
+  assert.deepEqual([...S().picked], [10], "보이는 선택은 안전을 위해 현재 쪽으로 줄인다");
+  assert.deepEqual(useUi.getState().organizeSelection, {
+    ids: [10, 20, 30],
+    libraryId: 7,
+  });
 });

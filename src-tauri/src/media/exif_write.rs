@@ -83,6 +83,160 @@ fn tag_value(
         .then_some((offset, count))
 }
 
+fn encoded_u16(value: u16, endian: Endian) -> [u8; 2] {
+    match endian {
+        Endian::Little => value.to_le_bytes(),
+        Endian::Big => value.to_be_bytes(),
+    }
+}
+
+fn encoded_u32(value: u32, endian: Endian) -> [u8; 4] {
+    match endian {
+        Endian::Little => value.to_le_bytes(),
+        Endian::Big => value.to_be_bytes(),
+    }
+}
+
+fn ifd_snapshot(
+    bytes: &[u8],
+    tiff: usize,
+    relative: u32,
+    endian: Endian,
+    segment_end: usize,
+) -> Option<(Vec<[u8; 12]>, u32)> {
+    let positions = ifd_entries(bytes, tiff, relative, endian, segment_end)?;
+    let start = tiff.checked_add(relative as usize)?;
+    let next_at = start.checked_add(2 + positions.len().checked_mul(12)?)?;
+    let next = u32_at(bytes, next_at, endian)?;
+    let mut entries = Vec::with_capacity(positions.len());
+    for position in positions {
+        entries.push(bytes.get(position..position + 12)?.try_into().ok()?);
+    }
+    Some((entries, next))
+}
+
+fn ascii_entry(tag: u16, value_offset: u32, endian: Endian) -> [u8; 12] {
+    let mut entry = [0_u8; 12];
+    entry[0..2].copy_from_slice(&encoded_u16(tag, endian));
+    entry[2..4].copy_from_slice(&encoded_u16(2, endian));
+    entry[4..8].copy_from_slice(&encoded_u32(20, endian));
+    entry[8..12].copy_from_slice(&encoded_u32(value_offset, endian));
+    entry
+}
+
+fn long_entry(tag: u16, value: u32, endian: Endian) -> [u8; 12] {
+    let mut entry = [0_u8; 12];
+    entry[0..2].copy_from_slice(&encoded_u16(tag, endian));
+    entry[2..4].copy_from_slice(&encoded_u16(4, endian));
+    entry[4..8].copy_from_slice(&encoded_u32(1, endian));
+    entry[8..12].copy_from_slice(&encoded_u32(value, endian));
+    entry
+}
+
+fn push_ifd(out: &mut Vec<u8>, entries: &mut Vec<[u8; 12]>, next: u32, endian: Endian) {
+    entries.sort_by_key(|entry| u16_at(entry, 0, endian).unwrap_or_default());
+    out.extend_from_slice(&encoded_u16(entries.len() as u16, endian));
+    for entry in entries {
+        out.extend_from_slice(entry);
+    }
+    out.extend_from_slice(&encoded_u32(next, endian));
+}
+
+struct ExistingExif {
+    segment_cursor: usize,
+    segment_len: usize,
+    segment_end: usize,
+    tiff: usize,
+    ifd0_relative: u32,
+    endian: Endian,
+}
+
+/// 기존 EXIF에 날짜 태그 일부가 없거나 형식이 잘못된 경우, 기존 TIFF 데이터와
+/// MakerNote/GPS/썸네일 offset은 그대로 두고 새 IFD 두 개와 날짜 문자열만 segment
+/// 끝에 덧붙인다. TIFF 머리의 IFD0 포인터 하나만 새 IFD로 바꾸므로 화소와 알 수 없는
+/// 제조사 메타데이터를 다시 인코딩하지 않는다.
+fn append_complete_date_ifds(
+    bytes: &mut Vec<u8>,
+    context: ExistingExif,
+    date: &[u8; 20],
+) -> Result<(), WriteError> {
+    let ExistingExif {
+        segment_cursor,
+        segment_len,
+        segment_end,
+        tiff,
+        ifd0_relative,
+        endian,
+    } = context;
+    let (mut ifd0, next_ifd) = ifd_snapshot(bytes, tiff, ifd0_relative, endian, segment_end)
+        .ok_or(WriteError::Metadata)?;
+    let exif_pointer = ifd0
+        .iter()
+        .find(|entry| u16_at(*entry, 0, endian) == Some(0x8769))
+        .and_then(|entry| u32_at(entry, 8, endian));
+    let (mut exif, next_exif) = match exif_pointer {
+        Some(relative) => {
+            ifd_snapshot(bytes, tiff, relative, endian, segment_end).ok_or(WriteError::Metadata)?
+        }
+        None => (Vec::new(), 0),
+    };
+
+    ifd0.retain(|entry| !matches!(u16_at(entry, 0, endian), Some(0x0132) | Some(0x8769)));
+    exif.retain(|entry| !matches!(u16_at(entry, 0, endian), Some(0x9003) | Some(0x9004)));
+    if ifd0.len() + 2 > u16::MAX as usize || exif.len() + 2 > u16::MAX as usize {
+        return Err(WriteError::Metadata);
+    }
+
+    let base = u32::try_from(segment_end.checked_sub(tiff).ok_or(WriteError::Metadata)?)
+        .map_err(|_| WriteError::Metadata)?;
+    let ifd0_len = 2_usize
+        .checked_add(
+            (ifd0.len() + 2)
+                .checked_mul(12)
+                .ok_or(WriteError::Metadata)?,
+        )
+        .and_then(|value| value.checked_add(4))
+        .ok_or(WriteError::Metadata)?;
+    let exif_relative = base
+        .checked_add(u32::try_from(ifd0_len).map_err(|_| WriteError::Metadata)?)
+        .ok_or(WriteError::Metadata)?;
+    let exif_len = 2_usize
+        .checked_add(
+            (exif.len() + 2)
+                .checked_mul(12)
+                .ok_or(WriteError::Metadata)?,
+        )
+        .and_then(|value| value.checked_add(4))
+        .ok_or(WriteError::Metadata)?;
+    let date0 = exif_relative
+        .checked_add(u32::try_from(exif_len).map_err(|_| WriteError::Metadata)?)
+        .ok_or(WriteError::Metadata)?;
+    let date_original = date0.checked_add(20).ok_or(WriteError::Metadata)?;
+    let date_digitized = date_original.checked_add(20).ok_or(WriteError::Metadata)?;
+
+    ifd0.push(ascii_entry(0x0132, date0, endian));
+    ifd0.push(long_entry(0x8769, exif_relative, endian));
+    exif.push(ascii_entry(0x9003, date_original, endian));
+    exif.push(ascii_entry(0x9004, date_digitized, endian));
+
+    let mut appended = Vec::with_capacity(ifd0_len + exif_len + 60);
+    push_ifd(&mut appended, &mut ifd0, next_ifd, endian);
+    push_ifd(&mut appended, &mut exif, next_exif, endian);
+    appended.extend_from_slice(date);
+    appended.extend_from_slice(date);
+    appended.extend_from_slice(date);
+
+    let new_segment_len = segment_len
+        .checked_add(appended.len())
+        .filter(|length| *length <= u16::MAX as usize)
+        .ok_or(WriteError::Metadata)?;
+    bytes[tiff + 4..tiff + 8].copy_from_slice(&encoded_u32(base, endian));
+    bytes[segment_cursor + 2..segment_cursor + 4]
+        .copy_from_slice(&(new_segment_len as u16).to_be_bytes());
+    bytes.splice(segment_end..segment_end, appended);
+    Ok(())
+}
+
 /// 이미 표준 EXIF 세 필드가 있는 JPEG는 TIFF 구조 안의 고정 길이 ASCII 값만
 /// 제자리에서 바꾼다. 압축 화소·MakerNote·GPS와 segment 배치를 전혀 다시 쓰지 않는다.
 /// EXIF 자체가 없는 JPEG는 `insert_new_exif`가 세 필드를 새로 만든다.
@@ -131,31 +285,38 @@ fn overwrite_existing_exif(path: &Path, date: &[u8; 20]) -> Result<bool, WriteEr
         if u16_at(&bytes, tiff + 2, endian) != Some(42) {
             return Err(WriteError::Metadata);
         }
-        let ifd0 = ifd_entries(
-            &bytes,
-            tiff,
-            u32_at(&bytes, tiff + 4, endian).ok_or(WriteError::Metadata)?,
-            endian,
-            segment_end,
-        )
-        .ok_or(WriteError::Metadata)?;
+        let ifd0_relative = u32_at(&bytes, tiff + 4, endian).ok_or(WriteError::Metadata)?;
+        let ifd0 = ifd_entries(&bytes, tiff, ifd0_relative, endian, segment_end)
+            .ok_or(WriteError::Metadata)?;
         let exif_pointer = ifd0
             .iter()
             .find(|&&entry| u16_at(&bytes, entry, endian) == Some(0x8769))
-            .and_then(|&entry| u32_at(&bytes, entry + 8, endian))
-            .ok_or(WriteError::Metadata)?;
-        let exif_ifd = ifd_entries(&bytes, tiff, exif_pointer, endian, segment_end)
-            .ok_or(WriteError::Metadata)?;
+            .and_then(|&entry| u32_at(&bytes, entry + 8, endian));
+        let exif_ifd = exif_pointer
+            .and_then(|relative| ifd_entries(&bytes, tiff, relative, endian, segment_end))
+            .unwrap_or_default();
         let positions = [
             tag_value(&bytes, tiff, &ifd0, 0x0132, endian, segment_end),
             tag_value(&bytes, tiff, &exif_ifd, 0x9003, endian, segment_end),
             tag_value(&bytes, tiff, &exif_ifd, 0x9004, endian, segment_end),
         ];
-        if positions.iter().any(Option::is_none) {
-            return Err(WriteError::Metadata);
-        }
-        for (offset, _) in positions.into_iter().flatten() {
-            bytes[offset..offset + 20].copy_from_slice(date);
+        if positions.iter().all(Option::is_some) {
+            for (offset, _) in positions.into_iter().flatten() {
+                bytes[offset..offset + 20].copy_from_slice(date);
+            }
+        } else {
+            append_complete_date_ifds(
+                &mut bytes,
+                ExistingExif {
+                    segment_cursor: cursor,
+                    segment_len,
+                    segment_end,
+                    tiff,
+                    ifd0_relative,
+                    endian,
+                },
+                date,
+            )?;
         }
 
         let temp = temp_path(path);
@@ -334,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_value_offset_that_escapes_the_exif_segment() {
+    fn repairs_a_value_offset_that_escapes_exif_without_touching_pixels() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad-offset.jpg");
         image::RgbImage::from_pixel(32, 32, image::Rgb([10, 20, 30]))
@@ -354,13 +515,80 @@ mod tests {
         let entry = tiff + 10;
         bytes[entry + 8..entry + 12].copy_from_slice(&140_u32.to_be_bytes());
         std::fs::write(&path, &bytes).unwrap();
-        let before = std::fs::read(&path).unwrap();
+        let pixels = image::open(&path).unwrap().to_rgb8();
 
         let second = first + 60;
-        assert!(matches!(
-            write_capture_time(&path, second),
-            Err(WriteError::Metadata)
-        ));
-        assert_eq!(std::fs::read(&path).unwrap(), before);
+        write_capture_time(&path, second).unwrap();
+        assert_eq!(image::open(&path).unwrap().to_rgb8(), pixels);
+        assert_eq!(
+            crate::media::exif::read(&path).and_then(|meta| meta.taken_at),
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn completes_a_partial_exif_without_reencoding_pixels() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial.jpg");
+        image::RgbImage::from_fn(32, 24, |x, y| {
+            image::Rgb([(x * 5) as u8, (y * 7) as u8, 91])
+        })
+        .save(&path)
+        .unwrap();
+        let pixels = image::open(&path).unwrap().to_rgb8();
+        let first = crate::media::taken_at::civil_to_unix(2024, 1, 2, 3, 4, 5);
+        write_capture_time(&path, first).unwrap();
+
+        // DateTimeDigitized 하나만 없는, 그러나 나머지 EXIF는 유효한 JPEG를 만든다.
+        let mut bytes = std::fs::read(&path).unwrap();
+        let exif = bytes
+            .windows(6)
+            .position(|window| window == b"Exif\0\0")
+            .unwrap();
+        let tiff = exif + 6;
+        let ifd0 = ifd_entries(&bytes, tiff, 8, Endian::Big, bytes.len()).unwrap();
+        let exif_pointer = ifd0
+            .iter()
+            .find(|&&entry| u16_at(&bytes, entry, Endian::Big) == Some(0x8769))
+            .and_then(|&entry| u32_at(&bytes, entry + 8, Endian::Big))
+            .unwrap();
+        let exif_ifd = ifd_entries(&bytes, tiff, exif_pointer, Endian::Big, bytes.len()).unwrap();
+        let digitized = *exif_ifd
+            .iter()
+            .find(|&&entry| u16_at(&bytes, entry, Endian::Big) == Some(0x9004))
+            .unwrap();
+        bytes[digitized..digitized + 2].copy_from_slice(&0xa000_u16.to_be_bytes());
+        std::fs::write(&path, bytes).unwrap();
+
+        let second = first + 3_600;
+        write_capture_time(&path, second).unwrap();
+        assert_eq!(image::open(&path).unwrap().to_rgb8(), pixels);
+        assert_eq!(
+            crate::media::exif::read(&path).and_then(|meta| meta.taken_at),
+            Some(second)
+        );
+        let wanted = Local
+            .timestamp_opt(second, 0)
+            .single()
+            .unwrap()
+            .format("%Y:%m:%d %H:%M:%S\0")
+            .to_string();
+        let completed = std::fs::read(&path).unwrap();
+        assert_eq!(
+            completed
+                .windows(20)
+                .filter(|value| *value == wanted.as_bytes())
+                .count(),
+            3,
+            "보완한 IFD가 세 촬영일 필드를 모두 가리켜야 한다"
+        );
+        assert_eq!(
+            completed
+                .windows(6)
+                .filter(|window| *window == b"Exif\0\0")
+                .count(),
+            1,
+            "중복 EXIF APP1을 만들면 읽는 앱마다 결과가 달라진다"
+        );
     }
 }

@@ -1,153 +1,134 @@
 # Photo Desk
 
 > **가져와 고르고, 제자리에 놓는다.**
->
-> 폰·카메라·NAS 어디서 온 사진이든 여기서 정리해 제 구역으로 보냅니다.
 
-대규모 로컬 라이브러리를 위한 오프라인 우선 사진 관리자(macOS). 맥에 있는 사진과
-NAS 1차 구역(폰 백업본)을 분류·정리해 공용·내사진 구역으로 보냅니다.
+Photo Desk는 macOS에서 대규모 사진 라이브러리를 탐색하고, 촬영일과 폴더를 교정한 뒤
+`작업대 → 내사진 → 공용` 흐름으로 정리하는 오프라인 우선 데스크톱 앱입니다.
 
-**Tech Stack:** Tauri 2 + Rust + React 19 + TypeScript + TailwindCSS 4 + SQLite
+**기술:** Tauri 2 · Rust · React 19 · TypeScript · Tailwind CSS 4 · SQLite
 
-## 사진 셋의 경계
+## 사진 시스템에서의 역할
 
-| 앱 | 어디서 | 하는 일 |
-|---|---|---|
-| **Photo Desk** (이것) | 맥 | 맥·NAS 1차 구역을 분류·정리해 공용·내사진으로 보냄 |
-| **[우리집 사진관](https://github.com/HyunjoonKwak/photo_gallery)** | NAS 웹 | 가족이 공용·내사진을 감상 |
-| **[Photo Backup](https://github.com/HyunjoonKwak/photo_backup)** | 안드로이드 | 폰 사진을 NAS 1차 구역으로 백업 |
+| 앱 | 정본 역할 |
+|---|---|
+| **Photo Backup** | 폰 사진을 NAS 1차 구역으로 수집 |
+| **Photo Desk** | 물리 파일 정리, 촬영일 교정, 내사진·공용 발행 |
+| **우리집 사진관** | 읽기 중심 감상과 논리적 큐레이션 |
 
-사진은 `폰 → 1차 구역 → (여기서 정리) → 공용·내사진 → (사진관에서 감상)` 순서로 흐릅니다.
-복잡한 판정(중복·잡동사니·흐림·인물·지명)은 전량 사본이 있는 이곳에서 합니다.
+사진은 `폰 → NAS 1차 구역 → Photo Desk 작업대 → 내사진·공용 → 우리집 사진관` 순서로
+흐릅니다. Photo Desk의 내사진·공용 폴더와 NAS의 대응 폴더는 **Synology Drive Client**가
+동기화합니다. Drive는 이 저장소의 코드가 아니며, 물리 파일 관리의 정본은 Photo Desk입니다.
 
-**세 앱이 무엇을 주고받고, 무엇을 바꾸면 무엇이 깨지는지는 [ECOSYSTEM.md](ECOSYSTEM.md) 에 있습니다.**
-서로 부르는 코드는 없고 NAS 위의 같은 폴더로만 이어지므로, 경로 합의가 어긋나면 **아무 오류 없이** 동작하지 않습니다.
+경로 계약과 운영 경계는 [ECOSYSTEM.md](ECOSYSTEM.md), 변경 원칙은
+[역할 경계](docs/ROLE_BOUNDARIES.md)를 먼저 확인하세요.
 
----
+## 주요 기능
 
-## 다운로드 및 설치
+- 9개 탐색 갈래: 모든 사진, 앨범, 스마트 앨범, 검색, 태그, 사람, 달력, 위치, 카메라
+- 대용량 가상 격자, 타임라인, 상세 정보, Quick Look, 나란히 보기
+- 완전 중복·줄인 사본·연사·저품질 후보 검토와 남김/제외 판정
+- 촬영일 dry-run 감사, 자동·수동·일괄 교정, 배치 journal과 undo
+- 사진 이동·복사, 내사진→공용 발행, SHA-256 원장 기반 재실행 중복 방지
+- 폴더 생성·이름변경·이동·복사·휴지통, 충돌 미리보기와 배치 undo
+- 날짜 폴더 이름 감사와 시간 간격 기반 이벤트 자동 발견
+- 얼굴·유사 장면·텍스트 검색을 위한 로컬 AI, GPS 지도와 오프라인 국가 판정
+- NAS 1차 구역 rsync 받기·검증·안전 정리, 별도 백업 대상으로 사본 생성
 
-[Releases](https://github.com/HyunjoonKwak/photo_desk/releases)에서 최신 `.dmg`를 받아 설치합니다.
+## 안전 원칙
 
-지금 판은 **개인 사용을 위한 자체 서명(ad-hoc)** 입니다. Apple 공증을 받지 않았으므로
-브라우저로 받으면 격리 표시가 붙어 macOS가 «손상되었기 때문에 열 수 없습니다»라고 막습니다.
-받은 뒤 한 번만 지우세요:
+- 스캔, 검색, 판정, dry-run은 원본 파일을 바꾸지 않습니다.
+- 내사진·공용의 이동·이름변경·휴지통은 Drive를 통해 NAS에도 반영될 수 있어 경고합니다.
+- 파일·폴더 작업은 실행 전 충돌을 보여 주고 batch journal에 기록합니다.
+- 파일 복사 undo는 크기와 SHA-256이 실행 직후 사본과 같은 경우에만 삭제합니다.
+- 촬영일 교정은 JPEG/JPG에 EXIF 세 필드와 mtime을 기록합니다. 그 밖의 포맷은 파일 내부
+  메타데이터를 바꾸지 않고 mtime과 Photo Desk override만 기록합니다.
+- JPEG 교정 전 원본 바이트를 백업하며 undo 시 SHA-256을 확인해 복원합니다.
+- 라이브러리 루트, 부모→자식 순환, 오프라인 볼륨, 루트 밖 심볼릭 링크를 차단합니다.
+
+세부 사용법은 [사용 가이드](docs/USER_GUIDE.md), 전환 검증 근거는
+[G1 검증](docs/G1_VALIDATION.md)과 [G2 파일럿](docs/G2_PILOT.md)에 있습니다.
+
+## 설치
+
+[Releases](https://github.com/HyunjoonKwak/photo_desk/releases)에서 최신 DMG를 받아
+`Photo Desk.app`을 응용 프로그램에 넣습니다.
+
+현재 개인 사용 빌드는 ad-hoc 서명이며 Apple 공증을 받지 않습니다. 신뢰한 이 저장소의
+릴리스가 macOS 격리로 차단될 때만 다음을 한 번 실행합니다.
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Photo Desk.app"
 ```
 
-앱 안의 업데이트 알림은 설치 파일을 직접 열지 않고 이 릴리스 페이지로 이동합니다.
+공개 배포에서는 Developer ID 서명과 공증을 사용해야 합니다. 기존 `스마트 폴더`
+데이터는 첫 실행 시 현재 bundle identifier의 데이터 위치로 자동 이전됩니다.
 
-> **공개 배포로 낼 때는** `src-tauri/tauri.conf.json` 의 `signingIdentity` 를 Developer ID 로
-> 바꾸세요. 그러면 릴리스 문지기가 Gatekeeper 평가와 공증 티켓까지 확인하고, 위의 격리
-> 해제도 필요 없어집니다. **선언을 빼면 공개 배포로 보고 공증을 요구합니다** — 설정을
-> 빠뜨린 것이 검사를 건너뛰는 길이 되지 않게.
+## 기본 사용 흐름
 
-> 기존 "스마트 폴더" 사용자: 첫 실행 시 라이브러리(DB·설정)가 자동으로 이전됩니다.
+1. 왼쪽 앨범 패널의 **라이브러리 추가**에서 폴더와 영역(작업대·내사진·공용·기타)을 정합니다.
+2. 작업대 사진을 스캔하고 중복·연사·품질 후보를 검토합니다.
+3. 필요하면 **촬영일 감사**로 근거와 기록 범위를 먼저 확인한 뒤 교정합니다.
+4. 사진을 선택해 이벤트 이름으로 내사진에 이동하거나 **이동·복사**로 임의 목적지에 보냅니다.
+5. 내사진→공용은 복사가 기본이며 개인 원본을 유지합니다.
+6. 가장 최근의 지원 작업은 상태바의 **되돌리기** 또는 `⌘Z`로 취소합니다.
 
----
-
-## 화면 구성 — 워크플로우가 곧 내비게이션
-
-좌측 아이콘 레일 5개 영역이 사용 순서 그대로 배치되어 있습니다:
-**가져오고 → 고르고 → 정리하고 → 올린다.**
-
-### 🗂 작업대
-전 과정을 지휘하는 메인 컨트롤 화면.
-- **파이프라인 보드**: 가져오기 → 고르기 → 정리 → 올리기 4스테이션의 잔여량과 바로가기
-- **장치 알림**: SD카드 연결 시 "작업대에 올리기" 원클릭 가져오기 (등록+스캔)
-- **스마트 정리**: 중복 → 연사 → 폴더 정리를 순서대로 안내하는 위저드
-- 최근 작업 3건 + 즉시 되돌리기, 자동화(감시/스케줄/MCP) 상태
-
-### 🖼 라이브러리
-모든 사진·영상 탐색과 메타데이터 작업.
-- 보기 탭: **격자 / 리스트 / 지도**(GPS 클러스터)
-- 썸네일 크기 슬라이더 80~320px (`⌘+` / `⌘−`)
-- **인스펙터**: EXIF · 태그 칩 · 앨범 · **코멘트** — 코멘트는 검색으로도 찾을 수 있고 그리드에 💬 배지로 표시
-- 사이드바: 소스 폴더 · 날짜/폴더 그룹 · **태그/앨범 필터** · **장치**(내장 디스크 포함, 전체 검색/폴더 선택/안전 추출)
-- 지원 포맷 40종+: JPEG, PNG, HEIC, AVIF, RAW(CR2/CR3/NEF/ARW/DNG 등), MP4, MOV 등
-
-### ✅ 고르기
-그룹에서 남길 사진을 고르는 세 가지 모드 — 공통 레이아웃과 단축키.
-- **중복**: 3단계 해시(크기 → xxHash64 퀵해시 → SHA-256) 탐지, 보관본 지정
-- **연사**: 시간 근접 그룹 + 품질 점수(라플라시안 선명도·히스토그램 노출), 베스트 자동 선정 + `1~9` 수동 지정
-- **한 장씩**: 몰입형 리뷰어에서 유지/B컷 마킹, 품질 오버레이, 자동 분석
-- 모든 삭제는 **Dry-Run 미리보기 → 휴지통 경유** (영구 삭제 없음)
-
-### 📁 정리
-파일과 폴더를 옮기고 다듬는 모든 작업.
-- **자동 분류**: 날짜별(EXIF 촬영일)/유형별 — Before-After 미리보기 후 실행
-- **폴더**: 트리 탐색 + 용량 분석 + **구조 복사 / 이동 / 이름변경 / 휴지통** (⌘클릭으로 폴더 선택, 드래그&드롭 지원), YYYYMMDD → 날짜 폴더 일괄 정리
-- **동기화**: 단방향 미러링, 체크섬 검증, 충돌 해결(덮어쓰기/이름변경/건너뛰기), 프리셋
-- **히스토리**: 모든 이동·정리 작업의 배치 단위 되돌리기 (폴더 이동 포함)
-
-### ☁️ NAS
-Synology DSM Web API 직접 연동 — 파이프라인의 출구.
-- 원격 폴더 브라우징·생성, 촬영일 날짜 폴더 정리, **B컷 제외(A컷만)** 업로드
-- SHA-256 원장으로 재업로드 방지, 업로드 완료 배지, 대용량 스트림 업로드, 취소 지원
-
----
+폴더 메뉴에서는 촬영일 감사·교정, 일반 폴더 작업, 폴더 이름 감사, 작업대 이벤트 자동 발견을
+실행할 수 있습니다.
 
 ## 단축키
 
-| 화면 | 키 | 동작 |
-|---|---|---|
-| 고르기 공통 | `J`/`K` 또는 `↑`/`↓` | 그룹 이동 |
-| | `Space` | Quick Look 미리보기 |
-| | `S` | 그룹 무시 |
-| 연사 | `1`~`9` | 베스트 지정 |
-| 한 장씩 | `Space` / `K` | B컷 / 유지 마킹 후 다음 |
-| | `←`/`→` (`H`/`L`) | 이전/다음 |
-| | `?` | 단축키 도움말 |
-| 라이브러리 | `⌘+` / `⌘−` | 썸네일 크기 |
-| 정리 › 폴더 | `⌘클릭` | 폴더 선택 (복사/이동/이름변경/휴지통) |
+앱에서 `?`를 누르면 현재 단축키 표를 볼 수 있습니다. 주요 키는 다음과 같습니다.
 
----
+| 키 | 동작 |
+|---|---|
+| 방향키 | 사진 이동, `Shift`와 함께 범위 선택 |
+| `Space` | 크게 보기 |
+| `P` / `X` / `F` | 남김 / 제외 / 즐겨찾기 |
+| `0`–`5` | 별점 |
+| `C` | 선택 사진 나란히 보기 |
+| `I` | 정보 패널 |
+| `⌘A` | 현재 불러온 사진 전체 선택 |
+| `⌘Z` | 가장 최근 지원 작업 되돌리기 |
+| `Esc` | 대화상자 닫기 또는 선택 해제 |
 
-## 자동화
+## 설정
 
-- **폴더 감시**: notify(FSEvents) 기반 변경 감지 시 자동 스캔 (디바운스 설정 가능)
-- **스케줄**: Cron 표현식으로 스캔/정리/동기화 반복 실행
-- **MCP 서버**: Unix 도메인 소켓 JSON-RPC (MCP 2024-11-05) — AI 에이전트가 scan, get_stats, detect_duplicates, organize, sync, get_media_list 도구로 직접 제어
+설정은 일반, 라이브러리, 탐색, 뷰어, AI, 데이터베이스, 백업, NAS, 고급, 정보의
+10개 구역입니다. NAS는 DSM Web API 업로드가 아니라 rsync pull/verify/purge 흐름입니다.
+Cron이나 MCP 제어 서버는 현재 앱에 없습니다.
 
----
-
-## 기술 스택
-
-| 레이어 | 기술 |
-|--------|------|
-| 데스크톱 프레임워크 | Tauri 2 |
-| 백엔드 | Rust 2021 (Tokio + Rayon) |
-| 프론트엔드 | React 19 + TypeScript 5.9 + Zustand 5 |
-| UI | TailwindCSS 4 + Lucide Icons |
-| 데이터베이스 | SQLite (rusqlite, WAL) |
-| 해싱 | xxHash64 (quick) · SHA-256 (full) |
-| 이미지/EXIF | image crate · kamadak-exif |
-| 파일 감시 / 스케줄 | notify 7 · tokio-cron-scheduler |
-| i18n | i18next (한국어 · English) |
-
-## 개발
+## 개발과 검증
 
 ```bash
 npm install
-npm run tauri:dev      # 개발 모드
-npm run tauri:build    # 릴리스 빌드 (.app + .dmg, ad-hoc 서명)
-npm run version:minor  # 버전 범프 (package.json/Cargo.toml/tauri.conf.json 동기화)
+npm run tauri:dev
+npm test
+npm run lint
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+npm run tauri:build
 ```
 
-- 백엔드: Tauri 명령 116개 (`src-tauri/src/api/`)
-- 프론트엔드: `src/v2/` — 영역(작업대·내사진·공용) 정의는 `src/v2/areaItems.ts`
-- 앱 아이콘 마스터: `src-tauri/icons/icon.svg` → `tauri icon`으로 전 세트 재생성
-- 스캔 시 시스템 경로(Library, System, `.app` 번들, node_modules 등) 자동 제외 — 내장 디스크 전체 스캔 가능
+- 백엔드 Tauri 명령: 125개 (`src-tauri/src/api/`)
+- 프론트엔드: `src/v2/`
+- 영역 정의: `src/v2/areaItems.ts`
+- 앱 아이콘 원본: `src-tauri/icons/icon.svg`
 
 ## 데이터 위치
 
 `~/Library/Application Support/com.acut.media/`
 
-- `acut-v2.db` — 라이브러리와 설정 (SQLite, WAL). 설정도 이 안에 있습니다
-- `thumbs/` — 썸네일 · `previews/` — 미리보기 · `models/` — AI 모델 · `backups/` — DB 백업
-- 구 식별자(`com.smartcategory.media`)의 데이터는 첫 실행 시 자동 이전됩니다
+- `acut-v2.db` — 라이브러리, 설정, 작업·발행 원장
+- `thumbs/`, `previews/` — 파생 이미지 캐시
+- `models/` — 로컬 AI 모델
+- `backups/` — 데이터베이스 백업
+
+촬영일을 교정한 JPEG의 undo 원본은 해당 라이브러리 안
+`.acut/capture-date-backups/<batch>/`에 보관됩니다. 성공적으로 undo하면 지워지며,
+undo 전에는 복구 근거이므로 자동 삭제하지 않습니다.
+
+bundle identifier `com.acut.media`는 데이터 연결 키이므로 변경하지 않습니다.
 
 ## License
 

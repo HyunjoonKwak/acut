@@ -332,6 +332,51 @@ fn manifest(root: &Path) -> Result<Manifest> {
     })
 }
 
+/// 미리보기는 SHA를 표시하거나 실행 근거로 신뢰하지 않는다. 파일 내용을 읽지 않고
+/// 안전하지 않은 항목과 예상 규모만 확인해 큰 폴더에서도 곧바로 충돌을 판단한다.
+fn tree_summary(root: &Path) -> Result<Manifest> {
+    let mut files = 0usize;
+    let mut directories = 0usize;
+    let mut bytes = 0u64;
+    for entry in WalkDir::new(root).follow_links(false).into_iter() {
+        let entry = entry.map_err(|error| bad(error.to_string()))?;
+        if entry.file_type().is_symlink() {
+            return Err(bad(format!(
+                "심볼릭 링크가 든 폴더는 안전하게 작업할 수 없습니다: {}",
+                entry.path().display()
+            )));
+        }
+        if entry.file_type().is_file() && is_appledouble(entry.path()) {
+            continue;
+        }
+        if entry.file_type().is_dir() {
+            directories += 1;
+        } else if entry.file_type().is_file() {
+            files += 1;
+            bytes = bytes
+                .checked_add(
+                    entry
+                        .metadata()
+                        .map_err(|error| bad(error.to_string()))?
+                        .len(),
+                )
+                .ok_or_else(|| bad("폴더 용량이 표현 범위를 넘습니다"))?;
+        } else {
+            return Err(bad(format!(
+                "지원하지 않는 폴더 항목입니다: {}",
+                entry.path().display()
+            )));
+        }
+    }
+    Ok(Manifest {
+        sha256: String::new(),
+        files,
+        directories,
+        bytes,
+        file_hashes: HashMap::new(),
+    })
+}
+
 fn planned(
     request: &Request,
     db: &Db,
@@ -424,7 +469,22 @@ fn planned(
     ))
 }
 
-pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
+struct OperationPlan {
+    preview: Preview,
+    info: Manifest,
+    source_lib: Library,
+    destination_lib: Library,
+    source_rel: String,
+    source: PathBuf,
+    destination: PathBuf,
+}
+
+enum PlanDetail {
+    Summary,
+    Verified,
+}
+
+fn operation_plan(db: &Db, request: &Request, detail: PlanDetail) -> Result<OperationPlan> {
     let (source_lib, destination_lib, source_rel, destination_rel, source, wanted) =
         planned(request, db)?;
     let info = if request.action == Action::Create {
@@ -436,7 +496,10 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
             file_hashes: HashMap::new(),
         }
     } else {
-        manifest(&source)?
+        match detail {
+            PlanDetail::Summary => tree_summary(&source)?,
+            PlanDetail::Verified => manifest(&source)?,
+        }
     };
     let same_existing_folder = request.action == Action::Rename
         && wanted.exists()
@@ -457,12 +520,13 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
     } else {
         ("none", "run", wanted)
     };
-    let destination = destination
+    let destination_path = destination;
+    let destination = destination_path
         .strip_prefix(online_root(&destination_lib)?)
-        .unwrap_or(&destination)
+        .map_err(|_| bad("목적지 경로가 라이브러리 밖입니다"))?
         .to_string_lossy()
         .into_owned();
-    Ok(Preview {
+    let preview = Preview {
         source: source_rel,
         planned_name: destination
             .rsplit('/')
@@ -479,7 +543,20 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
         drive_sync_warning: [source_lib.area, destination_lib.area]
             .iter()
             .any(|area| [1, 2].contains(area)),
+    };
+    Ok(OperationPlan {
+        source_rel: preview.source.clone(),
+        preview,
+        info,
+        source_lib,
+        destination_lib,
+        source,
+        destination: destination_path,
     })
+}
+
+pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
+    Ok(operation_plan(db, request, PlanDetail::Summary)?.preview)
 }
 
 fn temp_sibling(target: &Path, batch: i64) -> PathBuf {
@@ -492,8 +569,8 @@ fn copy_tree_verified(
     target: &Path,
     batch: i64,
     fail_after: Option<usize>,
-) -> Result<Manifest> {
-    let before = manifest(source)?;
+    before: &Manifest,
+) -> Result<()> {
     let temp = temp_sibling(target, batch);
     if temp.exists() {
         remove_tree(&temp)?;
@@ -549,7 +626,7 @@ fn copy_tree_verified(
         let _ = remove_tree(&temp);
         return Err(error);
     }
-    Ok(before)
+    Ok(())
 }
 
 /// 폴더 이동의 물리 단계. 다른 볼륨이면 검증된 사본을 먼저 완성하고, 원본은
@@ -560,10 +637,10 @@ fn stage_move(
     destination: &Path,
     batch: i64,
     cross_volume: bool,
-) -> Result<(Manifest, Option<PathBuf>)> {
-    let info = manifest(source)?;
+    info: &Manifest,
+) -> Result<Option<PathBuf>> {
     if cross_volume {
-        copy_tree_verified(source, destination, batch, None)?;
+        copy_tree_verified(source, destination, batch, None, info)?;
         let backup = free_path(
             source
                 .parent()
@@ -574,13 +651,13 @@ fn stage_move(
             let _ = remove_tree(destination);
             return Err(error.into());
         }
-        Ok((info, Some(backup)))
+        Ok(Some(backup))
     } else {
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::rename(source, destination)?;
-        Ok((info, None))
+        Ok(None)
     }
 }
 
@@ -771,7 +848,17 @@ fn discard_batch(db: &Db, batch: i64) {
 }
 
 pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome> {
-    let preview = preview(db, request)?;
+    // 실행 시점의 계획과 manifest를 한 번에 만든다. 프론트 미리보기 값은 오래됐을
+    // 수 있어 신뢰하지 않되, 같은 실행 안에서 원본 트리를 서너 번 다시 읽지는 않는다.
+    let OperationPlan {
+        preview,
+        info,
+        source_lib,
+        destination_lib,
+        source_rel,
+        source,
+        destination,
+    } = operation_plan(db, request, PlanDetail::Verified)?;
     if preview.action == "skip" {
         return Ok(FolderOutcome {
             batch_id: 0,
@@ -784,13 +871,6 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
             manifest_sha256: None,
         });
     }
-    let (source_lib, destination_lib, source_rel, _wanted_rel, source, _wanted) =
-        planned(request, db)?;
-    let destination = if preview.destination.is_empty() {
-        online_root(&destination_lib)?
-    } else {
-        online_root(&destination_lib)?.join(&preview.destination)
-    };
     let same_existing_folder = request.action == Action::Rename
         && destination.exists()
         && matches!(
@@ -811,13 +891,6 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
     let operation = (|| -> Result<Manifest> {
         match request.action {
             Action::Create => {
-                let info = Manifest {
-                    sha256: String::new(),
-                    files: 0,
-                    directories: 1,
-                    bytes: 0,
-                    file_hashes: HashMap::new(),
-                };
                 record_folder(
                     db,
                     batch,
@@ -836,10 +909,9 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     let _ = std::fs::remove_dir(&destination);
                     return Err(error);
                 }
-                Ok(info)
+                Ok(info.clone())
             }
             Action::Copy => {
-                let info = manifest(&source)?;
                 record_folder(
                     db,
                     batch,
@@ -851,11 +923,7 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     &info,
                     preview.cross_volume,
                 )?;
-                let copied = copy_tree_verified(&source, &destination, batch, None)?;
-                if copied.sha256 != info.sha256 {
-                    let _ = remove_tree(&destination);
-                    return Err(bad("폴더가 미리보기 뒤 바뀌었습니다. 다시 확인하세요"));
-                }
+                copy_tree_verified(&source, &destination, batch, None, &info)?;
                 if let Err(error) = copy_db_rows(
                     db,
                     &source_lib,
@@ -868,11 +936,10 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     let _ = remove_tree(&destination);
                     return Err(error);
                 }
-                Ok(info)
+                Ok(info.clone())
             }
             Action::Move | Action::Rename => {
                 let cross = source_lib.volume_uuid != destination_lib.volume_uuid;
-                let info = manifest(&source)?;
                 record_folder(
                     db,
                     batch,
@@ -888,16 +955,7 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     &info,
                     cross,
                 )?;
-                let (moved, backup) = stage_move(&source, &destination, batch, cross)?;
-                if moved.sha256 != info.sha256 {
-                    if let Some(backup) = &backup {
-                        let _ = std::fs::rename(backup, &source);
-                        let _ = remove_tree(&destination);
-                    } else {
-                        let _ = std::fs::rename(&destination, &source);
-                    }
-                    return Err(bad("폴더가 미리보기 뒤 바뀌었습니다. 다시 확인하세요"));
-                }
+                let backup = stage_move(&source, &destination, batch, cross, &info)?;
                 if let Err(error) = move_db_rows(
                     db,
                     &source_lib,
@@ -916,10 +974,9 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                 if let Some(backup) = backup {
                     let _ = remove_tree(&backup);
                 }
-                Ok(info)
+                Ok(info.clone())
             }
             Action::Trash => {
-                let info = manifest(&source)?;
                 record_folder(
                     db,
                     batch,
@@ -955,7 +1012,7 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     let _ = std::fs::rename(&destination, &source);
                     return Err(error);
                 }
-                Ok(info)
+                Ok(info.clone())
             }
         }
     })();
@@ -1045,7 +1102,10 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
             return Err(error);
         }
         if let Err(error) = remove_tree(&staged) {
-            log::warn!("폴더 생성 undo 임시 갈래 정리 보류 {}: {error}", staged.display());
+            log::warn!(
+                "폴더 생성 undo 임시 갈래 정리 보류 {}: {error}",
+                staged.display()
+            );
         }
     } else {
         if !destination.is_dir() {
@@ -1069,7 +1129,10 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                     return Err(error);
                 }
                 if let Err(error) = remove_tree(&staged) {
-                    log::warn!("폴더 복사 undo 임시 갈래 정리 보류 {}: {error}", staged.display());
+                    log::warn!(
+                        "폴더 복사 undo 임시 갈래 정리 보류 {}: {error}",
+                        staged.display()
+                    );
                 }
             }
             "move" | "rename" => {
@@ -1100,7 +1163,7 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                         return Err(error);
                     }
                 } else {
-                    copy_tree_verified(&destination, &target, batch, None)?;
+                    copy_tree_verified(&destination, &target, batch, None, &now)?;
                     let staged = free_path(temp_sibling(&destination, batch));
                     if let Err(error) = std::fs::rename(&destination, &staged) {
                         let _ = remove_tree(&target);
@@ -1118,7 +1181,10 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                         return Err(error);
                     }
                     if let Err(error) = remove_tree(&staged) {
-                        log::warn!("폴더 이동 undo 임시 갈래 정리 보류 {}: {error}", staged.display());
+                        log::warn!(
+                            "폴더 이동 undo 임시 갈래 정리 보류 {}: {error}",
+                            staged.display()
+                        );
                     }
                 }
             }
@@ -1322,7 +1388,8 @@ mod tests {
         let (_temp, _db, la, _) = setup();
         let source = la.dir.as_ref().unwrap().join("부모/자식");
         let target = la.dir.as_ref().unwrap().join("부분");
-        assert!(copy_tree_verified(&source, &target, 44, Some(3)).is_err());
+        let before = manifest(&source).unwrap();
+        assert!(copy_tree_verified(&source, &target, 44, Some(3), &before).is_err());
         assert!(!target.exists());
         assert!(source.join("19.jpg").is_file());
         assert!(!temp_sibling(&target, 44).exists());
@@ -1338,9 +1405,8 @@ mod tests {
         std::fs::write(source.join("photo.xmp"), b"sidecar").unwrap();
         let before = manifest(&source).unwrap();
 
-        let (staged, backup) = stage_move(&source, &destination, 77, true).unwrap();
+        let backup = stage_move(&source, &destination, 77, true, &before).unwrap();
         let backup = backup.expect("볼륨 간 이동은 원본 쪽 rollback 백업을 둔다");
-        assert_eq!(before.sha256, staged.sha256);
         assert_eq!(before.sha256, manifest(&destination).unwrap().sha256);
         assert!(!source.exists());
         assert!(
@@ -1398,11 +1464,20 @@ mod tests {
         for i in 0..1000 {
             std::fs::write(source.join(format!("{i}.txt")), b"x").unwrap();
         }
+        std::fs::write(source.join("._0.txt"), b"AppleDouble must not travel").unwrap();
+        let decomposed = "\u{1100}\u{1161}.txt";
+        std::fs::write(source.join(decomposed), b"nfc path").unwrap();
         let target = temp.path().join("사본");
-        let before = copy_tree_verified(&source, &target, 55, None).unwrap();
+        let before = manifest(&source).unwrap();
+        copy_tree_verified(&source, &target, 55, None, &before).unwrap();
         let after = manifest(&target).unwrap();
         assert_eq!(before.sha256, after.sha256);
-        assert_eq!(before.files, 1000);
+        assert_eq!(before.files, 1001);
+        assert!(!target.join("._0.txt").exists());
+        assert!(
+            before.file_hashes.contains_key("가.txt"),
+            "manifest 경로는 유니코드 NFC여야 한다"
+        );
         assert!(target.join("빈/더빈").is_dir());
     }
 }

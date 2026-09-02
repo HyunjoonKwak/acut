@@ -141,7 +141,7 @@ export default function SelectionPanel({
         </PanelBtn>
       )}
       <button
-        onClick={() => setUi({ organizing: true })}
+        onClick={() => setUi({ organizing: true, organizeSelection: null })}
         disabled={libId === null}
         title={
           libId === null

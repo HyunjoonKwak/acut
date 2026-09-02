@@ -1,5 +1,6 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useModalFocus } from "./focus";
 
 type Suggestion = { title: string; why: string; score: number };
 type EventItem = { id: number; name: string; taken_at: number };
@@ -31,10 +32,12 @@ export default function EventDiscoveryDialog({
   onClose: () => void;
 }) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [gapMinutes, setGapMinutes] = useState(240);
   const [minCount, setMinCount] = useState(8);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selected, setSelected] = useState<Map<string, Set<number>>>(new Map());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +51,7 @@ export default function EventDiscoveryDialog({
         minCount,
       });
       setCandidates(found);
+      setExpanded(new Set());
       setSelected(
         new Map(
           found.map((candidate) => [
@@ -69,15 +73,13 @@ export default function EventDiscoveryDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId]);
 
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [onClose]);
+  useModalFocus(dialogRef, onClose);
 
   return (
     <div className="fixed inset-0 z-[68] bg-canvas/95 backdrop-blur-sm flex items-center justify-center p-6">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -158,12 +160,21 @@ export default function EventDiscoveryDialog({
                     선택 {chosen.size.toLocaleString()}장 정리…
                   </button>
                 </div>
-                <details className="mt-2">
+                <details
+                  className="mt-2"
+                  onToggle={(event) => {
+                    const next = new Set(expanded);
+                    if (event.currentTarget.open) next.add(candidate.key);
+                    else next.delete(candidate.key);
+                    setExpanded(next);
+                  }}
+                >
                   <summary className="cursor-pointer text-[12.5px] text-fg-dim">
                     사진별 검토·제외
                   </summary>
-                  <div className="mt-2 max-h-44 overflow-auto rounded bg-canvas/60 p-2">
-                    {candidate.items.map((item) => (
+                  {expanded.has(candidate.key) && (
+                    <div className="mt-2 max-h-44 overflow-auto rounded bg-canvas/60 p-2">
+                      {candidate.items.map((item) => (
                       <label
                         key={item.id}
                         className="flex items-center gap-2 py-1 text-[12.5px] text-fg-dim"
@@ -188,8 +199,9 @@ export default function EventDiscoveryDialog({
                           {item.name}
                         </span>
                       </label>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </details>
               </section>
             );

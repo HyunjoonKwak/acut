@@ -281,6 +281,8 @@ export default function Sidebar({
             setPanelW(Math.max(160, Math.min(panelMax, e.clientX - 48)));
           }}
           onPointerUp={() => (dragPanel.current = false)}
+          onPointerCancel={() => (dragPanel.current = false)}
+          onLostPointerCapture={() => (dragPanel.current = false)}
           onKeyDown={(e) => {
             let next = visiblePanelW;
             if (e.key === "ArrowLeft") next -= 16;

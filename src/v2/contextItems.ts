@@ -80,7 +80,7 @@ export function contextItems(
       label: `정리하기${many}`,
       run: () => {
         useSelection.getState().setPicked(ids);
-        ui().set({ organizing: true });
+        ui().set({ organizing: true, organizeSelection: null });
       },
     },
     {

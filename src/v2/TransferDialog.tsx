@@ -1,7 +1,8 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
 import { areaLabel, nextArea } from "./areaItems";
+import { useModalFocus } from "./focus";
 
 type Mode = "move" | "copy";
 type Policy = "skip" | "rename";
@@ -38,6 +39,7 @@ export default function TransferDialog({ ids, sourceLibraryId, onChanged, onClos
   onClose: () => void;
 }) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const libs = useData((s) => s.libs);
   const folders = useData((s) => s.folders);
   const source = libs.find((l) => l.id === sourceLibraryId);
@@ -64,11 +66,7 @@ export default function TransferDialog({ ids, sourceLibraryId, onChanged, onClos
     setDestinationDir("");
     setPreview(null);
   }, [destinationLibraryId, newFolder, mode, policy]);
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [onClose]);
+  useModalFocus(dialogRef, onClose);
 
   const request = { ids, destinationLibraryId, destinationDir, mode, conflictPolicy: policy, publish };
   const inspect = async () => {
@@ -103,7 +101,7 @@ export default function TransferDialog({ ids, sourceLibraryId, onChanged, onClos
   const conflicts = preview?.items.filter((i) => i.conflict !== "none").length ?? 0;
   return (
     <div className="fixed inset-0 z-[66] bg-canvas/95 backdrop-blur-sm flex items-center justify-center p-6">
-      <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-[720px] max-w-full max-h-[86vh] flex flex-col bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-[720px] max-w-full max-h-[86vh] flex flex-col bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
         <div className="flex items-baseline gap-2 mb-4"><h2 id={titleId} className="text-[16px] font-semibold text-fg">사진 이동·복사</h2><span className="text-[13px] text-fg-mute">{ids.length.toLocaleString()}장</span></div>
         <div className="grid grid-cols-2 gap-3 mb-3">
           <label className="flex flex-col gap-1"><span className="text-[11px] uppercase tracking-wider text-fg-mute">목적지 라이브러리</span><select value={destinationLibraryId} onChange={(e) => setDestinationLibraryId(Number(e.target.value))} className="h-control px-2 rounded bg-raised ring-1 ring-line text-fg">{libs.map((l) => <option key={l.id} value={l.id} disabled={!l.online}>{areaLabel(l.area)} · {l.name}{!l.online ? " (연결 안 됨)" : ""}</option>)}</select></label>

@@ -26,6 +26,7 @@ describe("이벤트 자동 발견", () => {
     render(<EventDiscoveryDialog libraryId={1} libraryName="작업대" onChoose={choose} onClose={vi.fn()} />);
 
     await screen.findByText(/제안: 가족여행/);
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     await userEvent.click(screen.getByText("사진별 검토·제외"));
     const checks = screen.getAllByRole("checkbox");
     await userEvent.click(checks[1]);

@@ -1,7 +1,8 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
 import { areaLabel } from "./areaItems";
+import { useModalFocus } from "./focus";
 
 export type FolderAction = "create" | "rename" | "move" | "copy" | "trash";
 
@@ -57,6 +58,7 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
   onClose: () => void;
 }) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const libs = useData((s) => s.libs);
   const folders = useData((s) => s.folders);
   const [action, setAction] = useState<FolderAction>(target.action);
@@ -78,11 +80,7 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
     [destinationLibraryId, folders],
   );
 
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [onClose]);
+  useModalFocus(dialogRef, onClose);
 
   useEffect(() => {
     setPreview(null);
@@ -153,6 +151,8 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
   return (
     <div className="fixed inset-0 z-[67] bg-canvas/95 backdrop-blur-sm flex items-center justify-center p-6">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

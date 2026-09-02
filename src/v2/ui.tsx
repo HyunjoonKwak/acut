@@ -197,6 +197,7 @@ export function Menu({
         onKeyDown: (e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
+            e.stopPropagation();
             setOpen(true);
           }
         },

@@ -121,7 +121,11 @@ export default function SelectMenu({
                   판정·별점 지우기
                 </MenuItem>
                 <MenuSep />
-                <MenuItem onClick={run(() => setUi({ organizing: true }))}>
+                <MenuItem
+                  onClick={run(() =>
+                    setUi({ organizing: true, organizeSelection: null }),
+                  )}
+                >
                   정리…
                 </MenuItem>
                 <MenuItem

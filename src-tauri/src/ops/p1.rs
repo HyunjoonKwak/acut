@@ -362,8 +362,13 @@ pub fn event_candidates(
         groups.last_mut().expect("group exists").push(item);
     }
 
-    let mut out = Vec::new();
-    for group in groups.into_iter().filter(|group| group.len() >= minimum) {
+    let groups = groups
+        .into_iter()
+        .filter(|group| group.len() >= minimum)
+        .collect::<Vec<_>>();
+    let suggestion_index = naming::SuggestionIndex::load(db)?;
+    let mut out = Vec::with_capacity(groups.len());
+    for group in groups {
         let start_at = group.first().map(|item| item.taken_at).unwrap_or_default();
         let end_at = group.last().map(|item| item.taken_at).unwrap_or_default();
         let ids = group.iter().map(|item| item.id).collect::<Vec<_>>();
@@ -373,7 +378,7 @@ pub fn event_candidates(
             start_at,
             end_at,
             count: group.len(),
-            suggestions: naming::suggest(db, &ids, 5)?,
+            suggestions: suggestion_index.suggest(db, &ids, 5)?,
             items: group,
         });
     }

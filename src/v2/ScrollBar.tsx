@@ -133,6 +133,12 @@ export default function ScrollBar({
   const currentBucket = empty ? null : bucketAt(items, Math.min(at, total - 1));
 
   const onTimelineKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"].includes(e.key))
+      return;
+    // 사진이 0장이어도 프로그램 초점이 남아 있을 수 있다. 이 키가 뒤의 격자
+    // 이동으로 새면 타임라인과 선택이 동시에 움직인다.
+    e.preventDefault();
+    e.stopPropagation();
     if (empty) return;
     const current = Math.min(at, total - 1);
     const month = items.findIndex(
@@ -148,9 +154,7 @@ export default function ScrollBar({
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = Math.max(0, total - Math.max(1, pageSize));
     if (next === null) return;
-    e.preventDefault();
-    e.stopPropagation();
-    onSeek(next);
+    if (next !== current) onSeek(next);
   };
 
   return (

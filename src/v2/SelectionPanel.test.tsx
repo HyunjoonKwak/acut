@@ -35,7 +35,11 @@ describe("선택 패널", () => {
   beforeEach(() => {
     useSelection.setState({ selected: null, picked: new Set() });
     usePrefs.setState({ ...DEFAULT_PREFS });
-    useUi.setState({ comparing: null, organizing: false });
+    useUi.setState({
+      comparing: null,
+      organizing: false,
+      organizeSelection: null,
+    });
   });
 
   it("고른 것이 없으면 안 뜬다", () => {

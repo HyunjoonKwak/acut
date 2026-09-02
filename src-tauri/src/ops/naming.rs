@@ -26,9 +26,8 @@ pub struct Suggestion {
 /// `20240827_여행`, 그리고 날짜가 없는 `황금부엉이`.
 pub fn parse_folder(name: &str) -> (Option<String>, String) {
     let b = name.as_bytes();
-    let digits_at = |i: usize, n: usize| {
-        i + n <= b.len() && b[i..i + n].iter().all(|c| c.is_ascii_digit())
-    };
+    let digits_at =
+        |i: usize, n: usize| i + n <= b.len() && b[i..i + n].iter().all(|c| c.is_ascii_digit());
 
     // YYYY-MM-DD / YYYY.MM.DD / YYYY_MM_DD
     if digits_at(0, 4) && b.len() >= 10 {
@@ -59,11 +58,20 @@ pub fn split_day_suffix(title: &str) -> (String, Option<u32>) {
     let Some(rest) = t.strip_suffix("일차") else {
         return (t.to_string(), None);
     };
-    let digits: String = rest.chars().rev().take_while(char::is_ascii_digit).collect();
+    let digits: String = rest
+        .chars()
+        .rev()
+        .take_while(char::is_ascii_digit)
+        .collect();
     if digits.is_empty() {
         return (t.to_string(), None);
     }
-    let n: u32 = digits.chars().rev().collect::<String>().parse().unwrap_or(1);
+    let n: u32 = digits
+        .chars()
+        .rev()
+        .collect::<String>()
+        .parse()
+        .unwrap_or(1);
     let head = rest[..rest.len() - digits.len()].trim_end().to_string();
     (head, Some(n))
 }
@@ -83,9 +91,7 @@ pub fn words(title: &str) -> Vec<String> {
         .split(|c: char| c.is_whitespace() || matches!(c, '-' | '_' | ',' | '(' | ')'))
         .map(str::trim)
         .filter(|w| {
-            w.chars().count() >= 2
-                && !w.chars().all(|c| c.is_ascii_digit())
-                && !w.ends_with("일차")
+            w.chars().count() >= 2 && !w.chars().all(|c| c.is_ascii_digit()) && !w.ends_with("일차")
         })
         .map(crate::scan::nfc)
         .collect()
@@ -149,6 +155,13 @@ struct Known {
     lon: Option<f64>,
 }
 
+/// 폴더 전체를 훑는 이름·좌표 자료. 이벤트 후보가 여러 묶음이어도 이 값은
+/// 한 번만 읽는다. 후보마다 `folders × files GROUP BY`를 되풀이하면 사진 수가
+/// 아니라 후보 수만큼 같은 대형 질의가 실행된다.
+pub(crate) struct SuggestionIndex {
+    folders: Vec<Known>,
+}
+
 fn known_folders(db: &Db) -> Result<Vec<Known>> {
     db.read(|c| {
         let mut st = c.prepare(
@@ -160,22 +173,42 @@ fn known_folders(db: &Db) -> Result<Vec<Known>> {
         let it = st.query_map([], |r| {
             let name: String = r.get(0)?;
             let (date, title) = parse_folder(&name);
-            Ok(Known { date, title, lat: r.get(1)?, lon: r.get(2)? })
+            Ok(Known {
+                date,
+                title,
+                lat: r.get(1)?,
+                lon: r.get(2)?,
+            })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })
 }
 
+impl SuggestionIndex {
+    pub(crate) fn load(db: &Db) -> Result<Self> {
+        Ok(Self {
+            folders: known_folders(db)?,
+        })
+    }
+
+    pub(crate) fn suggest(&self, db: &Db, ids: &[i64], limit: usize) -> Result<Vec<Suggestion>> {
+        let Some(f) = facts(db, ids)? else {
+            return Ok(Vec::new());
+        };
+        Ok(suggest_from(&f, &self.folders, limit))
+    }
+}
+
 /// 이벤트 이름 후보. 점수가 높은 것부터.
 pub fn suggest(db: &Db, ids: &[i64], limit: usize) -> Result<Vec<Suggestion>> {
-    let Some(f) = facts(db, ids)? else {
-        return Ok(Vec::new());
-    };
-    let folders = known_folders(db)?;
+    SuggestionIndex::load(db)?.suggest(db, ids, limit)
+}
+
+fn suggest_from(f: &Facts, folders: &[Known], limit: usize) -> Vec<Suggestion> {
     let mut out: Vec<Suggestion> = Vec::new();
     let md = f.date.get(5..).unwrap_or("");
 
-    for k in &folders {
+    for k in folders {
         if k.title.is_empty() {
             continue;
         }
@@ -229,7 +262,7 @@ pub fn suggest(db: &Db, ids: &[i64], limit: usize) -> Result<Vec<Suggestion>> {
         });
     }
 
-    Ok(rank(out, limit))
+    rank(out, limit)
 }
 
 /// `b`가 `a`의 다음 날인가. 문자열 날짜를 그대로 비교한다.
@@ -271,7 +304,10 @@ mod tests {
         );
         assert_eq!(parse_folder("황금부엉이"), (None, "황금부엉이".into()));
         // 날짜만 있는 폴더도 흔하다
-        assert_eq!(parse_folder("2003-02-02"), (Some("2003-02-02".into()), "".into()));
+        assert_eq!(
+            parse_folder("2003-02-02"),
+            (Some("2003-02-02".into()), "".into())
+        );
     }
 
     #[test]
@@ -282,7 +318,10 @@ mod tests {
 
     #[test]
     fn day_counters_increment() {
-        assert_eq!(split_day_suffix("거제통영 가족여행 2일차"), ("거제통영 가족여행".into(), Some(2)));
+        assert_eq!(
+            split_day_suffix("거제통영 가족여행 2일차"),
+            ("거제통영 가족여행".into(), Some(2))
+        );
         assert_eq!(split_day_suffix("하와이"), ("하와이".into(), None));
         assert_eq!(next_day("하와이"), "하와이 2일차");
         assert_eq!(next_day("하와이 2일차"), "하와이 3일차");
@@ -291,7 +330,10 @@ mod tests {
 
     #[test]
     fn words_skip_noise() {
-        assert_eq!(words("거제통영 가족여행 2일차"), vec!["거제통영", "가족여행"]);
+        assert_eq!(
+            words("거제통영 가족여행 2일차"),
+            vec!["거제통영", "가족여행"]
+        );
         assert_eq!(words("2024 생일"), vec!["생일"], "숫자만인 것은 버린다");
         assert!(words("a").is_empty(), "한 글자는 낱말로 치지 않는다");
     }
@@ -304,7 +346,10 @@ mod tests {
         assert!(is_previous_day("2024-02-29", "2024-03-01"), "윤년도");
         assert!(!is_previous_day("2024-08-27", "2024-08-27"));
         assert!(!is_previous_day("2024-08-27", "2024-08-29"));
-        assert!(!is_previous_day("2024-08-27", "2024-08-26"), "거꾸로는 아니다");
+        assert!(
+            !is_previous_day("2024-08-27", "2024-08-26"),
+            "거꾸로는 아니다"
+        );
     }
 
     #[test]
@@ -327,7 +372,11 @@ mod tests {
 
     #[test]
     fn ranking_drops_duplicates_and_keeps_the_best() {
-        let s = |t: &str, n: i32| Suggestion { title: t.into(), why: String::new(), score: n };
+        let s = |t: &str, n: i32| Suggestion {
+            title: t.into(),
+            why: String::new(),
+            score: n,
+        };
         let r = rank(vec![s("여행", 10), s("생일", 50), s("여행", 90)], 10);
         assert_eq!(r.len(), 2);
         assert_eq!(r[0].title, "여행", "같은 제목은 높은 점수만 남는다");
@@ -345,8 +394,7 @@ mod real {
     #[test]
     #[ignore = "실제 DB 사본 필요"]
     fn suggestions_on_the_real_library() {
-        let live = dirs_next_home()
-            .join("Library/Application Support/com.acut.media/acut-v2.db");
+        let live = dirs_next_home().join("Library/Application Support/com.acut.media/acut-v2.db");
         if !live.is_file() {
             eprintln!("실제 DB 없음 — 건너뜀");
             return;

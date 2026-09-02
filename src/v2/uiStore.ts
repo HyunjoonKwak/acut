@@ -14,6 +14,8 @@ type Store = {
   /** 뷰어를 창 전체로 — 기본은 사이드바를 남겨 둔다 */
   viewerFull: boolean;
   organizing: boolean;
+  /** 이벤트 자동 발견처럼 현재 그리드 쪽 밖의 사진까지 정리할 때의 고정 대상. */
+  organizeSelection: { ids: number[]; libraryId: number } | null;
   /** 선택 사진 또는 폴더의 촬영일 감사·교정 */
   captureDate: { ids: number[]; libraryId?: number; relPath?: string } | null;
   /** 선택 사진을 기존/새 폴더로 이동·복사 */
@@ -61,6 +63,7 @@ export const useUi = create<Store>()((set) => ({
   viewerAt: null,
   viewerFull: false,
   organizing: false,
+  organizeSelection: null,
   captureDate: null,
   transfer: null,
   folderOperation: null,

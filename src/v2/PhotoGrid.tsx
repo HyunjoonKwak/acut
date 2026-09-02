@@ -87,15 +87,11 @@ export default function PhotoGrid({
 
   return (
     <div className="flex-1 flex min-h-0 min-w-0 relative">
-      <main
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="flex-1 overflow-y-auto p-2.5"
-      >
-        {error && (
+      {error && (
+        <div className="pointer-events-none absolute left-2.5 right-[68px] top-2.5 z-20 flex justify-center">
           <div
             role="alert"
-            className="sticky top-0 z-20 mx-auto mb-2 flex max-w-2xl items-center gap-3 rounded-lg bg-raised px-3 py-2 text-[13px] text-fg ring-1 ring-drop/60 shadow-lg"
+            className="pointer-events-auto flex w-full max-w-2xl items-center gap-3 rounded-lg bg-raised px-3 py-2 text-[13px] text-fg ring-1 ring-drop/60 shadow-lg"
           >
             <span className="min-w-0 flex-1">
               사진을 불러오지 못했습니다
@@ -108,7 +104,13 @@ export default function PhotoGrid({
               다시 시도
             </button>
           </div>
-        )}
+        </div>
+      )}
+      <main
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="flex-1 overflow-y-auto p-2.5"
+      >
         {empty && (
           <div className="h-full flex items-center justify-center text-fg-mute">
             「라이브러리 추가」로 사진 폴더를 등록하세요

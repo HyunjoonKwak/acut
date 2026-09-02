@@ -128,6 +128,40 @@ impl AppState {
     }
 }
 
+/// 파일 작업이 만든 썸네일 대기 행만 백그라운드에서 채운다.
+/// 전체 폴더 스캔이나 원본 hash 재계산은 하지 않는다.
+pub(crate) fn start_pending_thumbs(app: &AppHandle, library_id: i64) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let lib = crate::db::libraries::get(&state.db, library_id)
+        .map_err(err)?
+        .ok_or("등록되지 않은 라이브러리입니다")?;
+    let mount = crate::db::volumes::find_mount(&lib.volume_uuid)
+        .ok_or("디스크가 연결되어 있지 않습니다")?;
+    let cache_root = state.cache_root(library_id);
+    let db = Arc::clone(&state.db);
+    let cancel = Arc::clone(&state.cancel);
+    let Some(guard) = job::try_start_with(&state.running, "썸네일", false) else {
+        return Err("다른 작업이 시작되어 썸네일 생성을 다음 스캔으로 미룹니다".into());
+    };
+    cancel.store(false, Ordering::Relaxed);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let _guard = guard;
+        let result = scan::thumbs::generate(
+            &db,
+            library_id,
+            &mount,
+            &cache_root,
+            cancel,
+            |progress| {
+                let _ = handle.emit("thumb-progress", progress);
+            },
+        );
+        let _ = handle.emit("thumb-done", result.is_ok());
+    });
+    Ok(())
+}
+
 pub(crate) fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }

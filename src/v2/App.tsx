@@ -19,6 +19,7 @@ import AreaPickDialog from "./AreaPickDialog";
 import OffloadDialog from "./OffloadDialog";
 import HuskDialog from "./HuskDialog";
 import Organize from "./Organize";
+import CaptureDateDialog from "./CaptureDateDialog";
 import PhotoGrid from "./PhotoGrid";
 import Preview from "./Preview";
 import SettingsView from "./SettingsView";
@@ -288,6 +289,7 @@ export default function App() {
       ctxAt: s.ctxAt,
       comparing: s.comparing,
       organizing: s.organizing,
+      captureDate: s.captureDate,
       importing: s.importing,
       helping: s.helping,
       dropped: s.dropped,
@@ -477,6 +479,15 @@ export default function App() {
       <Toasts />
       <BlockingJob />
       {ui.helping && <Shortcuts onClose={() => ui.set({ helping: false })} />}
+      {ui.captureDate !== null && (
+        <CaptureDateDialog
+          target={ui.captureDate}
+          onChanged={async () => {
+            await ops.after();
+          }}
+          onClose={() => ui.set({ captureDate: null })}
+        />
+      )}
       {ui.textSearch !== null && ui.similarFor === null && (
         <Similar
           query={{ text: ui.textSearch }}

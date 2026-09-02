@@ -3,6 +3,8 @@
 
 pub mod cache;
 pub mod exif;
+#[cfg(target_os = "macos")]
+pub mod exif_write;
 pub mod taken_at;
 pub mod thumbnail;
 pub mod mp4date;

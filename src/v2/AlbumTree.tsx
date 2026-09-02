@@ -183,6 +183,22 @@ export default function AlbumTree({
                         onClick={() =>
                           setUi({
                             folderMenu: null,
+                            captureDate: {
+                              ids: [],
+                              libraryId: f.library_id,
+                              relPath: f.path.split("/").slice(1).join("/"),
+                            },
+                          })
+                        }
+                        disabled={busy}
+                        className="block w-full text-left px-3 py-1.5 text-[13px] text-fg-dim hover:bg-hover whitespace-nowrap disabled:opacity-40"
+                      >
+                        촬영일 감사·교정…
+                      </button>
+                      <button
+                        onClick={() =>
+                          setUi({
+                            folderMenu: null,
                             offload: {
                               folderId: f.id!,
                               name: f.name,

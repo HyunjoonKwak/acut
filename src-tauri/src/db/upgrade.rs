@@ -17,9 +17,32 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_done_at(c)?;
     add_geo_levels(c)?;
     add_nas_pulls(c)?;
+    add_gallery_transition_p0(c)?;
     rename_old_labels(c)?;
     migrate_taken_at_to_utc(c)?;
     Ok(())
+}
+
+/// Gallery→Desk P0 작업용 테이블. CREATE IF NOT EXISTS라 구버전·신규 DB 모두 멱등이다.
+fn add_gallery_transition_p0(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS capture_date_journal (
+            batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+            file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            backup_vol TEXT, backup_path TEXT,
+            old_atime_sec INTEGER NOT NULL, old_atime_nsec INTEGER NOT NULL,
+            old_mtime_sec INTEGER NOT NULL, old_mtime_nsec INTEGER NOT NULL,
+            old_taken_at INTEGER NOT NULL, old_source INTEGER NOT NULL,
+            old_override INTEGER, new_taken_at INTEGER NOT NULL,
+            write_scope TEXT NOT NULL,
+            PRIMARY KEY (batch_id, file_id)
+         );
+         CREATE TABLE IF NOT EXISTS capture_date_overrides (
+            file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+            taken_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+         );",
+    )
 }
 
 /// 초기 버전이 UTC처럼 저장했던 시간대 없는 EXIF/파일명 시각을 실제 Unix

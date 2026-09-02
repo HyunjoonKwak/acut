@@ -126,6 +126,11 @@ export default function SelectionPanel({
       </div>
       )}
       <Sep />
+      <PanelBtn
+        onClick={() => setUi({ captureDate: { ids: [...picked] } })}
+      >
+        촬영일 감사
+      </PanelBtn>
       <button
         onClick={() => setUi({ organizing: true })}
         disabled={libId === null}

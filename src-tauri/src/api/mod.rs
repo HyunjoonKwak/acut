@@ -9,6 +9,7 @@
 pub mod geo;
 pub mod cull;
 pub mod backup;
+pub mod capture_date;
 pub mod job;
 pub mod nas;
 pub mod organize;

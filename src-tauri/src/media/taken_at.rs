@@ -35,6 +35,8 @@ pub enum Source {
     FileTime = 2,
     /// 알 수 없어 현재 시각을 넣었다
     Unknown = 3,
+    /// 사용자가 명시적으로 고친 시각. 파일 내부에 쓸 수 없는 형식도 재스캔 뒤 유지한다.
+    Manual = 4,
 }
 
 /// 2000-01-01 지역 자정을 모든 시간대에서 포함하도록 UTC 기준 하루 여유를 둔다.
@@ -164,7 +166,7 @@ pub fn from_filename(name: &str) -> Option<i64> {
     epoch_ms_run(&digits)
 }
 
-/// 앞뒤가 숫자가 아닌, 정확히 13자리 숫자 덩어리를 밀리초로 읽는다.
+/// 앞뒤가 숫자가 아닌 13자리 밀리초와, 그 뒤에 붙은 0~6자리 순번을 읽는다.
 /// 덩어리의 일부(꼬리)는 보지 않는다 — `20261301_120000`의 꼬리를 시각으로 오인한다.
 /// 열 자리 초는 믿지 않는다 — 웹 이미지 id와 구분이 안 된다.
 fn epoch_ms_run(b: &[u8]) -> Option<i64> {
@@ -178,8 +180,11 @@ fn epoch_ms_run(b: &[u8]) -> Option<i64> {
         while i < b.len() && b[i].is_ascii_digit() {
             i += 1;
         }
-        if i - start == 13 {
-            let ms = b[start..i].iter().fold(0i64, |a, &c| a * 10 + (c - b'0') as i64);
+        let len = i - start;
+        if (13..=19).contains(&len) {
+            let ms = b[start..start + 13]
+                .iter()
+                .fold(0i64, |a, &c| a * 10 + (c - b'0') as i64);
             if let Some(t) = epoch_secs(ms / 1000) {
                 return Some(t);
             }
@@ -229,7 +234,8 @@ fn epoch_secs(t: i64) -> Option<i64> {
 }
 
 fn valid_date(y: i64, mo: i64, da: i64) -> bool {
-    (1990..=2100).contains(&y) && (1..=12).contains(&mo) && (1..=31).contains(&da)
+    (1990..=2100).contains(&y)
+        && chrono::NaiveDate::from_ymd_opt(y as i32, mo as u32, da as u32).is_some()
 }
 
 /// 시간대 없는 촬영 기기의 지역 시각 → 실제 유닉스 시각.
@@ -273,6 +279,11 @@ mod tests {
         // 카카오톡·페이스북 저장본 — 13자리 밀리초
         assert_eq!(from_filename("kakaotalk_1525225566458.mp4"), Some(1_525_225_566));
         assert_eq!(from_filename("FB_IMG_1525225566458.jpg"), Some(1_525_225_566));
+        // 카카오 내보내기는 13자리 epoch 뒤에 짧은 순번을 붙이기도 한다.
+        assert_eq!(from_filename("1502088228879113.jpg"), Some(1_502_088_228));
+        assert_eq!(from_filename("Kakao_1502088228879000000.jpg"), Some(1_502_088_228));
+        // 순번은 최대 6자리만. 더 긴 숫자 id의 앞을 epoch로 오인하지 않는다.
+        assert_eq!(from_filename("15020882288790000000.jpg"), None);
         // 열 자리 초는 믿지 않는다 — 웹 이미지 id와 구분이 안 된다
         assert_eq!(from_filename("1525225566.jpg"), None);
         // 13자리라도 2000~2030년 밖이면 시각이 아니다
@@ -437,6 +448,7 @@ mod tests {
         assert_eq!(Source::Filename as i32, 1);
         assert_eq!(Source::FileTime as i32, 2);
         assert_eq!(Source::Unknown as i32, 3);
+        assert_eq!(Source::Manual as i32, 4);
     }
 
     // ── 날짜 변환 ──────────────────────────────────────────────────────
@@ -449,6 +461,21 @@ mod tests {
                 (y as i32, mo as u32, d as u32, h as u32, mi as u32, s as u32)
             );
         }
+    }
+
+    #[test]
+    fn local_midnight_does_not_cross_a_date_boundary() {
+        for (y, mo, d, h, mi, s) in [(2024, 1, 1, 0, 0, 1), (2024, 12, 31, 23, 59, 59)] {
+            let actual = Local.timestamp_opt(t(y, mo, d, h, mi, s), 0).single().unwrap();
+            assert_eq!((actual.year(), actual.month(), actual.day(), actual.hour()), (y as i32, mo as u32, d as u32, h as u32));
+        }
+    }
+
+    #[test]
+    fn rejects_impossible_calendar_dates_including_non_leap_february() {
+        assert_eq!(from_filename("20230229_120000.jpg"), None);
+        assert_eq!(from_filename("20240431_120000.jpg"), None);
+        assert!(from_filename("20240229_120000.jpg").is_some());
     }
 
     #[test]

@@ -59,6 +59,7 @@ reqwest = { version = "0.12", features = ["json", "multipart", "stream", "blocki
 
 # File system
 walkdir = "2.5"
+filetime = "0.2"
 # 폴더 감시 — 파인더로 넣은 사진이 앱에 나타난다 (2단계)
 notify = "7.0"
 
@@ -87,8 +88,6 @@ objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "
 
 [dev-dependencies]
 tempfile = "3"
-# 가져오기 시험에서 «찍은 날»을 못으로 박는다 — EXIF가 없으면 수정시각이 쓰인다
-filetime = "0.2"
 
 # 개발 빌드에서도 의존 라이브러리는 최적화한다.
 # 그림 디코딩(image)이 디버그로 돌면 AI 벡터 만들기가 초당 20장이었다 —

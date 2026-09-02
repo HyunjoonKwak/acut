@@ -299,6 +299,33 @@ CREATE TABLE IF NOT EXISTS journal (
 );
 CREATE INDEX IF NOT EXISTS idx_journal_batch ON journal(batch_id);
 
+-- 촬영일 교정의 복구 자료. JPEG는 backup_path의 원본 파일로, 그 외 형식은
+-- 이전 atime/mtime과 DB 값으로 되돌린다. 성공 항목만 한 줄씩 남는다.
+CREATE TABLE IF NOT EXISTS capture_date_journal (
+    batch_id        INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+    file_id         INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    backup_vol      TEXT,
+    backup_path     TEXT,
+    old_atime_sec   INTEGER NOT NULL,
+    old_atime_nsec  INTEGER NOT NULL,
+    old_mtime_sec   INTEGER NOT NULL,
+    old_mtime_nsec  INTEGER NOT NULL,
+    old_taken_at    INTEGER NOT NULL,
+    old_source      INTEGER NOT NULL,
+    old_override    INTEGER,
+    new_taken_at    INTEGER NOT NULL,
+    write_scope     TEXT NOT NULL,
+    PRIMARY KEY (batch_id, file_id)
+);
+
+-- 파일 내부 촬영일을 쓸 수 없는 포맷의 명시적 수동 보정. 재스캔이 파일명보다
+-- mtime을 우선해 다시 뒤집지 않도록 파일 행에 붙여 둔다.
+CREATE TABLE IF NOT EXISTS capture_date_overrides (
+    file_id     INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    taken_at    INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
 -- ---------------------------------------------------------------------------
 -- 스마트 앨범 — 조건을 저장해 두고 이름으로 부른다
 --

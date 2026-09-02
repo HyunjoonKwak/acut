@@ -252,6 +252,8 @@ pub fn run() {
             api::organize::organize_move,
             api::organize::batches_recent,
             api::organize::batch_undo,
+            api::capture_date::capture_date_audit,
+            api::capture_date::capture_date_apply,
             api::scan_start,
             api::scan_cancel,
             api::files_page,

@@ -294,6 +294,19 @@ pub fn scan_folder(
         Ok(())
     })?;
 
+    // 파일 내부에 촬영일을 쓸 수 없는 형식의 명시적 수동 교정은 재스캔 뒤에도
+    // 유지한다. 자동 파일명 판독보다 사용자의 명시적 결정을 우선한다.
+    db.write(|c| {
+        c.execute(
+            "UPDATE files SET
+                 taken_at = (SELECT o.taken_at FROM capture_date_overrides o WHERE o.file_id=files.id),
+                 taken_at_source = 4
+             WHERE id IN (SELECT file_id FROM capture_date_overrides)
+               AND folder_id IN (SELECT id FROM folders WHERE library_id=?1)",
+            [library_id],
+        )
+    })?;
+
     // 디스크에서 사라진 것의 행을 뺀다 — 훑은 뿌리 아래에서 이번에 못 본 파일.
     // 예전엔 전체 다시 스캔도 이걸 안 해 Finder 에서 지운 폴더 269개가 «없는 폴더»로 남았다 (2026-08-30)
     {

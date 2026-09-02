@@ -30,6 +30,8 @@ export function undoLabel(kind: string, n: number, label?: string | null): strin
       return "복사한 폴더 지우기";
     case "folder_trash":
       return "휴지통 보낸 폴더 되살리기";
+    case "folder_audit":
+      return `폴더 이름 ${c}개 되돌리기`;
     default:
       return `되돌리기 (${c}장)`;
   }
@@ -47,6 +49,7 @@ const undoable = new Set([
   "folder_move",
   "folder_copy",
   "folder_trash",
+  "folder_audit",
 ]);
 
 export const isUndoableBatchKind = (kind: string): boolean => undoable.has(kind);

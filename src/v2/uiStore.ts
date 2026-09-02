@@ -20,6 +20,10 @@ type Store = {
   transfer: { ids: number[]; sourceLibraryId: number } | null;
   /** 생성·이름변경·이동·복사·휴지통 폴더 작업 */
   folderOperation: FolderOperationTarget | null;
+  /** 라이브러리의 날짜 폴더 이름 dry-run 감사 */
+  folderAudit: { libraryId: number; libraryName: string } | null;
+  /** 작업대 사진의 시간 간격 기반 이벤트 후보 검토 */
+  eventDiscovery: { libraryId: number; libraryName: string } | null;
   /** 라이브러리 등록 중 — 영역을 고르는 폴더 */
   areaPick: string | null;
   /** 나란히 보기 — 골라 둔 것 중 앞의 넷. null이면 닫힌 상태 */
@@ -58,6 +62,8 @@ export const useUi = create<Store>()((set) => ({
   captureDate: null,
   transfer: null,
   folderOperation: null,
+  folderAudit: null,
+  eventDiscovery: null,
   areaPick: null,
   comparing: null,
   helping: false,
@@ -90,6 +96,8 @@ export const useOverlayOpen = () =>
       s.captureDate !== null ||
       s.transfer !== null ||
       s.folderOperation !== null ||
+      s.folderAudit !== null ||
+      s.eventDiscovery !== null ||
       s.comparing !== null ||
       s.similarFor !== null ||
       s.textSearch !== null ||

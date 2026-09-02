@@ -241,8 +241,8 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            n, 22,
-            "테이블 22개가 만들어져야 한다 (schema.sql 21 + upgrade의 nas_pulls)"
+            n, 23,
+            "테이블 23개가 만들어져야 한다 (schema.sql 22 + upgrade의 nas_pulls)"
         );
     }
 

@@ -15,6 +15,7 @@ pub mod merge;
 pub mod naming;
 pub mod offload;
 pub mod organize;
+pub mod p1;
 pub mod xmp;
 pub mod rename;
 pub mod trash;

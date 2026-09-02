@@ -299,6 +299,15 @@ CREATE TABLE IF NOT EXISTS journal (
 );
 CREATE INDEX IF NOT EXISTS idx_journal_batch ON journal(batch_id);
 
+-- 폴더 이름 감사 한 번은 여러 개의 기존 folder_rename 배치를 묶는다. 자식은
+-- 기존 manifest/undo 안전판을 그대로 쓰고, UI에는 부모 배치 하나만 노출한다.
+CREATE TABLE IF NOT EXISTS folder_audit_children (
+    parent_batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+    child_batch_id  INTEGER NOT NULL UNIQUE REFERENCES batches(id) ON DELETE CASCADE,
+    seq             INTEGER NOT NULL,
+    PRIMARY KEY (parent_batch_id, child_batch_id)
+);
+
 -- 촬영일 교정의 복구 자료. JPEG는 backup_path의 원본 파일로, 그 외 형식은
 -- 이전 atime/mtime과 DB 값으로 되돌린다. 성공 항목만 한 줄씩 남는다.
 CREATE TABLE IF NOT EXISTS capture_date_journal (

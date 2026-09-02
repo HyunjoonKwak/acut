@@ -212,6 +212,28 @@ pub fn libraries_of(db: &Db, ids: &[i64]) -> Result<Vec<i64>> {
         .collect())
 }
 
+/// 선택 사진의 현재 영역. 내사진→공용 정리의 기본 동작을 복사로 고를 때 쓴다.
+pub fn areas_of(db: &Db, ids: &[i64]) -> Result<Vec<i32>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+    db.read(|connection| {
+        let mut statement = connection.prepare(&format!(
+            "SELECT DISTINCT l.area FROM files fi
+             JOIN folders fo ON fo.id=fi.folder_id
+             JOIN libraries l ON l.id=fo.library_id
+             WHERE fi.id IN ({list}) AND fi.trashed_at IS NULL ORDER BY l.area"
+        ))?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+    })
+}
+
+pub fn should_publish(source_areas: &[i32], destination_area: i32) -> bool {
+    source_areas == [1] && destination_area == 2
+}
+
 /// 옮기고 나서 빈 껍데기만 남은 폴더 행을 치운다. 디스크의 빈 폴더는 두고
 /// DB에서만 감춘다 — 사용자가 밖에서 만든 폴더를 우리가 지우면 안 된다.
 pub fn forget_empty_folders(db: &Db, library_id: i64) -> Result<usize> {
@@ -327,6 +349,14 @@ mod tests {
         assert_eq!(event_rel_dir_for(1, "2024-08-27", "거제"), "2024-08-27 거제");
         assert_eq!(event_rel_dir_for(2, "2024-08-27", "거제"), "2024/2024-08-27 거제");
         assert_eq!(event_rel_dir_for(0, "2024-08-27", ""), "2024/2024-08-27");
+    }
+
+    #[test]
+    fn only_my_photos_to_shared_uses_publication_copy() {
+        assert!(should_publish(&[1], 2));
+        assert!(!should_publish(&[0], 2));
+        assert!(!should_publish(&[1], 1));
+        assert!(!should_publish(&[0, 1], 2));
     }
 
     #[test]

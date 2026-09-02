@@ -22,6 +22,8 @@ import Organize from "./Organize";
 import CaptureDateDialog from "./CaptureDateDialog";
 import TransferDialog from "./TransferDialog";
 import FolderOperationDialog from "./FolderOperationDialog";
+import FolderNameAuditDialog from "./FolderNameAuditDialog";
+import EventDiscoveryDialog from "./EventDiscoveryDialog";
 import PhotoGrid from "./PhotoGrid";
 import Preview from "./Preview";
 import SettingsView from "./SettingsView";
@@ -66,7 +68,7 @@ const MapView = lazy(() => import("./MapView"));
  * 스캔·키보드·작업)에 있다. 여기서는 그것들을 잇고 위에 뜨는 것들을 놓는다.
  */
 export default function App() {
-  const [libId] = usePref("libId");
+  const [libId, setLibId] = usePref("libId");
   useNasAuto();
   useUpdateAuto();
   // 재현용 — 시작 주소에 ?sel= 이 있으면 그 폴더를 바로 연다
@@ -294,6 +296,8 @@ export default function App() {
       captureDate: s.captureDate,
       transfer: s.transfer,
       folderOperation: s.folderOperation,
+      folderAudit: s.folderAudit,
+      eventDiscovery: s.eventDiscovery,
       importing: s.importing,
       helping: s.helping,
       dropped: s.dropped,
@@ -453,9 +457,16 @@ export default function App() {
               onDone={async (o) => {
                 if (o.failed > 0)
                   toast(
-                    `${o.moved}장 옮김 · ${o.failed}장 실패 — ${o.first_error ?? ""}`,
+                    `${o.moved + o.copied}장 처리 · ${o.failed}장 실패 — ${o.first_error ?? ""}`,
                     "drop",
                   );
+                else if (o.copied > 0)
+                  toast(
+                    `${o.copied.toLocaleString()}장 공용에 복사${o.already_published > 0 ? ` · ${o.already_published.toLocaleString()}장 이미 발행됨` : ""}`,
+                    "ok",
+                  );
+                else if (o.already_published > 0)
+                  toast(`${o.already_published.toLocaleString()}장은 이미 공용에 있습니다`, "ok");
                 else toast(`${o.moved.toLocaleString()}장 옮겼습니다`, "ok");
                 useSelection.getState().clearPicked();
                 await ops.after();
@@ -512,6 +523,30 @@ export default function App() {
             await ops.after();
           }}
           onClose={() => ui.set({ folderOperation: null })}
+        />
+      )}
+      {ui.folderAudit !== null && (
+        <FolderNameAuditDialog
+          libraryId={ui.folderAudit.libraryId}
+          libraryName={ui.folderAudit.libraryName}
+          onChanged={async () => {
+            await useData.getState().loadFolders();
+            await ops.after();
+          }}
+          onClose={() => ui.set({ folderAudit: null })}
+        />
+      )}
+      {ui.eventDiscovery !== null && (
+        <EventDiscoveryDialog
+          libraryId={ui.eventDiscovery.libraryId}
+          libraryName={ui.eventDiscovery.libraryName}
+          onChoose={(chosen) => {
+            setLibId(ui.eventDiscovery!.libraryId);
+            useSelection.getState().setPicked(chosen);
+            useSelection.getState().setSelected(chosen[0] ?? null);
+            ui.set({ eventDiscovery: null, organizing: true });
+          }}
+          onClose={() => ui.set({ eventDiscovery: null })}
         />
       )}
       {ui.textSearch !== null && ui.similarFor === null && (

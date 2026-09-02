@@ -13,5 +13,7 @@ test("되돌리기 단추는 작업 종류별로 «무엇이 어떻게 되는지
   assert.equal(undoLabel("folder_copy", 1), "복사한 폴더 지우기");
   assert.equal(undoLabel("capture_date", 25), "촬영일 교정 25장 되돌리기");
   assert.equal(isUndoableBatchKind("folder_trash"), true);
+  assert.equal(undoLabel("folder_audit", 3), "폴더 이름 3개 되돌리기");
+  assert.equal(isUndoableBatchKind("folder_audit"), true);
   assert.equal(isUndoableBatchKind("delete"), false);
 });

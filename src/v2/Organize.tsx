@@ -4,12 +4,15 @@ import { useData } from "./dataStore";
 import { AREAS, nextArea } from "./areaItems";
 
 type Suggestion = { title: string; why: string; score: number };
-type Outcome = {
+export type OrganizeOutcome = {
   batch_id: number;
   moved: number;
+  copied: number;
   failed: number;
+  already_published: number;
   bytes: number;
   first_error: string | null;
+  mode: "move" | "publish_copy";
 };
 
 /**
@@ -27,7 +30,7 @@ export default function Organize({
   ids: number[];
   /** 옮겨 넣을 라이브러리 */
   libraryId: number;
-  onDone: (o: Outcome) => void;
+  onDone: (o: OrganizeOutcome) => void;
   onClose: () => void;
 }) {
   const libs = useData((s) => s.libs);
@@ -46,6 +49,9 @@ export default function Organize({
   const [preview, setPreview] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const sourceArea = libs.find((library) => library.id === libraryId)?.area;
+  const destinationArea = libs.find((library) => library.id === dest)?.area;
+  const publishing = sourceArea === 1 && destinationArea === 2;
 
   useEffect(() => {
     invoke<string>("organize_date", { ids })
@@ -68,7 +74,7 @@ export default function Organize({
     setBusy(true);
     setError(null);
     try {
-      const o = await invoke<Outcome>("organize_move", {
+      const o = await invoke<OrganizeOutcome>("organize_move", {
         ids,
         libraryId: dest,
         date,
@@ -99,7 +105,7 @@ export default function Organize({
         <div className="flex items-baseline gap-2 mb-4">
           <span className="text-[16px] font-semibold text-fg">정리</span>
           <span className="text-[13px] text-fg-mute">
-            {ids.length.toLocaleString()}장을 이벤트 폴더로 옮깁니다
+            {ids.length.toLocaleString()}장을 이벤트 폴더로 {publishing ? "복사합니다" : "옮깁니다"}
           </span>
         </div>
 
@@ -191,7 +197,7 @@ export default function Organize({
         )}
 
         <div className="text-[11.5px] uppercase tracking-wider text-fg-mute mb-1">
-          옮겨질 곳
+          {publishing ? "복사될 곳" : "옮겨질 곳"}
         </div>
         <div className="px-2.5 py-2 rounded bg-raised font-mono text-[13px] text-accent break-all mb-4">
           {preview || "날짜를 정하세요"}
@@ -199,13 +205,26 @@ export default function Organize({
 
         {error && <div className="text-[13px] text-drop mb-3">{error}</div>}
 
+        {publishing && (
+          <div className="mb-3 rounded bg-raised px-2.5 py-2 text-[12.5px] text-fg-dim ring-1 ring-line">
+            내사진 원본은 그대로 두고 공용에 사본을 발행합니다. 같은 사진을 다시
+            실행하면 해시 원장이 중복 사본을 막습니다.
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
           <button
             onClick={run}
             disabled={!date || busy}
             className="h-control px-3.5 rounded-lg bg-accent text-accent-fg font-semibold text-[14px] disabled:opacity-40"
           >
-            {busy ? "옮기는 중…" : "옮기기"}
+            {busy
+              ? publishing
+                ? "복사하는 중…"
+                : "옮기는 중…"
+              : publishing
+                ? "공용에 복사"
+                : "옮기기"}
           </button>
           <button
             onClick={onClose}

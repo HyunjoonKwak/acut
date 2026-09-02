@@ -52,6 +52,8 @@ pub fn recent(db: &Db, limit: usize) -> Result<Vec<Batch>> {
         let mut st = c.prepare(
             "SELECT id, kind, label, item_count, created_at, undone_at
              FROM batches WHERE item_count > 0
+               AND NOT EXISTS (SELECT 1 FROM folder_audit_children p
+                               WHERE p.child_batch_id = batches.id)
              ORDER BY id DESC LIMIT ?1",
         )?;
         let it = st.query_map([limit as i64], |r| {
@@ -109,6 +111,9 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
     }
     if kind == "copy" || kind == "publish" {
         return crate::ops::transfer::undo_copy(db, batch_id);
+    }
+    if kind == "folder_audit" {
+        return crate::ops::p1::undo_folder_audit(db, batch_id);
     }
     if matches!(
         kind.as_str(),

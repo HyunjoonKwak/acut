@@ -18,9 +18,22 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_geo_levels(c)?;
     add_nas_pulls(c)?;
     add_gallery_transition_p0(c)?;
+    add_gallery_transition_p1(c)?;
     rename_old_labels(c)?;
     migrate_taken_at_to_utc(c)?;
     Ok(())
+}
+
+/// Gallery→Desk P1 폴더명 감사의 부모→자식 배치 연결. 신규·기존 DB 모두 멱등이다.
+fn add_gallery_transition_p1(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS folder_audit_children (
+            parent_batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+            child_batch_id INTEGER NOT NULL UNIQUE REFERENCES batches(id) ON DELETE CASCADE,
+            seq INTEGER NOT NULL,
+            PRIMARY KEY (parent_batch_id, child_batch_id)
+         );",
+    )
 }
 
 /// Gallery→Desk P0 작업용 테이블. CREATE IF NOT EXISTS라 구버전·신규 DB 모두 멱등이다.

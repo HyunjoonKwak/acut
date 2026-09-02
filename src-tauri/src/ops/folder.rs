@@ -181,6 +181,82 @@ fn is_same_or_child(parent: &str, candidate: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
+fn is_appledouble(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("._"))
+}
+
+fn appledouble_sibling(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_string_lossy();
+    Some(path.with_file_name(format!("._{name}")))
+}
+
+/// exFAT에서는 디렉터리를 지우는 도중 macOS가 `._이름`을 뒤늦게 만들 수 있어
+/// `remove_dir_all`이 DirectoryNotEmpty로 끝나는 경우가 있다. 검증된 작업 경로
+/// 안쪽을 bottom-up으로 다시 비우고, 그 경로의 AppleDouble sibling까지 정리한다.
+pub(crate) fn remove_tree(path: &Path) -> std::io::Result<()> {
+    if !path.exists() {
+        if let Some(sidecar) = appledouble_sibling(path) {
+            let _ = std::fs::remove_file(sidecar);
+        }
+        return Ok(());
+    }
+    let first_error = match std::fs::remove_dir_all(path) {
+        Ok(()) => {
+            if let Some(sidecar) = appledouble_sibling(path) {
+                let _ = std::fs::remove_file(sidecar);
+            }
+            return Ok(());
+        }
+        Err(error) => error,
+    };
+    for _ in 0..4 {
+        if !path.exists() {
+            break;
+        }
+        // 첫 판에서 뒤늦게 생긴 AppleDouble을 다음 판의 표준 구현이 다시
+        // 열거하도록 한다. exFAT에서는 이 재시도만으로 끝나는 경우가 대부분이다.
+        let _ = std::fs::remove_dir_all(path);
+        if !path.exists() {
+            break;
+        }
+        let entries = WalkDir::new(path)
+            .min_depth(1)
+            .contents_first(true)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .map(|entry| {
+                // 일부 exFAT 드라이버는 read_dir에서 NFD 이름을 주지만 삭제 syscall은
+                // NFC 이름만 찾는다. 스캔·DB와 같은 정규형으로 되돌려 삭제한다.
+                let normalized = crate::scan::nfc(&entry.path().to_string_lossy());
+                (PathBuf::from(normalized), entry.file_type())
+            })
+            .collect::<Vec<_>>();
+        for (entry, kind) in entries {
+            if kind.is_dir() {
+                std::fs::remove_dir(&entry)
+            } else {
+                std::fs::remove_file(&entry)
+            }
+            .ok();
+            if let Some(sidecar) = appledouble_sibling(&entry) {
+                let _ = std::fs::remove_file(sidecar);
+            }
+        }
+        let _ = std::fs::remove_dir(path);
+    }
+    if let Some(sidecar) = appledouble_sibling(path) {
+        let _ = std::fs::remove_file(sidecar);
+    }
+    if path.exists() {
+        Err(first_error)
+    } else {
+        Ok(())
+    }
+}
+
 fn manifest(root: &Path) -> Result<Manifest> {
     let mut entries = Vec::new();
     for entry in WalkDir::new(root).follow_links(false).into_iter() {
@@ -191,12 +267,17 @@ fn manifest(root: &Path) -> Result<Manifest> {
                 entry.path().display()
             )));
         }
+        if entry.file_type().is_file() && is_appledouble(entry.path()) {
+            continue;
+        }
         let rel = entry
             .path()
             .strip_prefix(root)
             .map_err(|_| bad("폴더 manifest 경로를 계산하지 못했습니다"))?
-            .to_string_lossy()
-            .into_owned();
+            .to_string_lossy();
+        // APFS는 NFC, exFAT은 NFD로 보일 수 있다. 같은 이름의 같은 파일을
+        // 볼륨 표현 차이 때문에 다른 manifest로 판정하지 않는다.
+        let rel = crate::scan::nfc(&rel);
         if entry.file_type().is_dir() {
             entries.push((format!("D\0{rel}"), None, 0u64));
         } else if entry.file_type().is_file() {
@@ -380,7 +461,7 @@ fn copy_tree_verified(
     let before = manifest(source)?;
     let temp = temp_sibling(target, batch);
     if temp.exists() {
-        std::fs::remove_dir_all(&temp)?;
+        remove_tree(&temp)?;
     }
     std::fs::create_dir_all(&temp)?;
     let result = (|| -> Result<()> {
@@ -389,6 +470,9 @@ fn copy_tree_verified(
             let entry = entry.map_err(|e| bad(e.to_string()))?;
             if entry.file_type().is_symlink() {
                 return Err(bad("심볼릭 링크가 든 폴더는 복사할 수 없습니다"));
+            }
+            if entry.file_type().is_file() && is_appledouble(entry.path()) {
+                continue;
             }
             let rel = entry
                 .path()
@@ -423,7 +507,7 @@ fn copy_tree_verified(
         Ok(())
     })();
     if let Err(error) = result {
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = remove_tree(&temp);
         return Err(error);
     }
     Ok(before)
@@ -448,7 +532,7 @@ fn stage_move(
                 .join(format!(".photo-desk-move-{batch}.bak")),
         );
         if let Err(error) = std::fs::rename(source, &backup) {
-            let _ = std::fs::remove_dir_all(destination);
+            let _ = remove_tree(destination);
             return Err(error.into());
         }
         Ok((info, Some(backup)))
@@ -707,7 +791,7 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     &info.file_hashes,
                 ) {
                     let _ = delete_copied_db(db, &destination_lib, &preview.destination);
-                    let _ = std::fs::remove_dir_all(&destination);
+                    let _ = remove_tree(&destination);
                     return Err(error);
                 }
                 record_folder(
@@ -735,14 +819,14 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                 ) {
                     if let Some(backup) = &backup {
                         let _ = std::fs::rename(backup, &source);
-                        let _ = std::fs::remove_dir_all(&destination);
+                        let _ = remove_tree(&destination);
                     } else {
                         let _ = std::fs::rename(&destination, &source);
                     }
                     return Err(error);
                 }
                 if let Some(backup) = backup {
-                    let _ = std::fs::remove_dir_all(backup);
+                    let _ = remove_tree(&backup);
                 }
                 record_folder(
                     db,
@@ -881,7 +965,7 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
             );
             return Ok(out);
         }
-        std::fs::remove_dir(&destination)?;
+        remove_tree(&destination)?;
         delete_copied_db(db, &destination_lib, &destination_rel)?;
     } else {
         if !destination.is_dir() {
@@ -898,7 +982,7 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
         }
         match row.op.as_str() {
             "copy" => {
-                std::fs::remove_dir_all(&destination)?;
+                remove_tree(&destination)?;
                 delete_copied_db(db, &destination_lib, &destination_rel)?;
             }
             "move" | "rename" => {
@@ -920,7 +1004,7 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                     std::fs::rename(&destination, &target)?;
                 } else {
                     copy_tree_verified(&destination, &target, batch, None)?;
-                    std::fs::remove_dir_all(&destination)?;
+                    remove_tree(&destination)?;
                 }
                 move_db_rows(
                     db,

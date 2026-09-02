@@ -13,6 +13,9 @@ mod nas;
 pub mod ops;
 mod scan;
 
+#[cfg(test)]
+mod g2_pilot;
+
 /// 프로세스가 시작된 순간 — 시작 시간을 재는 기준. run()의 첫 줄에서 박힌다.
 static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 

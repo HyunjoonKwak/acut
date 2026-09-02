@@ -32,6 +32,9 @@ pub struct Outcome {
     pub bytes: i64,
     /// 첫 실패 사유. 전부 나열하면 화면에 담기지 않는다.
     pub first_error: Option<String>,
+    /// 부분 실패 뒤 UI가 실패한 사진만 다시 고를 수 있게 한다. 이 값을 채우지
+    /// 않는 작업은 빈 배열로 직렬화된다.
+    pub failed_ids: Vec<i64>,
     /// 사진이 다 나가 디스크에서 지운 폴더 수(치우기) · 행까지 지운 폴더 수(비우기)
     pub folders_removed: usize,
 }

@@ -385,8 +385,9 @@ CREATE TABLE IF NOT EXISTS folder_journal (
     file_count              INTEGER NOT NULL DEFAULT 0,
     dir_count               INTEGER NOT NULL DEFAULT 0,
     bytes                   INTEGER NOT NULL DEFAULT 0,
-    manifest_sha256         TEXT NOT NULL,
-    cross_volume            INTEGER NOT NULL DEFAULT 0
+    manifest_sha256         TEXT NOT NULL,     -- 내용 해시. 같은 볼륨 작업은 '' (stat 으로 대조)
+    cross_volume            INTEGER NOT NULL DEFAULT 0,
+    stat_sha256             TEXT                -- 이름·크기·mtime 다이제스트. 0.9.1 이전은 NULL
 );
 
 -- ---------------------------------------------------------------------------

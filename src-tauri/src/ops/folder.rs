@@ -75,11 +75,22 @@ pub struct FolderOutcome {
 
 #[derive(Debug, Clone)]
 struct Manifest {
+    /// 파일 내용 SHA-256 을 섞은 다이제스트. 내용을 읽지 않은 manifest 는 빈 문자열.
     sha256: String,
+    /// 이름·크기·mtime 만 섞은 다이제스트. 같은 볼륨 이름변경·이동·휴지통의 undo 대조 기준.
+    stat_sha256: String,
     files: usize,
     directories: usize,
     bytes: u64,
     file_hashes: HashMap<String, String>,
+}
+
+struct TreeEntry {
+    stat_line: String,
+    content_line: String,
+    /// 파일이면 (상대경로, 내용 해시). 내용을 읽지 않았으면 해시는 None.
+    file: Option<(String, Option<String>)>,
+    size: u64,
 }
 
 fn bad(message: impl Into<String>) -> DbError {
@@ -272,7 +283,11 @@ pub(crate) fn remove_tree(path: &Path) -> std::io::Result<()> {
     }
 }
 
-fn manifest(root: &Path) -> Result<Manifest> {
+/// 폴더 트리를 읽어 manifest 를 만든다. `hash_contents` 가 참이면 파일 내용의 SHA-256 도
+/// 계산한다 — 복사·볼륨 간 이동의 사본 검증에 쓴다. 거짓이면 이름·크기·mtime 만 읽어 큰
+/// 폴더도 곧 끝난다. 같은 볼륨 이름변경·이동·휴지통은 rename 한 번이라 이 값으로 충분하고,
+/// undo 도 같은 값으로 «그새 바뀌었나»를 본다 (2차 리뷰 M-11).
+fn walk_tree(root: &Path, hash_contents: bool) -> Result<Manifest> {
     let mut entries = Vec::new();
     for entry in WalkDir::new(root).follow_links(false).into_iter() {
         let entry = entry.map_err(|e| bad(e.to_string()))?;
@@ -294,11 +309,30 @@ fn manifest(root: &Path) -> Result<Manifest> {
         // 볼륨 표현 차이 때문에 다른 manifest로 판정하지 않는다.
         let rel = crate::scan::nfc(&rel);
         if entry.file_type().is_dir() {
-            entries.push((format!("D\0{rel}"), None, 0u64));
+            entries.push(TreeEntry {
+                stat_line: format!("D\0{rel}"),
+                content_line: format!("D\0{rel}"),
+                file: None,
+                size: 0,
+            });
         } else if entry.file_type().is_file() {
-            let size = entry.metadata().map_err(|e| bad(e.to_string()))?.len();
-            let hash = crate::cull::hash::full(entry.path())?;
-            entries.push((format!("F\0{rel}\0{size}\0{hash}"), Some((rel, hash)), size));
+            let meta = entry.metadata().map_err(|e| bad(e.to_string()))?;
+            let size = meta.len();
+            let mtime = filetime::FileTime::from_last_modification_time(&meta).unix_seconds();
+            let hash = if hash_contents {
+                Some(crate::cull::hash::full(entry.path())?)
+            } else {
+                None
+            };
+            entries.push(TreeEntry {
+                stat_line: format!("F\0{rel}\0{size}\0{mtime}"),
+                content_line: hash
+                    .as_deref()
+                    .map(|hash| format!("F\0{rel}\0{size}\0{hash}"))
+                    .unwrap_or_default(),
+                file: Some((rel, hash)),
+                size,
+            });
         } else {
             return Err(bad(format!(
                 "지원하지 않는 폴더 항목입니다: {}",
@@ -306,25 +340,42 @@ fn manifest(root: &Path) -> Result<Manifest> {
             )));
         }
     }
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut digest = Sha256::new();
+    // 상대경로가 유일하므로 stat 줄 순서와 내용 줄 순서는 같다 — 내용 다이제스트는
+    // 0.9.1 저널이 남긴 값과 바이트 단위로 같아야 한다.
+    entries.sort_by(|a, b| a.stat_line.cmp(&b.stat_line));
+    let mut content = Sha256::new();
+    let mut stat = Sha256::new();
     let mut file_hashes = HashMap::new();
     let mut files = 0usize;
     let mut directories = 0usize;
     let mut bytes = 0u64;
-    for (line, file, size) in entries {
-        digest.update(line.as_bytes());
-        digest.update(b"\n");
-        if let Some((rel, hash)) = file {
-            files += 1;
-            bytes += size;
-            file_hashes.insert(rel, hash);
-        } else {
-            directories += 1;
+    for entry in entries {
+        stat.update(entry.stat_line.as_bytes());
+        stat.update(b"\n");
+        if hash_contents {
+            content.update(entry.content_line.as_bytes());
+            content.update(b"\n");
+        }
+        match entry.file {
+            Some((rel, hash)) => {
+                files += 1;
+                bytes = bytes
+                    .checked_add(entry.size)
+                    .ok_or_else(|| bad("폴더 용량이 표현 범위를 넘습니다"))?;
+                if let Some(hash) = hash {
+                    file_hashes.insert(rel, hash);
+                }
+            }
+            None => directories += 1,
         }
     }
     Ok(Manifest {
-        sha256: format!("{:x}", digest.finalize()),
+        sha256: if hash_contents {
+            format!("{:x}", content.finalize())
+        } else {
+            String::new()
+        },
+        stat_sha256: format!("{:x}", stat.finalize()),
         files,
         directories,
         bytes,
@@ -332,49 +383,14 @@ fn manifest(root: &Path) -> Result<Manifest> {
     })
 }
 
-/// 미리보기는 SHA를 표시하거나 실행 근거로 신뢰하지 않는다. 파일 내용을 읽지 않고
-/// 안전하지 않은 항목과 예상 규모만 확인해 큰 폴더에서도 곧바로 충돌을 판단한다.
+/// 내용 해시까지 든 manifest — 복사·볼륨 간 이동의 사본 검증용.
+fn manifest(root: &Path) -> Result<Manifest> {
+    walk_tree(root, true)
+}
+
+/// 이름·크기·mtime 만 읽은 manifest — 미리보기와 같은 볼륨 작업용. 파일 내용은 읽지 않는다.
 fn tree_summary(root: &Path) -> Result<Manifest> {
-    let mut files = 0usize;
-    let mut directories = 0usize;
-    let mut bytes = 0u64;
-    for entry in WalkDir::new(root).follow_links(false).into_iter() {
-        let entry = entry.map_err(|error| bad(error.to_string()))?;
-        if entry.file_type().is_symlink() {
-            return Err(bad(format!(
-                "심볼릭 링크가 든 폴더는 안전하게 작업할 수 없습니다: {}",
-                entry.path().display()
-            )));
-        }
-        if entry.file_type().is_file() && is_appledouble(entry.path()) {
-            continue;
-        }
-        if entry.file_type().is_dir() {
-            directories += 1;
-        } else if entry.file_type().is_file() {
-            files += 1;
-            bytes = bytes
-                .checked_add(
-                    entry
-                        .metadata()
-                        .map_err(|error| bad(error.to_string()))?
-                        .len(),
-                )
-                .ok_or_else(|| bad("폴더 용량이 표현 범위를 넘습니다"))?;
-        } else {
-            return Err(bad(format!(
-                "지원하지 않는 폴더 항목입니다: {}",
-                entry.path().display()
-            )));
-        }
-    }
-    Ok(Manifest {
-        sha256: String::new(),
-        files,
-        directories,
-        bytes,
-        file_hashes: HashMap::new(),
-    })
+    walk_tree(root, false)
 }
 
 fn planned(
@@ -487,18 +503,25 @@ enum PlanDetail {
 fn operation_plan(db: &Db, request: &Request, detail: PlanDetail) -> Result<OperationPlan> {
     let (source_lib, destination_lib, source_rel, destination_rel, source, wanted) =
         planned(request, db)?;
+    let cross_volume = source_lib.volume_uuid != destination_lib.volume_uuid;
     let info = if request.action == Action::Create {
         Manifest {
             sha256: String::new(),
+            stat_sha256: String::new(),
             files: 0,
             directories: 1,
             bytes: 0,
             file_hashes: HashMap::new(),
         }
     } else {
-        match detail {
-            PlanDetail::Summary => tree_summary(&source)?,
-            PlanDetail::Verified => manifest(&source)?,
+        // 내용 해시는 복사와 볼륨 간 이동의 사본 검증에만 필요하다. 같은 볼륨의
+        // 이름변경·이동·휴지통은 rename 한 번이라 이름·크기·mtime 만 읽는다.
+        let needs_hashes = matches!(detail, PlanDetail::Verified)
+            && (request.action == Action::Copy || (request.action == Action::Move && cross_volume));
+        if needs_hashes {
+            manifest(&source)?
+        } else {
+            tree_summary(&source)?
         }
     };
     let same_existing_folder = request.action == Action::Rename
@@ -539,7 +562,7 @@ fn operation_plan(db: &Db, request: &Request, detail: PlanDetail) -> Result<Oper
         files: info.files,
         directories: info.directories,
         bytes: info.bytes,
-        cross_volume: source_lib.volume_uuid != destination_lib.volume_uuid,
+        cross_volume,
         drive_sync_warning: [source_lib.area, destination_lib.area]
             .iter()
             .any(|area| [1, 2].contains(area)),
@@ -836,9 +859,9 @@ fn record_folder(
     cross_volume: bool,
 ) -> Result<()> {
     db.write(|c| c.execute(
-        "INSERT INTO folder_journal(batch_id,op,source_library_id,source_path,destination_library_id,destination_path,file_count,dir_count,bytes,manifest_sha256,cross_volume)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-        rusqlite::params![batch,op,source_lib,source,destination_lib,destination,info.files as i64,info.directories as i64,info.bytes as i64,info.sha256,cross_volume as i32],
+        "INSERT INTO folder_journal(batch_id,op,source_library_id,source_path,destination_library_id,destination_path,file_count,dir_count,bytes,manifest_sha256,cross_volume,stat_sha256)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        rusqlite::params![batch,op,source_lib,source,destination_lib,destination,info.files as i64,info.directories as i64,info.bytes as i64,info.sha256,cross_volume as i32,info.stat_sha256],
     ))?;
     Ok(())
 }
@@ -1027,7 +1050,7 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                 directories: info.directories,
                 bytes: info.bytes,
                 first_error: None,
-                manifest_sha256: Some(info.sha256),
+                manifest_sha256: Some(info.sha256).filter(|digest| !digest.is_empty()),
             })
         }
         Err(error) => {
@@ -1053,14 +1076,17 @@ struct JournalRow {
     source_path: String,
     destination_library_id: Option<i64>,
     destination_path: Option<String>,
+    /// 내용 다이제스트. 같은 볼륨 작업(0.9.2+)은 빈 문자열로 남기고 `stat_sha256` 로 대조한다.
     manifest_sha256: String,
+    /// 이름·크기·mtime 다이제스트. 0.9.1 이전 저널은 NULL.
+    stat_sha256: Option<String>,
     files: usize,
     dirs: usize,
     bytes: u64,
 }
 
 fn journal(db: &Db, batch: i64) -> Result<JournalRow> {
-    db.read(|c|c.query_row("SELECT op,source_library_id,source_path,destination_library_id,destination_path,manifest_sha256,file_count,dir_count,bytes FROM folder_journal WHERE batch_id=?1",[batch],|r|Ok(JournalRow{op:r.get(0)?,source_library_id:r.get(1)?,source_path:r.get(2)?,destination_library_id:r.get(3)?,destination_path:r.get(4)?,manifest_sha256:r.get(5)?,files:r.get::<_,i64>(6)? as usize,dirs:r.get::<_,i64>(7)? as usize,bytes:r.get::<_,i64>(8)? as u64})))
+    db.read(|c|c.query_row("SELECT op,source_library_id,source_path,destination_library_id,destination_path,manifest_sha256,file_count,dir_count,bytes,stat_sha256 FROM folder_journal WHERE batch_id=?1",[batch],|r|Ok(JournalRow{op:r.get(0)?,source_library_id:r.get(1)?,source_path:r.get(2)?,destination_library_id:r.get(3)?,destination_path:r.get(4)?,manifest_sha256:r.get(5)?,files:r.get::<_,i64>(6)? as usize,dirs:r.get::<_,i64>(7)? as usize,bytes:r.get::<_,i64>(8)? as u64,stat_sha256:r.get(9)?})))
 }
 
 pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
@@ -1112,14 +1138,29 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
             fail(&mut out, "되돌릴 폴더가 디스크에 없습니다".into());
             return Ok(out);
         }
-        let now = manifest(&destination)?;
-        if now.sha256 != row.manifest_sha256 {
-            fail(
-                &mut out,
-                "작업 뒤 폴더 내용이 바뀌어 안전하게 되돌릴 수 없습니다".into(),
-            );
-            return Ok(out);
-        }
+        // 대조 기준: 내용 해시가 기록돼 있으면(복사·볼륨 간 이동·0.9.1 저널) 그것으로,
+        // 없으면 같은 볼륨 작업이 남긴 이름·크기·mtime 다이제스트로 본다.
+        let now = if row.manifest_sha256.is_empty() {
+            let summary = tree_summary(&destination)?;
+            if row.stat_sha256.as_deref() != Some(summary.stat_sha256.as_str()) {
+                fail(
+                    &mut out,
+                    "작업 뒤 폴더 내용이 바뀌어 안전하게 되돌릴 수 없습니다".into(),
+                );
+                return Ok(out);
+            }
+            summary
+        } else {
+            let full = manifest(&destination)?;
+            if full.sha256 != row.manifest_sha256 {
+                fail(
+                    &mut out,
+                    "작업 뒤 폴더 내용이 바뀌어 안전하게 되돌릴 수 없습니다".into(),
+                );
+                return Ok(out);
+            }
+            full
+        };
         match row.op.as_str() {
             "copy" => {
                 let staged = free_path(temp_sibling(&destination, batch));
@@ -1163,7 +1204,13 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                         return Err(error);
                     }
                 } else {
-                    copy_tree_verified(&destination, &target, batch, None, &now)?;
+                    // 볼륨을 건너는 복원은 사본을 내용 해시로 검증한다
+                    let verified = if now.sha256.is_empty() {
+                        manifest(&destination)?
+                    } else {
+                        now.clone()
+                    };
+                    copy_tree_verified(&destination, &target, batch, None, &verified)?;
                     let staged = free_path(temp_sibling(&destination, batch));
                     if let Err(error) = std::fs::rename(&destination, &staged) {
                         let _ = remove_tree(&target);
@@ -1331,6 +1378,72 @@ mod tests {
         assert!(!la.dir.as_ref().unwrap().join("부모/빈폴더").exists());
         assert_eq!(undo(&db, empty.batch_id).unwrap().moved, 1);
         assert!(la.dir.as_ref().unwrap().join("부모/빈폴더").is_dir());
+    }
+
+    /// 같은 볼륨 이름변경은 내용을 읽지 않고 이름·크기·mtime 만 남긴다. undo 도 그 값으로 대조한다
+    #[test]
+    fn same_volume_rename_uses_a_stat_manifest_and_undo_refuses_a_changed_file() {
+        let (_temp, db, la, _lb) = setup();
+        let mut rename = req(Action::Rename, la.id, "부모/자식");
+        rename.destination_parent = Some("부모".into());
+        rename.name = Some("이름변경".into());
+        let renamed = execute(&db, &rename, "이름 변경").unwrap();
+        assert_eq!(renamed.completed, 1);
+        assert!(
+            renamed.manifest_sha256.is_none(),
+            "같은 볼륨 이름변경은 내용 해시를 계산하지 않는다"
+        );
+        let (content, stat): (String, Option<String>) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT manifest_sha256, stat_sha256 FROM folder_journal WHERE batch_id=?1",
+                    [renamed.batch_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        assert!(content.is_empty());
+        assert!(stat.is_some_and(|digest| !digest.is_empty()));
+
+        let root = la.dir.clone().unwrap();
+        std::fs::write(
+            root.join("부모/이름변경/3.jpg"),
+            b"edited after the rename, and longer",
+        )
+        .unwrap();
+        let out = undo(&db, renamed.batch_id).unwrap();
+        assert_eq!((out.moved, out.failed), (0, 1), "{:?}", out.first_error);
+        assert!(out
+            .first_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("바뀌어"));
+        assert!(
+            root.join("부모/이름변경/3.jpg").is_file(),
+            "바뀐 폴더는 그 자리에 둔다"
+        );
+    }
+
+    /// 0.9.1 저널(내용 해시만, stat 없음)은 내용 해시로 대조해 그대로 되돌린다
+    #[test]
+    fn a_journal_without_stat_is_verified_by_content_hash() {
+        let (_temp, db, la, _lb) = setup();
+        let mut rename = req(Action::Rename, la.id, "부모/자식");
+        rename.destination_parent = Some("부모".into());
+        rename.name = Some("이름변경".into());
+        let renamed = execute(&db, &rename, "이름 변경").unwrap();
+        let root = la.dir.clone().unwrap();
+        let full = manifest(&root.join("부모/이름변경")).unwrap();
+        assert!(!full.sha256.is_empty());
+        db.write(|c| {
+            c.execute(
+                "UPDATE folder_journal SET manifest_sha256=?2, stat_sha256=NULL WHERE batch_id=?1",
+                rusqlite::params![renamed.batch_id, full.sha256],
+            )
+        })
+        .unwrap();
+        assert_eq!(undo(&db, renamed.batch_id).unwrap().moved, 1);
+        assert!(root.join("부모/자식/3.jpg").is_file());
     }
 
     #[test]

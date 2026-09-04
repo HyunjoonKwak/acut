@@ -21,6 +21,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_gallery_transition_p1(c)?;
     add_release_091_integrity(c)?;
     add_journal_file_stat(c)?;
+    add_folder_journal_stat(c)?;
     rename_old_labels(c)?;
     migrate_taken_at_to_utc(c)?;
     Ok(())
@@ -76,6 +77,15 @@ fn add_journal_file_stat(c: &Connection) -> rusqlite::Result<()> {
         if !has_column(c, "journal", column)? {
             c.execute_batch(ddl)?;
         }
+    }
+    Ok(())
+}
+
+/// 같은 볼륨 폴더 이름변경·이동·휴지통은 내용 해시 대신 이름·크기·mtime 다이제스트로
+/// undo 를 대조한다. 0.9.1 저널은 NULL 로 남아 내용 해시로 대조한다 (2차 리뷰 M-11).
+fn add_folder_journal_stat(c: &Connection) -> rusqlite::Result<()> {
+    if !has_column(c, "folder_journal", "stat_sha256")? {
+        c.execute_batch("ALTER TABLE folder_journal ADD COLUMN stat_sha256 TEXT")?;
     }
     Ok(())
 }

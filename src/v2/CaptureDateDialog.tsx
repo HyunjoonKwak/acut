@@ -45,6 +45,8 @@ export default function CaptureDateDialog({
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [manualAt, setManualAt] = useState(localInput());
   const [busy, setBusy] = useState(true);
+  /** 파일을 쓰는 중 — 감사(읽기)는 Esc 로 언제든 접어도 되지만 교정 결과는 봐야 한다 */
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -69,7 +71,7 @@ export default function CaptureDateDialog({
   }, [target]);
 
   useEffect(() => void load(), [load]);
-  useModalFocus(dialogRef, onClose);
+  useModalFocus(dialogRef, onClose, { locked: applying });
 
   const chosen = useMemo(() => rows.filter((r) => checked.has(r.id)), [rows, checked]);
   const run = async (manual: boolean) => {
@@ -79,6 +81,7 @@ export default function CaptureDateDialog({
       .filter((r): r is { id: number; takenAt: number; manual: boolean } => Number.isFinite(r.takenAt));
     if (changes.length === 0) return;
     setBusy(true);
+    setApplying(true);
     setError(null);
     try {
       const out = await invoke<CaptureOutcome>("capture_date_apply", {
@@ -95,6 +98,7 @@ export default function CaptureDateDialog({
     } catch (e) {
       setError(String(e));
     } finally {
+      setApplying(false);
       setBusy(false);
     }
   };
@@ -126,7 +130,7 @@ export default function CaptureDateDialog({
           <label className="flex flex-col gap-1"><span className="text-[11px] uppercase tracking-wider text-fg-mute">선택 전체에 같은 지역 날짜·시각</span><input type="datetime-local" value={manualAt} onChange={(e) => setManualAt(e.target.value)} className="h-control px-2 rounded bg-raised ring-1 ring-line text-fg" /></label>
           <button onClick={() => run(true)} disabled={busy || chosen.length === 0 || !Number.isFinite(new Date(manualAt).getTime())} className="h-control px-3 rounded-lg text-fg ring-1 ring-line-strong disabled:opacity-40">수동 일괄 교정</button>
           <div className="flex-1" />
-          <button onClick={onClose} className="h-control px-3 rounded-lg text-fg-dim ring-1 ring-line-strong">닫기</button>
+          <button onClick={onClose} disabled={applying} className="h-control px-3 rounded-lg text-fg-dim ring-1 ring-line-strong disabled:opacity-40">닫기</button>
         </div>
         <p className="mt-2 text-[11.5px] text-fg-mute">JPEG는 EXIF DateTimeOriginal·DateTimeDigitized·TIFF DateTime과 mtime을 기록합니다. HEIC·RAW·PNG·영상은 파일 내부 메타데이터를 바꾸지 않고 mtime과 Photo Desk 보정값만 기록합니다. 모든 성공 항목은 배치 단위로 되돌릴 수 있습니다.</p>
       </div>

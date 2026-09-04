@@ -20,6 +20,7 @@ pub struct Dest {
 struct Item {
     id: i64,
     library_id: i64,
+    folder_id: i64,
     volume_uuid: String,
     /// 볼륨 기준 상대경로 (파일명 포함)
     vol_rel: String,
@@ -34,7 +35,7 @@ fn load(db: &Db, ids: &[i64]) -> Result<Vec<Item>> {
     let sql = format!(
         "SELECT fi.id, fo.library_id, fo.volume_uuid,
                 fo.rel_path || CASE WHEN fo.rel_path = '' THEN '' ELSE '/' END || fi.name,
-                fi.name
+                fi.name, fi.folder_id
          FROM files fi JOIN folders fo ON fo.id = fi.folder_id
          WHERE fi.id IN ({list}) AND fi.trashed_at IS NULL"
     );
@@ -47,6 +48,7 @@ fn load(db: &Db, ids: &[i64]) -> Result<Vec<Item>> {
                 volume_uuid: r.get(2)?,
                 vol_rel: r.get(3)?,
                 name: r.get(4)?,
+                folder_id: r.get(5)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -131,10 +133,13 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
             continue;
         };
         let src = mount.join(&it.vol_rel);
-        let dest_path = free_path(dest_dir.join(&it.name));
-        if src == dest_path {
+        // 이미 목적지 폴더에 있는 사진은 건드리지 않는다. `free_path`를 먼저 부르면
+        // 제자리 파일이 «있는 이름»으로 보여 « (2)»로 비켜 가 버린다 (2차 리뷰 H-1)
+        let want = dest_dir.join(&it.name);
+        if it.folder_id == dest_folder || want == src {
             continue; // 이미 제자리다
         }
+        let dest_path = free_path(want);
         let new_name = dest_path
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
@@ -415,6 +420,34 @@ mod tests {
 
         // DB도 새 폴더를 가리켜야 한다 — 재스캔을 기다리지 않는다
         assert_eq!(lib_rel_of(&db, ids[0]), "2024/2024-08-27 거제통영 가족여행");
+    }
+
+    /// 같은 이벤트로 다시 «정리»해도 제자리 사진에 번호가 붙으면 안 된다
+    #[test]
+    fn organizing_into_the_folder_a_photo_already_lives_in_leaves_it_alone() {
+        let (dir, db, lib, ids) = setup();
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
+        assert_eq!(move_to(&db, &ids, &dest, "정리").unwrap().moved, 2);
+
+        let again = move_to(&db, &ids, &dest, "정리").unwrap();
+        assert_eq!((again.moved, again.failed), (0, 0), "{:?}", again.first_error);
+        let target = dir.path().join("2024/행사");
+        assert!(target.join("20240827_120000.jpg").is_file());
+        assert!(
+            !target.join("20240827_120000 (2).jpg").exists(),
+            "제자리 사진을 비켜 쓰면 안 된다"
+        );
+        let names: Vec<String> = db
+            .read(|c| {
+                let mut st = c.prepare("SELECT name FROM files ORDER BY name")?;
+                let it = st.query_map([], |r| r.get(0))?;
+                it.collect()
+            })
+            .unwrap();
+        assert!(names.iter().all(|n| !n.contains(" (2)")), "{names:?}");
     }
 
     #[test]

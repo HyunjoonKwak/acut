@@ -107,7 +107,13 @@ fn ifd_snapshot(
     let positions = ifd_entries(bytes, tiff, relative, endian, segment_end)?;
     let start = tiff.checked_add(relative as usize)?;
     let next_at = start.checked_add(2 + positions.len().checked_mul(12)?)?;
-    let next = u32_at(bytes, next_at, endian)?;
+    // 마지막 IFD가 segment 끝에서 정확히 끝나고 next 포인터를 생략한 파일이 있다.
+    // 그때 segment 밖(다음 JPEG 마커)을 읽어 IFD1 포인터로 옮겨 적으면 안 된다.
+    let next = if next_at.checked_add(4)? <= segment_end {
+        u32_at(bytes, next_at, endian)?
+    } else {
+        0
+    };
     let mut entries = Vec::with_capacity(positions.len());
     for position in positions {
         entries.push(bytes.get(position..position + 12)?.try_into().ok()?);
@@ -590,5 +596,77 @@ mod tests {
             1,
             "중복 EXIF APP1을 만들면 읽는 앱마다 결과가 달라진다"
         );
+    }
+
+    /// next 포인터 없이 segment 끝에서 끝나는 Exif IFD — 보완하면서 segment 밖의
+    /// 다음 마커 바이트를 IFD 포인터로 옮겨 적으면 안 된다.
+    #[test]
+    fn completing_an_ifd_that_ends_flush_with_the_segment_does_not_read_past_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("flush.jpg");
+        image::RgbImage::from_fn(16, 16, |x, y| image::Rgb([(x * 9) as u8, (y * 3) as u8, 45]))
+            .save(&path)
+            .unwrap();
+        let pixels = image::open(&path).unwrap().to_rgb8();
+
+        // IFD0(DateTime, ExifIFD→78) · 문자열 둘 · Exif IFD(DateTimeOriginal 만, next 없음)
+        let date = b"2024:01:02 03:04:05\0";
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"MM\x00\x2a\x00\x00\x00\x08");
+        tiff.extend_from_slice(&2_u16.to_be_bytes());
+        tiff.extend_from_slice(&0x0132_u16.to_be_bytes());
+        tiff.extend_from_slice(&2_u16.to_be_bytes());
+        tiff.extend_from_slice(&20_u32.to_be_bytes());
+        tiff.extend_from_slice(&38_u32.to_be_bytes());
+        tiff.extend_from_slice(&0x8769_u16.to_be_bytes());
+        tiff.extend_from_slice(&4_u16.to_be_bytes());
+        tiff.extend_from_slice(&1_u32.to_be_bytes());
+        tiff.extend_from_slice(&78_u32.to_be_bytes());
+        tiff.extend_from_slice(&0_u32.to_be_bytes());
+        tiff.extend_from_slice(date);
+        tiff.extend_from_slice(date);
+        tiff.extend_from_slice(&1_u16.to_be_bytes());
+        tiff.extend_from_slice(&0x9003_u16.to_be_bytes());
+        tiff.extend_from_slice(&2_u16.to_be_bytes());
+        tiff.extend_from_slice(&20_u32.to_be_bytes());
+        tiff.extend_from_slice(&58_u32.to_be_bytes());
+        assert_eq!(tiff.len(), 92);
+        let mut segment = vec![0xff, 0xe1];
+        segment.extend_from_slice(&((tiff.len() + 8) as u16).to_be_bytes());
+        segment.extend_from_slice(b"Exif\0\0");
+        segment.extend_from_slice(&tiff);
+        let source = std::fs::read(&path).unwrap();
+        let mut bytes = source[..2].to_vec();
+        bytes.extend_from_slice(&segment);
+        bytes.extend_from_slice(&source[2..]);
+        std::fs::write(&path, &bytes).unwrap();
+
+        let wanted = crate::media::taken_at::civil_to_unix(2025, 6, 7, 8, 9, 10);
+        write_capture_time(&path, wanted).unwrap();
+        assert_eq!(image::open(&path).unwrap().to_rgb8(), pixels);
+        assert_eq!(
+            crate::media::exif::read(&path).and_then(|meta| meta.taken_at),
+            Some(wanted)
+        );
+
+        let written = std::fs::read(&path).unwrap();
+        let exif = written
+            .windows(6)
+            .position(|window| window == b"Exif\0\0")
+            .unwrap();
+        let tiff_at = exif + 6;
+        let ifd0_relative = u32_at(&written, tiff_at + 4, Endian::Big).unwrap();
+        let ifd0 = ifd_entries(&written, tiff_at, ifd0_relative, Endian::Big, written.len()).unwrap();
+        let exif_relative = ifd0
+            .iter()
+            .find(|&&entry| u16_at(&written, entry, Endian::Big) == Some(0x8769))
+            .and_then(|&entry| u32_at(&written, entry + 8, Endian::Big))
+            .unwrap();
+        for relative in [ifd0_relative, exif_relative] {
+            let start = tiff_at + relative as usize;
+            let count = u16_at(&written, start, Endian::Big).unwrap() as usize;
+            let next = u32_at(&written, start + 2 + count * 12, Endian::Big).unwrap();
+            assert_eq!(next, 0, "보완한 IFD의 next 포인터는 segment 밖 바이트가 아니라 0 이어야 한다");
+        }
     }
 }

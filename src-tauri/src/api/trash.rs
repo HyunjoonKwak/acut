@@ -4,6 +4,7 @@
 //! 확인을 받은 뒤에만 부른다. 여기서는 막지 않는다 — 확인은 화면의 몫이다.
 
 use super::{err, AppState};
+use crate::db::conn::Db;
 use crate::ops::trash;
 use tauri::State;
 
@@ -56,16 +57,23 @@ pub async fn trash_apply(
     library_id: Option<i64>,
     folder_ids: Option<Vec<i64>>,
 ) -> Result<trash::Outcome, String> {
-    // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-    let Some(_guard) = super::job::try_start_wait(&state.running, "휴지통으로", std::time::Duration::from_secs(20)) else {
-        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
-    };
-    // 폴더 목록이 오면 그 안의 제외분만 — 비교 화면의 «표시한 것만 치우기»
-    let ids = match folder_ids {
-        Some(f) => trash::pending_in_folders(&state.db, &f).map_err(err)?,
-        None => trash::pending(&state.db, library_id).map_err(err)?,
-    };
-    trash::to_trash(&state.db, &ids, "제외한 사진 휴지통으로").map_err(err)
+    let db = std::sync::Arc::clone(&state.db);
+    let running = std::sync::Arc::clone(&state.running);
+    tauri::async_runtime::spawn_blocking(move || {
+        // 파일 이동과 20초 대기는 WebView의 async executor 밖에서 — organize 커맨드와 같은 규칙.
+        // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
+        let Some(_guard) = super::job::try_start_wait(&running, "휴지통으로", std::time::Duration::from_secs(20)) else {
+            return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+        };
+        // 폴더 목록이 오면 그 안의 제외분만 — 비교 화면의 «표시한 것만 치우기»
+        let ids = match folder_ids {
+            Some(f) => trash::pending_in_folders(&db, &f).map_err(err)?,
+            None => trash::pending(&db, library_id).map_err(err)?,
+        };
+        trash::to_trash(&db, &ids, "제외한 사진 휴지통으로").map_err(err)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// 제외 표시를 되돌린다 — 휴지통으로 보내기 전이면 언제든. 라이브러리 범위(없으면 전부).
@@ -102,11 +110,17 @@ pub async fn trash_files(
     state: State<'_, AppState>,
     ids: Vec<i64>,
 ) -> Result<trash::Outcome, String> {
-    // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-    let Some(_guard) = super::job::try_start_wait(&state.running, "휴지통으로", std::time::Duration::from_secs(20)) else {
-        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
-    };
-    trash::to_trash(&state.db, &ids, "고른 사진 휴지통으로").map_err(err)
+    let db = std::sync::Arc::clone(&state.db);
+    let running = std::sync::Arc::clone(&state.running);
+    tauri::async_runtime::spawn_blocking(move || {
+        // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
+        let Some(_guard) = super::job::try_start_wait(&running, "휴지통으로", std::time::Duration::from_secs(20)) else {
+            return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+        };
+        trash::to_trash(&db, &ids, "고른 사진 휴지통으로").map_err(err)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// 휴지통에서 제자리로. `ids`가 비어 있으면 전부.
@@ -116,16 +130,22 @@ pub async fn trash_restore(
     library_id: Option<i64>,
     ids: Vec<i64>,
 ) -> Result<trash::Outcome, String> {
-    // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-    let Some(_guard) = super::job::try_start_wait(&state.running, "휴지통 되돌리기", std::time::Duration::from_secs(20)) else {
-        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
-    };
-    let ids = if ids.is_empty() {
-        trashed_ids(&state, library_id)?
-    } else {
-        ids
-    };
-    trash::restore(&state.db, &ids).map_err(err)
+    let db = std::sync::Arc::clone(&state.db);
+    let running = std::sync::Arc::clone(&state.running);
+    tauri::async_runtime::spawn_blocking(move || {
+        // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
+        let Some(_guard) = super::job::try_start_wait(&running, "휴지통 되돌리기", std::time::Duration::from_secs(20)) else {
+            return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+        };
+        let ids = if ids.is_empty() {
+            trashed_ids(&db, library_id)?
+        } else {
+            ids
+        };
+        trash::restore(&db, &ids).map_err(err)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// 휴지통을 비운다. **되돌릴 수 없다.** `ids`가 비어 있으면 전부.
@@ -135,30 +155,35 @@ pub async fn trash_empty(
     library_id: Option<i64>,
     ids: Vec<i64>,
 ) -> Result<trash::Outcome, String> {
-    // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-    let Some(_guard) = super::job::try_start_wait(&state.running, "휴지통 비우기", std::time::Duration::from_secs(20)) else {
-        return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
-    };
-    let all = ids.is_empty();
-    let ids = if all { trashed_ids(&state, library_id)? } else { ids };
-    let out = trash::empty(&state.db, &ids).map_err(err)?;
-    // 휴지통을 통째로 비우면 «사진 없는 폴더 정리»가 넣어 둔 _폴더 도 같이 사라진다
-    if all {
-        for lib in crate::db::libraries::list(&state.db).map_err(err)? {
-            if library_id.is_some_and(|l| l != lib.id) {
-                continue;
-            }
-            if let Some(dir) = lib.dir {
-                let _ = std::fs::remove_dir_all(trash::trash_root(&dir).join("_폴더"));
+    let db = std::sync::Arc::clone(&state.db);
+    let running = std::sync::Arc::clone(&state.running);
+    tauri::async_runtime::spawn_blocking(move || {
+        // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
+        let Some(_guard) = super::job::try_start_wait(&running, "휴지통 비우기", std::time::Duration::from_secs(20)) else {
+            return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
+        };
+        let all = ids.is_empty();
+        let ids = if all { trashed_ids(&db, library_id)? } else { ids };
+        let out = trash::empty(&db, &ids).map_err(err)?;
+        // 휴지통을 통째로 비우면 «사진 없는 폴더 정리»가 넣어 둔 _폴더 도 같이 사라진다
+        if all {
+            for lib in crate::db::libraries::list(&db).map_err(err)? {
+                if library_id.is_some_and(|l| l != lib.id) {
+                    continue;
+                }
+                if let Some(dir) = lib.dir {
+                    let _ = std::fs::remove_dir_all(trash::trash_root(&dir).join("_폴더"));
+                }
             }
         }
-    }
-    Ok(out)
+        Ok(out)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
-fn trashed_ids(state: &State<'_, AppState>, library_id: Option<i64>) -> Result<Vec<i64>, String> {
-    state
-        .db
+fn trashed_ids(db: &Db, library_id: Option<i64>) -> Result<Vec<i64>, String> {
+    db
         .read(|c| {
             let mut st = c.prepare(
                 "SELECT fi.id FROM files fi JOIN folders fo ON fo.id = fi.folder_id

@@ -87,25 +87,27 @@ export default function PhotoGrid({
 
   return (
     <div className="flex-1 flex min-h-0 min-w-0 relative">
-      {error && (
-        <div className="pointer-events-none absolute left-2.5 right-[68px] top-2.5 z-20 flex justify-center">
-          <div
-            role="alert"
-            className="pointer-events-auto flex w-full max-w-2xl items-center gap-3 rounded-lg bg-raised px-3 py-2 text-[13px] text-fg ring-1 ring-drop/60 shadow-lg"
-          >
-            <span className="min-w-0 flex-1">
-              사진을 불러오지 못했습니다
-              <span className="ml-2 text-fg-mute break-all">{error}</span>
-            </span>
-            <button
-              onClick={onRetry}
-              className="h-control shrink-0 rounded-md px-3 text-fg ring-1 ring-line-strong hover:bg-hover"
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        {/* 오류 막대는 자리를 차지한다 — 격자 위에 띄우면 첫 줄 사진을 덮고 클릭을 막는다 */}
+        {error && (
+          <div className="flex justify-center px-2.5 pt-2.5">
+            <div
+              role="alert"
+              className="flex w-full max-w-2xl items-center gap-3 rounded-lg bg-raised px-3 py-2 text-[13px] text-fg ring-1 ring-drop/60 shadow-lg"
             >
-              다시 시도
-            </button>
+              <span className="min-w-0 flex-1">
+                사진을 불러오지 못했습니다
+                <span className="ml-2 text-fg-mute break-all">{error}</span>
+              </span>
+              <button
+                onClick={onRetry}
+                className="h-control shrink-0 rounded-md px-3 text-fg ring-1 ring-line-strong hover:bg-hover"
+              >
+                다시 시도
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
       <main
         ref={scrollRef}
         onScroll={onScroll}
@@ -249,6 +251,7 @@ export default function PhotoGrid({
           <div className="py-4 text-center text-fg-mute">불러오는 중…</div>
         )}
       </main>
+      </div>
 
       {/* 타임라인 스크롤바 — 전역 순번으로 주고받는다 */}
       <ScrollBar

@@ -46,16 +46,34 @@ pub fn rename(db: &Db, id: i64, new_name: &str) -> Result<String> {
     let batch = super::open_batch(db, "rename", &format!("{old_name} → {new_name}"))?;
     match move_with_sidecars(&from, &to) {
         Ok(()) => {
-            super::record(db, batch, "rename", id, &uuid, &from_rel, Some(&to_rel), Ok(()))?;
             let ext = std::path::Path::new(&new_name)
                 .extension()
                 .map(|e| e.to_string_lossy().to_lowercase());
-            db.write(|c| {
-                c.execute(
+            // 저널과 행 갱신은 한 트랜잭션. 디스크만 새 이름이면 그 사진은 «없는 파일»이
+            // 되므로, 실패하면 파일을 제자리로 돌린다 (2차 리뷰 M-4)
+            let recorded = db.transaction(|tx| {
+                tx.execute(
+                    "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
+                     VALUES(?1,?2,'rename',?3,?4,?3,?5,1)",
+                    rusqlite::params![batch, id, uuid, from_rel, to_rel],
+                )?;
+                tx.execute(
                     "UPDATE files SET name = ?2, ext = ?3 WHERE id = ?1",
                     rusqlite::params![id, new_name, ext],
-                )
-            })?;
+                )?;
+                Ok(())
+            });
+            if let Err(error) = recorded {
+                let message = match move_with_sidecars(&to, &from) {
+                    Ok(()) => error.to_string(),
+                    Err(rollback) => {
+                        format!("DB 갱신 실패: {error}; 파일 원위치 복구도 실패: {rollback}")
+                    }
+                };
+                let _ = super::record(db, batch, "rename", id, &uuid, &from_rel, None, Err(&message));
+                let _ = super::close_batch(db, batch, 0);
+                return Err(DbError::Invalid(message));
+            }
             super::close_batch(db, batch, 1)?;
             Ok(new_name)
         }
@@ -123,6 +141,25 @@ mod tests {
         assert_eq!(rename(&db, id, "IMG_1.jpg").unwrap(), "IMG_1.jpg");
         let n: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0))).unwrap();
         assert_eq!(n, 0, "저널도 안 남긴다");
+    }
+
+    /// IMG_2.jpg 행은 남았는데 파일은 사라진 상태(재스캔 전) — 디스크 검사는 통과하고
+    /// DB 의 UNIQUE(folder_id, name) 만 막는다. 그때 디스크만 새 이름이면 안 된다
+    #[test]
+    fn a_failed_row_update_puts_the_file_name_back() {
+        let (d, db, id) = seeded();
+        std::fs::remove_file(d.path().join("lib/IMG_2.jpg")).unwrap();
+        assert!(rename(&db, id, "IMG_2.jpg").is_err());
+        assert!(d.path().join("lib/IMG_1.jpg").is_file(), "파일은 원래 이름으로 돌아온다");
+        assert!(!d.path().join("lib/IMG_2.jpg").exists());
+        let name: String = db
+            .read(|c| c.query_row("SELECT name FROM files WHERE id=?1", [id], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(name, "IMG_1.jpg");
+        let done: i64 = db
+            .read(|c| c.query_row("SELECT COALESCE(MAX(item_count),0) FROM batches", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(done, 0, "실패한 이름 바꾸기는 되돌릴 것이 없다");
     }
 
     /// ⌘Z — 되돌리기의 일반 분기가 이름을 되돌린다

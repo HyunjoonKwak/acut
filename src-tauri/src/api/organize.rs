@@ -186,7 +186,12 @@ pub async fn batches_recent(
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<Vec<undo::Batch>, String> {
-    undo::recent(&state.db, limit).map_err(err)
+    // `recent`는 열린 묶음을 닫는 UPDATE 를 먼저 돌려 쓰기 뮤텍스를 잡는다 — 스캔이 쥔 동안
+    // 상태바가 async executor 를 막고 기다리면 안 된다 (2차 리뷰 M-10)
+    let db = std::sync::Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || undo::recent(&db, limit).map_err(err))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

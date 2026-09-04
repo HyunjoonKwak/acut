@@ -36,6 +36,8 @@ export default function FolderNameAuditDialog({
   const [items, setItems] = useState<AuditItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  /** 이름을 바꾸는 중 — 감사(읽기)는 접어도 되지만 적용 결과는 봐야 한다 */
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
@@ -64,11 +66,12 @@ export default function FolderNameAuditDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId]);
 
-  useModalFocus(dialogRef, onClose);
+  useModalFocus(dialogRef, onClose, { locked: applying });
 
   const apply = async () => {
     if (selected.size === 0) return;
     setBusy(true);
+    setApplying(true);
     setError(null);
     try {
       const result = await invoke<ApplyOutcome>("folder_name_apply", {
@@ -90,6 +93,7 @@ export default function FolderNameAuditDialog({
     } catch (caught) {
       setError(String(caught));
     } finally {
+      setApplying(false);
       setBusy(false);
     }
   };
@@ -170,7 +174,8 @@ export default function FolderNameAuditDialog({
             </button>
             <button
               onClick={onClose}
-              className="h-control rounded-lg px-3 text-[14px] text-fg-dim ring-1 ring-line-strong"
+              disabled={applying}
+              className="h-control rounded-lg px-3 text-[14px] text-fg-dim ring-1 ring-line-strong disabled:opacity-40"
             >
               닫기
             </button>

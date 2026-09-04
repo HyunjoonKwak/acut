@@ -124,7 +124,7 @@ export default function Import({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50">
-      <div className="w-[520px] max-w-[92vw] rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl p-5">
+      <div role="dialog" aria-modal="true" aria-label="가져오기" className="w-[520px] max-w-[92vw] rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl p-5">
         <div className="flex items-baseline gap-3">
           <span className="text-[16px] font-semibold text-fg">가져오기</span>
           <span className="text-[12.5px] text-fg-mute">

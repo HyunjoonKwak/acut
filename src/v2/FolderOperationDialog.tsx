@@ -80,7 +80,7 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
     [destinationLibraryId, folders],
   );
 
-  useModalFocus(dialogRef, onClose);
+  useModalFocus(dialogRef, onClose, { locked: busy });
 
   useEffect(() => {
     setPreview(null);
@@ -292,7 +292,7 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
         )}
         {error && <div role="alert" className="mb-3 text-[13px] text-drop">{error}</div>}
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="h-control px-3 rounded ring-1 ring-line text-fg-dim">취소</button>
+          <button onClick={onClose} disabled={busy} className="h-control px-3 rounded ring-1 ring-line text-fg-dim disabled:opacity-40">취소</button>
           <button
             onClick={execute}
             disabled={busy || !preview || preview.action === "skip"}

@@ -338,7 +338,7 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
             lib.map(|l| l.rel_path.clone()),
             mounts.get(&it.volume_uuid).cloned().flatten(),
         ) else {
-            super::record(
+            let _ = super::record(
                 db,
                 batch_id,
                 "trash",
@@ -347,8 +347,9 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
                 &it.vol_rel,
                 None,
                 Err("디스크가 연결되어 있지 않습니다"),
-            )?;
+            );
             out.failed += 1;
+            out.failed_ids.push(it.id);
             out.first_error
                 .get_or_insert("디스크가 연결되어 있지 않습니다".into());
             continue;
@@ -364,37 +365,61 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
 
         match move_with_sidecars(&src, &dest) {
             Ok(()) => {
-                if let Some(dir) = src.parent() {
-                    touched
-                        .entry(it.folder_id)
-                        .or_insert_with(|| (dir.to_path_buf(), lib_dir.clone()));
-                }
                 // 저널 경로는 언제나 볼륨 기준이다 — 되돌릴 때 마운트만 붙이면 된다
                 let to_vol_rel = crate::media::cache::rel_path(&lib_rel, &dest_rel);
-                super::record(
-                    db,
-                    batch_id,
-                    "trash",
-                    it.id,
-                    &it.volume_uuid,
-                    &it.vol_rel,
-                    Some(&to_vol_rel),
-                    Ok(()),
-                )?;
-                db.write(|c| {
-                    c.execute(
+                // 저널과 행 갱신은 한 트랜잭션. 파일은 이미 휴지통에 있으므로 실패하면
+                // 제자리로 돌려놓고 실패로 센다 — 저널만 남고 행이 안 바뀌면 격자엔
+                // 보이는데 열리지 않는 사진이 된다 (2차 리뷰 M-4)
+                let recorded = db.transaction(|tx| {
+                    tx.execute(
+                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
+                         VALUES(?1,?2,'trash',?3,?4,?3,?5,1)",
+                        rusqlite::params![batch_id, it.id, it.volume_uuid, it.vol_rel, to_vol_rel],
+                    )?;
+                    tx.execute(
                         "UPDATE files SET trashed_at = strftime('%s','now'),
                                           trash_path = ?2, trash_batch = ?3
                          WHERE id = ?1",
                         rusqlite::params![it.id, dest_rel, batch_id],
-                    )
-                })?;
-                out.moved += 1;
-                out.bytes += it.size;
+                    )?;
+                    Ok(())
+                });
+                match recorded {
+                    Ok(()) => {
+                        if let Some(dir) = src.parent() {
+                            touched
+                                .entry(it.folder_id)
+                                .or_insert_with(|| (dir.to_path_buf(), lib_dir.clone()));
+                        }
+                        out.moved += 1;
+                        out.bytes += it.size;
+                    }
+                    Err(error) => {
+                        let message = match move_with_sidecars(&dest, &src) {
+                            Ok(()) => error.to_string(),
+                            Err(rollback) => format!(
+                                "DB 갱신 실패: {error}; 파일 원위치 복구도 실패: {rollback}"
+                            ),
+                        };
+                        let _ = super::record(
+                            db,
+                            batch_id,
+                            "trash",
+                            it.id,
+                            &it.volume_uuid,
+                            &it.vol_rel,
+                            None,
+                            Err(&message),
+                        );
+                        out.failed += 1;
+                        out.failed_ids.push(it.id);
+                        out.first_error.get_or_insert(message);
+                    }
+                }
             }
             Err(e) => {
                 let msg = e.to_string();
-                super::record(
+                let _ = super::record(
                     db,
                     batch_id,
                     "trash",
@@ -403,8 +428,9 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
                     &it.vol_rel,
                     None,
                     Err(&msg),
-                )?;
+                );
                 out.failed += 1;
+                out.failed_ids.push(it.id);
                 out.first_error.get_or_insert(msg);
             }
         }
@@ -509,6 +535,7 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
             paths.get(&it.id),
         ) else {
             out.failed += 1;
+            out.failed_ids.push(it.id);
             out.first_error
                 .get_or_insert("되돌릴 위치를 알 수 없습니다".into());
             continue;
@@ -524,16 +551,6 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
                     .strip_prefix(&mount)
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|_| it.vol_rel.clone());
-                super::record(
-                    db,
-                    batch_id,
-                    "restore",
-                    it.id,
-                    &it.volume_uuid,
-                    &from_vol_rel,
-                    Some(&to_vol_rel),
-                    Ok(()),
-                )?;
                 // 그새 같은 이름이 생겨 «IMG_1 (2).jpg»로 돌아왔을 수 있다 — 행도 그 이름으로.
                 // 안 맞추면 다음 치우기·이름 바꾸기가 다른 사진에 걸린다 (리뷰 C5)
                 let new_name = dest
@@ -546,19 +563,43 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
                             .unwrap_or(&it.vol_rel)
                             .to_string()
                     });
-                db.write(|c| {
-                    c.execute(
+                // 저널과 행 갱신은 한 트랜잭션. 실패하면 파일을 휴지통 자리로 되돌린다 —
+                // 디스크만 돌아오고 행이 «휴지통»이면 그 사진은 어느 화면에도 없다 (2차 리뷰 M-4)
+                let recorded = db.transaction(|tx| {
+                    tx.execute(
+                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
+                         VALUES(?1,?2,'restore',?3,?4,?3,?5,1)",
+                        rusqlite::params![batch_id, it.id, it.volume_uuid, from_vol_rel, to_vol_rel],
+                    )?;
+                    tx.execute(
                         "UPDATE files SET trashed_at = NULL, trash_path = NULL, trash_batch = NULL,
                                 name = ?2
                          WHERE id = ?1",
                         rusqlite::params![it.id, new_name],
-                    )
-                })?;
-                out.moved += 1;
-                out.bytes += it.size;
+                    )?;
+                    Ok(())
+                });
+                match recorded {
+                    Ok(()) => {
+                        out.moved += 1;
+                        out.bytes += it.size;
+                    }
+                    Err(error) => {
+                        let message = match move_with_sidecars(&dest, &src) {
+                            Ok(()) => error.to_string(),
+                            Err(rollback) => format!(
+                                "DB 갱신 실패: {error}; 파일 원위치 복구도 실패: {rollback}"
+                            ),
+                        };
+                        out.failed += 1;
+                        out.failed_ids.push(it.id);
+                        out.first_error.get_or_insert(message);
+                    }
+                }
             }
             Err(e) => {
                 out.failed += 1;
+                out.failed_ids.push(it.id);
                 out.first_error.get_or_insert(e.to_string());
             }
         }
@@ -797,6 +838,48 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rows, 1);
+    }
+
+    /// 되돌릴 이름의 행이 이미 있으면(파일은 없고 행만 남은 상태) 디스크만 돌아오면 안 된다
+    #[test]
+    fn restore_puts_the_file_back_in_the_trash_when_the_row_update_fails() {
+        let (dir, db, ids) = setup();
+        let a = dir.path().join("2020/여행");
+        let out = to_trash(&db, &ids[..1], "치우기").unwrap();
+        assert_eq!(out.moved, 1);
+        let trash_path: String = db
+            .read(|c| {
+                c.query_row("SELECT trash_path FROM files WHERE id=?1", [ids[0]], |r| r.get(0))
+            })
+            .unwrap();
+        // 그새 같은 이름이 디스크에 생겨 «(2)»로 돌아와야 하는데, 그 «(2)» 이름은
+        // 파일 없이 행만 차지하고 있다 — UNIQUE(folder_id, name) 이 막는다
+        std::fs::write(a.join("20200101_120000.jpg"), b"replacement").unwrap();
+        db.write(|c| {
+            c.execute(
+                "UPDATE files SET name='20200101_120000 (2).jpg' WHERE id=?1",
+                [ids[1]],
+            )
+        })
+        .unwrap();
+
+        let out = restore(&db, &ids[..1]).unwrap();
+        assert_eq!((out.moved, out.failed), (0, 1), "{:?}", out.first_error);
+        assert_eq!(out.failed_ids, vec![ids[0]]);
+        assert!(
+            !a.join("20200101_120000 (2).jpg").exists(),
+            "디스크만 되돌아오면 안 된다"
+        );
+        assert!(
+            dir.path().join(&trash_path).is_file(),
+            "파일은 휴지통 자리로 돌아간다"
+        );
+        let trashed: Option<i64> = db
+            .read(|c| {
+                c.query_row("SELECT trashed_at FROM files WHERE id=?1", [ids[0]], |r| r.get(0))
+            })
+            .unwrap();
+        assert!(trashed.is_some(), "행은 여전히 휴지통이다");
     }
 
     #[test]

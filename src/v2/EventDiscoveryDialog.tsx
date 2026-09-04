@@ -162,11 +162,18 @@ export default function EventDiscoveryDialog({
                 </div>
                 <details
                   className="mt-2"
+                  // 후보 키는 재검색에도 같아 <details> DOM 이 재사용된다. open 을
+                  // 상태로 묶지 않으면 «열린 채 목록 없음»이 된다 (2차 리뷰 H-3)
+                  open={expanded.has(candidate.key)}
                   onToggle={(event) => {
-                    const next = new Set(expanded);
-                    if (event.currentTarget.open) next.add(candidate.key);
-                    else next.delete(candidate.key);
-                    setExpanded(next);
+                    const open = event.currentTarget.open;
+                    setExpanded((current) => {
+                      if (current.has(candidate.key) === open) return current;
+                      const next = new Set(current);
+                      if (open) next.add(candidate.key);
+                      else next.delete(candidate.key);
+                      return next;
+                    });
                   }}
                 >
                   <summary className="cursor-pointer text-[12.5px] text-fg-dim">

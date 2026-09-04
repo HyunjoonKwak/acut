@@ -4,6 +4,7 @@ import SmartEdit from "./SmartEdit";
 import { useConfirm } from "./confirmContext";
 import { toast } from "./toastStore";
 import { Btn } from "./ui";
+import { useUi } from "./uiStore";
 
 export type SmartAlbum = {
   id: number;
@@ -34,6 +35,11 @@ export default function SmartPanel({
   const [items, setItems] = useState<SmartAlbum[]>([]);
   /// 편집 상자. `null`은 닫힘, `{ id: 0 }`은 새로 만들기
   const [editing, setEditing] = useState<SmartAlbum | null | "new">(null);
+  // 격자 단축키(P/X/별점)가 편집 상자 뒤 사진에 찍히지 않게 — 다른 상자들처럼 오버레이로 센다
+  useEffect(() => {
+    useUi.getState().set({ smartEditing: editing !== null });
+    return () => useUi.getState().set({ smartEditing: false });
+  }, [editing]);
 
   const reload = useCallback(() => {
     invoke<SmartAlbum[]>("smart_list")

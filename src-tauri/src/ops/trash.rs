@@ -370,11 +370,12 @@ pub fn to_trash(db: &Db, ids: &[i64], label: &str) -> Result<Outcome> {
                 // 저널과 행 갱신은 한 트랜잭션. 파일은 이미 휴지통에 있으므로 실패하면
                 // 제자리로 돌려놓고 실패로 센다 — 저널만 남고 행이 안 바뀌면 격자엔
                 // 보이는데 열리지 않는 사진이 된다 (2차 리뷰 M-4)
+                let (to_size, to_mtime) = super::file_stat(&dest);
                 let recorded = db.transaction(|tx| {
                     tx.execute(
-                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
-                         VALUES(?1,?2,'trash',?3,?4,?3,?5,1)",
-                        rusqlite::params![batch_id, it.id, it.volume_uuid, it.vol_rel, to_vol_rel],
+                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok,to_size,to_mtime)
+                         VALUES(?1,?2,'trash',?3,?4,?3,?5,1,?6,?7)",
+                        rusqlite::params![batch_id, it.id, it.volume_uuid, it.vol_rel, to_vol_rel, to_size, to_mtime],
                     )?;
                     tx.execute(
                         "UPDATE files SET trashed_at = strftime('%s','now'),
@@ -565,11 +566,12 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
                     });
                 // 저널과 행 갱신은 한 트랜잭션. 실패하면 파일을 휴지통 자리로 되돌린다 —
                 // 디스크만 돌아오고 행이 «휴지통»이면 그 사진은 어느 화면에도 없다 (2차 리뷰 M-4)
+                let (to_size, to_mtime) = super::file_stat(&dest);
                 let recorded = db.transaction(|tx| {
                     tx.execute(
-                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
-                         VALUES(?1,?2,'restore',?3,?4,?3,?5,1)",
-                        rusqlite::params![batch_id, it.id, it.volume_uuid, from_vol_rel, to_vol_rel],
+                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok,to_size,to_mtime)
+                         VALUES(?1,?2,'restore',?3,?4,?3,?5,1,?6,?7)",
+                        rusqlite::params![batch_id, it.id, it.volume_uuid, from_vol_rel, to_vol_rel, to_size, to_mtime],
                     )?;
                     tx.execute(
                         "UPDATE files SET trashed_at = NULL, trash_path = NULL, trash_batch = NULL,
@@ -849,7 +851,9 @@ mod tests {
         assert_eq!(out.moved, 1);
         let trash_path: String = db
             .read(|c| {
-                c.query_row("SELECT trash_path FROM files WHERE id=?1", [ids[0]], |r| r.get(0))
+                c.query_row("SELECT trash_path FROM files WHERE id=?1", [ids[0]], |r| {
+                    r.get(0)
+                })
             })
             .unwrap();
         // 그새 같은 이름이 디스크에 생겨 «(2)»로 돌아와야 하는데, 그 «(2)» 이름은
@@ -876,7 +880,9 @@ mod tests {
         );
         let trashed: Option<i64> = db
             .read(|c| {
-                c.query_row("SELECT trashed_at FROM files WHERE id=?1", [ids[0]], |r| r.get(0))
+                c.query_row("SELECT trashed_at FROM files WHERE id=?1", [ids[0]], |r| {
+                    r.get(0)
+                })
             })
             .unwrap();
         assert!(trashed.is_some(), "행은 여전히 휴지통이다");

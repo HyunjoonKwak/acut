@@ -14,6 +14,8 @@ type Store = {
   /** 뷰어를 창 전체로 — 기본은 사이드바를 남겨 둔다 */
   viewerFull: boolean;
   organizing: boolean;
+  /** 스마트 앨범 편집 상자가 떠 있다 — 상태는 SmartPanel 이 갖고, 오버레이 판정에만 쓴다 */
+  smartEditing: boolean;
   /** 이벤트 자동 발견처럼 현재 그리드 쪽 밖의 사진까지 정리할 때의 고정 대상. */
   organizeSelection: { ids: number[]; libraryId: number } | null;
   /** 선택 사진 또는 폴더의 촬영일 감사·교정 */
@@ -63,6 +65,7 @@ export const useUi = create<Store>()((set) => ({
   viewerAt: null,
   viewerFull: false,
   organizing: false,
+  smartEditing: false,
   organizeSelection: null,
   captureDate: null,
   transfer: null,
@@ -99,6 +102,7 @@ export const useOverlayOpen = () =>
       s.viewerAt !== null ||
       s.culling ||
       s.organizing ||
+      s.smartEditing ||
       s.captureDate !== null ||
       s.transfer !== null ||
       s.folderOperation !== null ||

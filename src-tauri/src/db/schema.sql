@@ -295,7 +295,11 @@ CREATE TABLE IF NOT EXISTS journal (
     from_vol TEXT, from_path TEXT,
     to_vol   TEXT, to_path   TEXT,
     ok       INTEGER NOT NULL DEFAULT 1,
-    error    TEXT
+    error    TEXT,
+    -- 옮긴 직후 목적지 파일의 크기·mtime. 되돌릴 때 그새 바뀐 파일을 옮기지 않는다.
+    -- 0.9.1 이전 저널은 NULL 이라 대조 없이 되돌린다.
+    to_size  INTEGER,
+    to_mtime INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_journal_batch ON journal(batch_id);
 

@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useRef } from "react";
 import { AREAS, type Area } from "./areaItems";
 import { Btn } from "./ui";
+import { useModalFocus } from "./focus";
 
 /**
  * 라이브러리를 등록할 때 — 이 폴더는 어느 영역인가.
@@ -16,17 +17,12 @@ export default function AreaPickDialog({
   onPick: (area: Area) => void;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, onClose);
 
   return (
     <div className="fixed inset-0 z-[70] bg-canvas/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div role="dialog" aria-modal="true" aria-label="이 폴더는 어느 영역입니까?" className="w-[460px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="이 폴더는 어느 영역입니까?" className="w-[460px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
         <div className="text-[16px] font-semibold text-fg mb-1">
           이 폴더는 어느 영역입니까?
         </div>

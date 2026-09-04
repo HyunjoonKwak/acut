@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
 import { AREAS, nextArea } from "./areaItems";
 import type { Outcome } from "./types";
+import { useModalFocus } from "./focus";
 
 type Suggestion = { title: string; why: string; score: number };
 export type OrganizeOutcome = Outcome & {
@@ -98,18 +99,21 @@ export default function Organize({
     }
   }, [workIds, dest, date, title, onDone, onClose]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, onClose, { locked: busy });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run();
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, run]);
+  }, [run]);
 
   return (
     <div className="absolute inset-0 z-40 bg-canvas/95 backdrop-blur-sm flex items-center justify-center p-6">
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

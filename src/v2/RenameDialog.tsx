@@ -1,6 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Btn } from "./ui";
 import { badName } from "./fileName";
+import { useModalFocus } from "./focus";
 
 /**
  * 이름 바꾸기 — 확장자 앞부분만 고르고 뜬다. 보통 바꾸는 건 그쪽이다.
@@ -48,18 +49,23 @@ export default function RenameDialog({
     [name],
   );
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, onClose, { locked: busy });
+
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50"
       onPointerDown={onClose}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-label="이름 바꾸기"
         onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           e.stopPropagation();
-          if (e.key === "Escape") onClose();
           if (e.key === "Enter") submit();
         }}
         className="w-[380px] max-w-[90vw] rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl p-5"

@@ -51,11 +51,12 @@ pub fn rename(db: &Db, id: i64, new_name: &str) -> Result<String> {
                 .map(|e| e.to_string_lossy().to_lowercase());
             // 저널과 행 갱신은 한 트랜잭션. 디스크만 새 이름이면 그 사진은 «없는 파일»이
             // 되므로, 실패하면 파일을 제자리로 돌린다 (2차 리뷰 M-4)
+            let (to_size, to_mtime) = super::file_stat(&to);
             let recorded = db.transaction(|tx| {
                 tx.execute(
-                    "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
-                     VALUES(?1,?2,'rename',?3,?4,?3,?5,1)",
-                    rusqlite::params![batch, id, uuid, from_rel, to_rel],
+                    "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok,to_size,to_mtime)
+                     VALUES(?1,?2,'rename',?3,?4,?3,?5,1,?6,?7)",
+                    rusqlite::params![batch, id, uuid, from_rel, to_rel, to_size, to_mtime],
                 )?;
                 tx.execute(
                     "UPDATE files SET name = ?2, ext = ?3 WHERE id = ?1",
@@ -70,7 +71,16 @@ pub fn rename(db: &Db, id: i64, new_name: &str) -> Result<String> {
                         format!("DB 갱신 실패: {error}; 파일 원위치 복구도 실패: {rollback}")
                     }
                 };
-                let _ = super::record(db, batch, "rename", id, &uuid, &from_rel, None, Err(&message));
+                let _ = super::record(
+                    db,
+                    batch,
+                    "rename",
+                    id,
+                    &uuid,
+                    &from_rel,
+                    None,
+                    Err(&message),
+                );
                 let _ = super::close_batch(db, batch, 0);
                 return Err(DbError::Invalid(message));
             }

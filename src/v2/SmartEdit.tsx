@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useModalFocus } from "./focus";
 import GroupMenu from "./GroupMenu";
 import SearchPanel from "./SearchPanel";
 import SortMenu from "./SortMenu";
@@ -89,14 +90,20 @@ export default function SmartEdit({
     }
   };
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, onClose, { locked: saving });
+
   return (
     <div
       className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50"
       onPointerDown={onClose}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-label={initial && initial.id !== 0 ? "스마트 앨범 고치기" : "스마트 앨범 만들기"}
         onPointerDown={(e) => e.stopPropagation()}
         className="w-[420px] max-w-[92vw] max-h-[86vh] overflow-y-auto rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl"
       >

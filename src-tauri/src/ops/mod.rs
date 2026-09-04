@@ -24,6 +24,18 @@ pub mod undo;
 
 use crate::db::conn::{Db, Result};
 
+/// 옮긴 직후 목적지 파일의 (크기, mtime 초). 저널에 남겨 되돌릴 때 «그새 바뀌지
+/// 않았나»를 대조한다. 읽지 못하면 NULL 로 남겨 대조 없이 되돌린다.
+pub(crate) fn file_stat(path: &std::path::Path) -> (Option<i64>, Option<i64>) {
+    match std::fs::metadata(path) {
+        Ok(meta) => (
+            i64::try_from(meta.len()).ok(),
+            Some(filetime::FileTime::from_last_modification_time(&meta).unix_seconds()),
+        ),
+        Err(_) => (None, None),
+    }
+}
+
 /// 작업 묶음을 연다. 되돌리기는 이 단위로 한다.
 pub fn open_batch(db: &Db, kind: &str, label: &str) -> Result<i64> {
     db.write(|c| {

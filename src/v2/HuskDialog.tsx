@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useModalFocus } from "./focus";
 import { fmtBytes } from "./format";
 import { toast } from "./toastStore";
 import { useData } from "./dataStore";
@@ -35,13 +36,8 @@ export default function HuskDialog({ libraryId, name, onClose }: { libraryId: nu
       live = false;
     };
   }, [libraryId]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, onClose, { locked: busy });
 
   const picked = useMemo(() => (list ?? []).filter((h) => !off.has(h.rel)), [list, off]);
   const bytes = picked.reduce((s, h) => s + h.bytes, 0);
@@ -62,7 +58,7 @@ export default function HuskDialog({ libraryId, name, onClose }: { libraryId: nu
 
   return (
     <div className="fixed inset-0 z-[70] bg-canvas/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div role="dialog" aria-modal="true" aria-label={`「${name}」의 사진 없는 폴더 정리`} className="w-[720px] max-w-full max-h-[85vh] bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5 flex flex-col">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`「${name}」의 사진 없는 폴더 정리`} className="w-[720px] max-w-full max-h-[85vh] bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5 flex flex-col">
         <div className="text-[16px] font-semibold text-fg mb-1">「{name}」의 사진 없는 폴더 정리</div>
         <div className="text-[13px] text-fg-mute mb-3">
           사진을 다 치운 뒤 카메라 메모(txt)·썸네일(thm)·zip 같은 파일만 남은 폴더들입니다. 체크된 폴더를 통째로 라이브러리 휴지통(<code>.acut/휴지통/_폴더</code>)으로 옮깁니다 — Finder 로 되살릴 수 있고, «영구히 비우기»에서 같이 사라집니다. 편집 파일(psd·ai·zip 등)이 든 폴더는 체크를 풀어 두었습니다.

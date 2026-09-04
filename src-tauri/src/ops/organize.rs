@@ -163,11 +163,12 @@ pub fn move_to(db: &Db, ids: &[i64], dest: &Dest, label: &str) -> Result<Outcome
         match move_with_sidecars(&src, &dest_path) {
             Ok(()) => {
                 let to_rel = crate::media::cache::rel_path(&dest_vol_dir, &new_name);
+                let (to_size, to_mtime) = super::file_stat(&dest_path);
                 let changed = db.transaction(|tx| {
                     tx.execute(
-                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
-                         VALUES(?1,?2,'move',?3,?4,?5,?6,1)",
-                        rusqlite::params![batch_id,it.id,it.volume_uuid,it.vol_rel,lib.volume_uuid,to_rel],
+                        "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok,to_size,to_mtime)
+                         VALUES(?1,?2,'move',?3,?4,?5,?6,1,?7,?8)",
+                        rusqlite::params![batch_id,it.id,it.volume_uuid,it.vol_rel,lib.volume_uuid,to_rel,to_size,to_mtime],
                     )?;
                     tx.execute(
                         "UPDATE files SET folder_id = ?2, name = ?3 WHERE id = ?1",
@@ -433,7 +434,12 @@ mod tests {
         assert_eq!(move_to(&db, &ids, &dest, "정리").unwrap().moved, 2);
 
         let again = move_to(&db, &ids, &dest, "정리").unwrap();
-        assert_eq!((again.moved, again.failed), (0, 0), "{:?}", again.first_error);
+        assert_eq!(
+            (again.moved, again.failed),
+            (0, 0),
+            "{:?}",
+            again.first_error
+        );
         let target = dir.path().join("2024/행사");
         assert!(target.join("20240827_120000.jpg").is_file());
         assert!(

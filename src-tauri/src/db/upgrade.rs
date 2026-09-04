@@ -20,6 +20,7 @@ pub fn run(c: &Connection) -> rusqlite::Result<()> {
     add_gallery_transition_p0(c)?;
     add_gallery_transition_p1(c)?;
     add_release_091_integrity(c)?;
+    add_journal_file_stat(c)?;
     rename_old_labels(c)?;
     migrate_taken_at_to_utc(c)?;
     Ok(())
@@ -60,6 +61,23 @@ fn add_release_091_integrity(c: &Connection) -> rusqlite::Result<()> {
          );
          CREATE INDEX IF NOT EXISTS idx_publication_batch ON publication_ledger(batch_id);",
     )
+}
+
+/// 일반 되돌리기(move·rename·trash·restore)의 동일성 대조용 — 옮긴 직후 목적지의
+/// 크기·mtime. 이전 저널은 NULL 로 남아 대조 없이 되돌린다 (2차 리뷰 M-3).
+fn add_journal_file_stat(c: &Connection) -> rusqlite::Result<()> {
+    for (column, ddl) in [
+        ("to_size", "ALTER TABLE journal ADD COLUMN to_size INTEGER"),
+        (
+            "to_mtime",
+            "ALTER TABLE journal ADD COLUMN to_mtime INTEGER",
+        ),
+    ] {
+        if !has_column(c, "journal", column)? {
+            c.execute_batch(ddl)?;
+        }
+    }
+    Ok(())
 }
 
 /// Gallery→Desk P1 폴더명 감사의 부모→자식 배치 연결. 신규·기존 DB 모두 멱등이다.

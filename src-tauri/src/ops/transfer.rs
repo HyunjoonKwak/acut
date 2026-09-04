@@ -578,11 +578,12 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                         )));
                     }
                     move_with_sidecars(&source, &target)?;
+                    let (to_size, to_mtime) = super::file_stat(&target);
                     let changed = db.transaction(|tx| {
                         tx.execute(
-                            "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok)
-                             VALUES(?1,?2,'move',?3,?4,?5,?6,1)",
-                            rusqlite::params![batch,it.id,it.volume_uuid,it.vol_rel,lib.volume_uuid,dest_vol_rel],
+                            "INSERT INTO journal(batch_id,file_id,op,from_vol,from_path,to_vol,to_path,ok,to_size,to_mtime)
+                             VALUES(?1,?2,'move',?3,?4,?5,?6,1,?7,?8)",
+                            rusqlite::params![batch,it.id,it.volume_uuid,it.vol_rel,lib.volume_uuid,dest_vol_rel,to_size,to_mtime],
                         )?;
                         tx.execute(
                             "UPDATE files SET folder_id=?2,name=?3 WHERE id=?1",

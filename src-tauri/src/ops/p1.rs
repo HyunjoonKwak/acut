@@ -108,7 +108,20 @@ pub fn audit_folder_names(db: &Db, library_id: i64) -> Result<Vec<FolderAuditIte
             !name.starts_with('.') && name != "@eaDir"
         });
     for entry in entries {
-        let entry = entry.map_err(|error| bad(error.to_string()))?;
+        // 권한 없는 폴더 하나가 감사 전체를 막으면 안 된다 — 그 갈래만 건너뛴다 (2차 리뷰 M-9)
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                log::warn!(
+                    "폴더 이름 감사에서 건너뜀 {}: {error}",
+                    error
+                        .path()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default()
+                );
+                continue;
+            }
+        };
         if !entry.file_type().is_dir() {
             continue;
         }
@@ -395,6 +408,34 @@ mod tests {
         for name in names {
             std::fs::write(dir.join(name), format!("fixture-{rel}-{name}")).unwrap();
         }
+    }
+
+    /// 읽을 수 없는 폴더는 건너뛰고 나머지 제안은 그대로 낸다
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_folder_does_not_abort_the_audit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("작업대");
+        add_media(&root, "2024_08_27 여행", &["20240827_120000.jpg"]);
+        add_media(&root, "잠김/2024_08_28 둘째날", &["20240828_120000.jpg"]);
+        let db = Db::open(temp.path().join("test.db")).unwrap();
+        let library = crate::db::libraries::add(&db, &root, 0).unwrap();
+        crate::scan::scan_folder(&db, library.id, &root, 0, |_| {}).unwrap();
+        let locked = root.join("잠김");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let audit = audit_folder_names(&db, library.id);
+        // tempdir 정리가 되게 먼저 되돌린다
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let audit = audit.expect("읽을 수 없는 갈래는 건너뛴다");
+        assert!(audit
+            .iter()
+            .any(|item| item.proposed_name == "2024-08-27 여행"));
+        assert!(!audit
+            .iter()
+            .any(|item| item.source_dir.starts_with("잠김/")));
     }
 
     #[test]

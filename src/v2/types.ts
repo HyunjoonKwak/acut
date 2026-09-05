@@ -80,7 +80,12 @@ export type GeoStats = {
   endpoint_ready: boolean;
 };
 /** 라이브러리 하나의 휴지통 — 휴지통은 라이브러리마다 따로 있다 */
-export type TrashByLib = { library_id: number; name: string; files: number; bytes: number };
+export type TrashByLib = {
+  library_id: number;
+  name: string;
+  files: number;
+  bytes: number;
+};
 
 export type Batch = {
   id: number;

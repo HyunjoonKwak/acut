@@ -42,7 +42,8 @@ type Overview = {
   bounds: [number, number, number, number] | null;
 };
 
-const thumbUrl = (c: Cell) => (c.thumb && c.library_id !== null ? thumbUrlOf(c.library_id, c.thumb) : null);
+const thumbUrl = (c: Cell) =>
+  c.thumb && c.library_id !== null ? thumbUrlOf(c.library_id, c.thumb) : null;
 
 /** 타일은 온라인 — 사용자 결정(2026-08-27). 어두운 바탕이 앱과 맞는다. */
 // Carto 무료 베이스맵은 1x·@2x 모두 «API KEY REQUIRED» 워터마크를 박는다
@@ -156,7 +157,11 @@ export default function MapView({ filter }: { filter: Filter }) {
       })
       .catch(() => {
         if (!live) return;
-        setOverviewState({ key: overviewRequestKey, total: null, failed: true });
+        setOverviewState({
+          key: overviewRequestKey,
+          total: null,
+          failed: true,
+        });
       });
     return () => {
       live = false;

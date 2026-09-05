@@ -58,9 +58,7 @@ export default function SelectMenu({
             <MenuItem hint="⌘A" onClick={run(() => pickWhere(() => true))}>
               {allLabel}
             </MenuItem>
-            <MenuItem
-              onClick={run(() => pickWhere((r) => !picked.has(r.id)))}
-            >
+            <MenuItem onClick={run(() => pickWhere((r) => !picked.has(r.id)))}>
               반대로 고르기
             </MenuItem>
             {n > 0 && (
@@ -72,13 +70,19 @@ export default function SelectMenu({
               </MenuItem>
             )}
             <MenuSep />
-            <MenuItem onClick={run(() => pickWhere((r) => r.culling_flag === 1))}>
+            <MenuItem
+              onClick={run(() => pickWhere((r) => r.culling_flag === 1))}
+            >
               남김만 고르기
             </MenuItem>
-            <MenuItem onClick={run(() => pickWhere((r) => r.culling_flag === 2))}>
+            <MenuItem
+              onClick={run(() => pickWhere((r) => r.culling_flag === 2))}
+            >
               제외만 고르기
             </MenuItem>
-            <MenuItem onClick={run(() => pickWhere((r) => r.culling_flag === 0))}>
+            <MenuItem
+              onClick={run(() => pickWhere((r) => r.culling_flag === 0))}
+            >
               판정 없는 것만 고르기
             </MenuItem>
             <MenuItem onClick={run(() => pickWhere((r) => r.favorite))}>
@@ -101,13 +105,22 @@ export default function SelectMenu({
                     나란히 보기
                   </MenuItem>
                 )}
-                <MenuItem hint="P" onClick={run(() => markPicked({ cullingFlag: 1 }))}>
+                <MenuItem
+                  hint="P"
+                  onClick={run(() => markPicked({ cullingFlag: 1 }))}
+                >
                   고른 것 남김
                 </MenuItem>
-                <MenuItem hint="X" onClick={run(() => markPicked({ cullingFlag: 2 }))}>
+                <MenuItem
+                  hint="X"
+                  onClick={run(() => markPicked({ cullingFlag: 2 }))}
+                >
                   고른 것 제외
                 </MenuItem>
-                <MenuItem hint="F" onClick={run(() => markPicked({ favorite: true }))}>
+                <MenuItem
+                  hint="F"
+                  onClick={run(() => markPicked({ favorite: true }))}
+                >
                   고른 것 즐겨찾기
                 </MenuItem>
                 <MenuItem onClick={run(() => markPicked({ cullingFlag: 0 }))}>

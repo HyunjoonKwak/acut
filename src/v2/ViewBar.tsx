@@ -133,7 +133,13 @@ export default function ViewBar({
 }) {
   return (
     <div className="flex items-center gap-1">
-      <Cycle items={STYLES} value={style} onChange={onStyle} what="보기" compact={compact} />
+      <Cycle
+        items={STYLES}
+        value={style}
+        onChange={onStyle}
+        what="보기"
+        compact={compact}
+      />
       <ViewToggle
         label="필름스트립"
         on={filmstrip}

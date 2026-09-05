@@ -53,7 +53,10 @@ function JobChip({ narrow }: { narrow: boolean }) {
               : `${job.done.toLocaleString()} / ${job.total.toLocaleString()}`}
           </span>
           <span className="w-16 h-1 rounded bg-canvas overflow-hidden shrink-0">
-            <i className="block h-full bg-accent" style={{ width: `${pct}%` }} />
+            <i
+              className="block h-full bg-accent"
+              style={{ width: `${pct}%` }}
+            />
           </span>
         </>
       )}

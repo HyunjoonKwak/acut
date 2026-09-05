@@ -41,9 +41,7 @@ export default function InfoPanel({
     }
     invoke<Detail>("file_detail", { id })
       .then((d) => live && setGot({ id, detail: d, error: null }))
-      .catch((e) =>
-        live && setGot({ id, detail: null, error: String(e) }),
-      );
+      .catch((e) => live && setGot({ id, detail: null, error: String(e) }));
     return () => {
       live = false;
     };

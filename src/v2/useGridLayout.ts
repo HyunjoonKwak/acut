@@ -124,7 +124,12 @@ export function useGridLayout(
       .slice(s, e)
       .filter((b) => b.y + b.h >= top && b.y <= bottom);
     // 스크롤바가 쓸 «맨 위 사진 순번»과 «한 화면 장수»
-    const [s2, e2] = visibleRange(L.boxes, scrollTop, scrollTop + viewH, L.maxH);
+    const [s2, e2] = visibleRange(
+      L.boxes,
+      scrollTop,
+      scrollTop + viewH,
+      L.maxH,
+    );
     let first = -1;
     let n = 0;
     for (let i = s2; i < e2; i++) {

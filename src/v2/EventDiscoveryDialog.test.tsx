@@ -23,14 +23,23 @@ describe("이벤트 자동 발견", () => {
       },
     ]);
     const choose = vi.fn();
-    render(<EventDiscoveryDialog libraryId={1} libraryName="작업대" onChoose={choose} onClose={vi.fn()} />);
+    render(
+      <EventDiscoveryDialog
+        libraryId={1}
+        libraryName="작업대"
+        onChoose={choose}
+        onClose={vi.fn()}
+      />,
+    );
 
     await screen.findByText(/제안: 가족여행/);
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     await userEvent.click(screen.getByText("사진별 검토·제외"));
     const checks = screen.getAllByRole("checkbox");
     await userEvent.click(checks[1]);
-    await userEvent.click(screen.getByRole("button", { name: "선택 1장 정리…" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "선택 1장 정리…" }),
+    );
     expect(choose).toHaveBeenCalledWith([10]);
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("event_candidates", {
       libraryId: 1,
@@ -54,7 +63,14 @@ describe("이벤트 자동 발견", () => {
     };
     // 후보 키는 검색 조건이 같으면 그대로다 — <details> DOM 이 재사용된다
     vi.mocked(invoke).mockResolvedValue([candidate]);
-    render(<EventDiscoveryDialog libraryId={1} libraryName="작업대" onChoose={vi.fn()} onClose={vi.fn()} />);
+    render(
+      <EventDiscoveryDialog
+        libraryId={1}
+        libraryName="작업대"
+        onChoose={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
 
     await screen.findByText("사진별 검토·제외");
     await userEvent.click(screen.getByText("사진별 검토·제외"));
@@ -62,7 +78,9 @@ describe("이벤트 자동 발견", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "다시 찾기" }));
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryAllByRole("checkbox")).toHaveLength(0));
+    await waitFor(() =>
+      expect(screen.queryAllByRole("checkbox")).toHaveLength(0),
+    );
     const details = screen.getByText("사진별 검토·제외").closest("details");
     expect(details?.open).toBe(false);
 

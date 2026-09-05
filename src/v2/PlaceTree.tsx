@@ -23,7 +23,11 @@ export default function PlaceTree({
   picks: Picks;
   /** 지명 조건을 뺀 필터 — 이 안에서 센다 */
   facetFilter: unknown;
-  onPick: (p: { country: string | null; admin1: string | null; admin2: string | null }) => void;
+  onPick: (p: {
+    country: string | null;
+    admin1: string | null;
+    admin2: string | null;
+  }) => void;
   /** 캐시 적용 또는 서버 조회가 필요한 사진 수 */
   pending: number;
   /** 물어봤지만 서버가 이름을 찾지 못한 사진 수 */
@@ -33,12 +37,19 @@ export default function PlaceTree({
   const admin1 = picks.admin1;
 
   const [countries, setCountries] = useState<Facet[] | null>(null);
-  const [regions, setRegions] = useState<{ of: string; items: Facet[] } | null>(null);
-  const [cities, setCities] = useState<{ of: string; items: Facet[] } | null>(null);
+  const [regions, setRegions] = useState<{ of: string; items: Facet[] } | null>(
+    null,
+  );
+  const [cities, setCities] = useState<{ of: string; items: Facet[] } | null>(
+    null,
+  );
 
   // 지명이 채워지면 개정 번호가 올라 세 단계가 모두 다시 센다
   const geoRev = useData((s) => s.geoRev);
-  const key = useMemo(() => JSON.stringify([facetFilter, geoRev]), [facetFilter, geoRev]);
+  const key = useMemo(
+    () => JSON.stringify([facetFilter, geoRev]),
+    [facetFilter, geoRev],
+  );
 
   useEffect(() => {
     let live = true;
@@ -74,7 +85,9 @@ export default function PlaceTree({
       kind: "admin2",
     })
       .then((f) => live && setCities({ of: `${country}/${admin1}`, items: f }))
-      .catch(() => live && setCities({ of: `${country}/${admin1}`, items: [] }));
+      .catch(
+        () => live && setCities({ of: `${country}/${admin1}`, items: [] }),
+      );
     return () => {
       live = false;
     };
@@ -90,14 +103,15 @@ export default function PlaceTree({
     <div className="py-1">
       {pending > 0 && (
         <div className="px-3 pb-2 text-[12px] text-fg-mute leading-snug">
-          모든 라이브러리에서 아직 지명 처리가 필요한 사진 {pending.toLocaleString()}장 — 설정 › 탐색의
-          «지명 채우기»로 좌표에 지명을 붙입니다.
+          모든 라이브러리에서 아직 지명 처리가 필요한 사진{" "}
+          {pending.toLocaleString()}장 — 설정 › 탐색의 «지명 채우기»로 좌표에
+          지명을 붙입니다.
         </div>
       )}
       {unavailable > 0 && (
         <div className="px-3 pb-2 text-[12px] text-fg-mute leading-snug">
-          모든 라이브러리에서 서버가 지명을 찾지 못한 사진 {unavailable.toLocaleString()}장은 좌표로만
-          지도에 표시됩니다.
+          모든 라이브러리에서 서버가 지명을 찾지 못한 사진{" "}
+          {unavailable.toLocaleString()}장은 좌표로만 지도에 표시됩니다.
         </div>
       )}
       <Row
@@ -117,7 +131,11 @@ export default function PlaceTree({
               caret={c.value ? (open ? "▼" : "▶") : undefined}
               on={open && admin1 === null}
               onClick={() =>
-                onPick({ country: open ? null : c.value, admin1: null, admin2: null })
+                onPick({
+                  country: open ? null : c.value,
+                  admin1: null,
+                  admin2: null,
+                })
               }
             />
             {open &&
@@ -195,7 +213,9 @@ function Row({
       }`}
       style={{ paddingLeft: 12 + depth * 12 }}
     >
-      <span className="w-3 shrink-0 text-[10px] text-fg-mute">{caret ?? ""}</span>
+      <span className="w-3 shrink-0 text-[10px] text-fg-mute">
+        {caret ?? ""}
+      </span>
       <span className="flex-1 text-left truncate">{label}</span>
       <span className="text-fg-mute tabular-nums text-[12px] shrink-0">
         {count.toLocaleString()}

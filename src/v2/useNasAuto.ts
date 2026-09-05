@@ -21,7 +21,9 @@ const EVERY_MS = 30 * 60_000;
 
 /** 지금 한 번 살핀다 — 툴바의 NAS 불을 누르거나 설정에서 «연결 확인»을 했을 때도 이걸 쓴다.
  *  결과는 같은 저장소(nasStatus·nasNew)에 쓰여 불이 곧바로 바뀐다 */
-export async function probeNas(mode: "off" | "notify" | "pull"): Promise<Probe | null> {
+export async function probeNas(
+  mode: "off" | "notify" | "pull",
+): Promise<Probe | null> {
   if (mode === "off") {
     useData.getState().setNasStatus(null);
     return null;
@@ -39,10 +41,17 @@ export async function probeNas(mode: "off" | "notify" | "pull"): Promise<Probe |
       useData.getState().setNasNew(null);
       return p;
     }
-    useData.getState().setNasNew({ libraryId: p.library_id, files: p.new_files, bytes: p.new_bytes });
+    useData.getState().setNasNew({
+      libraryId: p.library_id,
+      files: p.new_files,
+      bytes: p.new_bytes,
+    });
     if (mode === "pull" && useJob.getState().job === null) {
       await invoke("nas_pull_start", { libraryId: p.library_id });
-      toast(`NAS 1차에 새 사진 ${p.new_files.toLocaleString()}장 — 내려받습니다`, "ok");
+      toast(
+        `NAS 1차에 새 사진 ${p.new_files.toLocaleString()}장 — 내려받습니다`,
+        "ok",
+      );
     }
     return p;
   } catch (e) {

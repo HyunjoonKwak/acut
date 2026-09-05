@@ -23,7 +23,9 @@ export function Sep() {
 /** 촬영·크기·용량·폴더 */
 export function DetailRows({ detail }: { detail: Detail }) {
   const mp =
-    detail.width && detail.height ? megapixels(detail.width, detail.height) : "";
+    detail.width && detail.height
+      ? megapixels(detail.width, detail.height)
+      : "";
   return (
     <>
       <Row k="촬영" v={fmtDateTime(detail.takenAt)} />

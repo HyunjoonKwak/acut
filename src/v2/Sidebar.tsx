@@ -53,7 +53,9 @@ export default function Sidebar({
 
   const libs = useData((s) => s.libs);
   // 갈래 표시의 숫자는 모든 라이브러리 합 — 고른 것만 세면 다른 쪽 휴지통이 숨는다
-  const trashTotal = useData((s) => s.trashByLib.reduce((a, r) => a + r.files, 0));
+  const trashTotal = useData((s) =>
+    s.trashByLib.reduce((a, r) => a + r.files, 0),
+  );
   const refreshTags = useData((s) => s.refreshTags);
   const sel = useView((s) => s.sel);
   const picks = useView((s) => s.picks);
@@ -78,8 +80,13 @@ export default function Sidebar({
     if (source !== "location") return;
     let live = true;
     invoke<GeoStats>("geo_stats")
-      .then((s) =>
-        live && setGeoState({ pending: s.pending_files, unavailable: s.unavailable_files }),
+      .then(
+        (s) =>
+          live &&
+          setGeoState({
+            pending: s.pending_files,
+            unavailable: s.unavailable_files,
+          }),
       )
       .catch(() => {});
     return () => {

@@ -27,7 +27,8 @@ export default function Breadcrumb({
   const full: string[] = viewTrash
     ? ["휴지통"]
     : [lib ? lib.name : "전체", ...(folder ? folder.split("/") : [])];
-  const parts = compact && full.length > 1 ? ["…", full[full.length - 1]] : full;
+  const parts =
+    compact && full.length > 1 ? ["…", full[full.length - 1]] : full;
   const fullPath = full.join(" › ");
 
   return (

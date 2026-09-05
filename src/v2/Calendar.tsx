@@ -71,9 +71,7 @@ export default function Calendar({
 
   if (loading) {
     return (
-      <div className="px-3 py-2 text-[13px] text-fg-mute">
-        불러오는 중…
-      </div>
+      <div className="px-3 py-2 text-[13px] text-fg-mute">불러오는 중…</div>
     );
   }
 

@@ -39,11 +39,17 @@ type Member = {
   folder_id: number;
   area: number;
 };
-type ApplyAll = { groups: number; kept: number; rejected: number; skipped: number };
+type ApplyAll = {
+  groups: number;
+  kept: number;
+  rejected: number;
+  skipped: number;
+};
 /** 무리 목록 한 쪽 — 끝에 가까워지면 다음 쪽을 이어 읽는다 */
 const PAGE_GROUPS = 200;
 /** 정착 구역(내사진 1 · 공용 2) — 여기서 지우면 Drive 가 NAS 에서도 지운다 */
-const settledArea = (area: number | null | undefined) => area === 1 || area === 2;
+const settledArea = (area: number | null | undefined) =>
+  area === 1 || area === 2;
 type ScopeCount = { library_id: number; groups: number };
 
 type Summary = {
@@ -56,10 +62,26 @@ type Summary = {
 };
 
 const KINDS = [
-  { id: -3, label: "폴더 비교", hint: "내용이 완전히 같은 폴더들 — 하나만 남기고 나머지는 제외" },
-  { id: -4, label: "두 폴더 비교", hint: "내가 고른 두 폴더 아래를 견준다 — 후보1번/연도별 ⇔ 후보2번" },
-  { id: 0, label: "개별 비교", hint: "같은 사진 무리(메타데이터만 다른 사본 포함) — 한 장씩 보며" },
-  { id: 4, label: "줄인 사본", hint: "같은 사진을 크기만 줄이거나 다시 저장한 것" },
+  {
+    id: -3,
+    label: "폴더 비교",
+    hint: "내용이 완전히 같은 폴더들 — 하나만 남기고 나머지는 제외",
+  },
+  {
+    id: -4,
+    label: "두 폴더 비교",
+    hint: "내가 고른 두 폴더 아래를 견준다 — 후보1번/연도별 ⇔ 후보2번",
+  },
+  {
+    id: 0,
+    label: "개별 비교",
+    hint: "같은 사진 무리(메타데이터만 다른 사본 포함) — 한 장씩 보며",
+  },
+  {
+    id: 4,
+    label: "줄인 사본",
+    hint: "같은 사진을 크기만 줄이거나 다시 저장한 것",
+  },
   { id: 2, label: "같은 순간", hint: "연달아 찍은 것" },
   { id: 1, label: "잡동사니", hint: "스크린샷·다운로드본" },
   { id: 3, label: "비슷한 장면", hint: "AI가 본 닮은 사진 (벡터 필요)" },
@@ -115,7 +137,6 @@ export default function Cull({
   );
   const [viewerFull, setViewerFull] = useState(false);
 
-
   /// 범위 — «지워질 사본이 이 라이브러리에 있는 무리»만 본다. 목록·머리 숫자·모두 확정이
   /// 모두 이 잣대를 쓴다 (2026-08-30: 모두 확정에만 걸려 있어 넘겨 보는 무리와 어긋났다)
   const [scopeLib, setScopeLib] = useState<number | null>(null);
@@ -124,7 +145,9 @@ export default function Cull({
     scopeRef.current = scopeLib;
   }, [scopeLib]);
   /// 범위 선택지 옆 숫자 — 라이브러리마다 «지워질 사본이 거기 있는» 미결 무리 수
-  const [scopeCounts, setScopeCounts] = useState<Map<number, number>>(new Map());
+  const [scopeCounts, setScopeCounts] = useState<Map<number, number>>(
+    new Map(),
+  );
   /// 방금 확정한 무리들 — «↩ 확정 취소»가 하나씩 되돌린다 (2026-08-31 «취소하고 다시 선택할 방법이 없어»)
   const [undoStack, setUndoStack] = useState<Group[]>([]);
   /// 처리됨 보기 — 확정한 무리를 최근 순으로 다시 넘겨 보며 무리 단위로 취소한다. 껐다 켜도 남는다
@@ -140,7 +163,11 @@ export default function Cull({
   const c3 = w < 880;
   const loadSummary = useCallback(async () => {
     try {
-      setSummary(await invoke<Summary[]>("cull_summary", { libraryId: scopeRef.current }));
+      setSummary(
+        await invoke<Summary[]>("cull_summary", {
+          libraryId: scopeRef.current,
+        }),
+      );
     } catch (e) {
       toast(String(e), "drop");
     }
@@ -150,7 +177,9 @@ export default function Cull({
     const k = kindRef.current;
     if (k === 0 || k === 1) {
       invoke<ScopeCount[]>("cull_scope_counts", { kind: k })
-        .then((sc) => setScopeCounts(new Map(sc.map((x) => [x.library_id, x.groups]))))
+        .then((sc) =>
+          setScopeCounts(new Map(sc.map((x) => [x.library_id, x.groups]))),
+        )
         .catch(() => {});
     }
   }, []);
@@ -223,11 +252,14 @@ export default function Cull({
     if (groups.length > 0 && idx >= groups.length - 20) void loadMoreGroups();
   }, [idx, groups.length, loadMoreGroups]);
 
-
   /// 무리를 한꺼번에 확정한다 — 먼저 세어 보여 주고 묻는다. 정착 구역(내사진·
   /// 공용)에 제외될 사본이 있는 무리는 건너뛴다: 거기서 지우면 NAS에서도 지워진다.
   const applyAll = useCallback(
-    async (folderId: number | null, what: string, libraryId: number | null = null) => {
+    async (
+      folderId: number | null,
+      what: string,
+      libraryId: number | null = null,
+    ) => {
       let dry: ApplyAll;
       try {
         dry = await invoke<ApplyAll>("cull_apply_all", {
@@ -270,12 +302,12 @@ export default function Cull({
       let r: ApplyAll;
       try {
         r = await invoke<ApplyAll>("cull_apply_all", {
-        kind,
-        skipSettled: true,
-        dryRun: false,
-        folderId,
-        libraryId,
-      });
+          kind,
+          skipSettled: true,
+          dryRun: false,
+          folderId,
+          libraryId,
+        });
       } catch (e) {
         toast(String(e), "drop");
         return;
@@ -311,14 +343,12 @@ export default function Cull({
             libraryId: scopeLib,
             done: viewDone,
           });
-    load.then(
-      (g) => {
-        if (!live || gen !== groupsGen.current) return;
-        setGroups(g);
-        setGroupsDone(g.length < PAGE_GROUPS);
-        setIdx(0);
-      },
-    );
+    load.then((g) => {
+      if (!live || gen !== groupsGen.current) return;
+      setGroups(g);
+      setGroupsDone(g.length < PAGE_GROUPS);
+      setIdx(0);
+    });
     return () => {
       live = false;
     };
@@ -329,9 +359,9 @@ export default function Cull({
   useEffect(() => {
     if (!current) return;
     let live = true;
-    invoke<Member[]>("cull_members", { groupId: current.id }).then(
-      (list) => live && setGot({ groupId: current.id, list }),
-    ).catch((e) => toast(String(e), "drop"));
+    invoke<Member[]>("cull_members", { groupId: current.id })
+      .then((list) => live && setGot({ groupId: current.id, list }))
+      .catch((e) => toast(String(e), "drop"));
     return () => {
       live = false;
     };
@@ -446,7 +476,9 @@ export default function Cull({
       }
       setUndoStack((s) => s.filter((x) => x.id !== g.id));
       setGroups((prev) =>
-        viewDoneRef.current ? prev.filter((x) => x.id !== g.id) : [g, ...prev.filter((x) => x.id !== g.id)],
+        viewDoneRef.current
+          ? prev.filter((x) => x.id !== g.id)
+          : [g, ...prev.filter((x) => x.id !== g.id)],
       );
       setIdx(0);
       loadSummary();
@@ -464,7 +496,11 @@ export default function Cull({
       toast(String(e), "drop");
       return;
     }
-    if (r.rejected === 0) toast("이 무리엔 제외할 사본이 없습니다 — 이미 휴지통에 있거나 지워진 사진뿐", "drop");
+    if (r.rejected === 0)
+      toast(
+        "이 무리엔 제외할 사본이 없습니다 — 이미 휴지통에 있거나 지워진 사진뿐",
+        "drop",
+      );
     setUndoStack((s) => [g, ...s].slice(0, 20));
     advance();
     loadSummary();
@@ -543,7 +579,9 @@ export default function Cull({
         return;
       }
       if (dry.groups === 0) {
-        toast("이 두 폴더 사이에서만 얽힌 무리가 없습니다 — 다른 폴더까지 얽힌 것은 하나씩");
+        toast(
+          "이 두 폴더 사이에서만 얽힌 무리가 없습니다 — 다른 폴더까지 얽힌 것은 하나씩",
+        );
         return;
       }
       const risky = settledArea(other.area);
@@ -552,7 +590,11 @@ export default function Cull({
         lines: [
           `${dry.groups.toLocaleString()}쌍 — 남김 ${dry.kept.toLocaleString()}장 · 제외 표시 ${dry.rejected.toLocaleString()}장`,
           "두 폴더 사이에서만 겹치는 무리에 적용합니다 — 다른 폴더까지 얽힌 무리는 건너뜁니다",
-          ...(risky ? ["주의: 제외될 쪽이 NAS 동기화 폴더입니다 — 휴지통으로 옮기면 NAS에서도 지워집니다"] : []),
+          ...(risky
+            ? [
+                "주의: 제외될 쪽이 NAS 동기화 폴더입니다 — 휴지통으로 옮기면 NAS에서도 지워집니다",
+              ]
+            : []),
           "파일은 아직 옮기지 않습니다 — 위의 «N장 휴지통으로»가 옮깁니다",
         ],
         confirmLabel: "전부 적용",
@@ -569,7 +611,10 @@ export default function Cull({
         toast(String(e), "drop");
         return;
       }
-      toast(`${r.groups.toLocaleString()}쌍 처리 — 제외 표시 ${r.rejected.toLocaleString()}장`, "ok");
+      toast(
+        `${r.groups.toLocaleString()}쌍 처리 — 제외 표시 ${r.rejected.toLocaleString()}장`,
+        "ok",
+      );
       loadSummary();
       loadGroups(kind);
     },
@@ -624,14 +669,18 @@ export default function Cull({
         const flag = patch.cullingFlag;
         setGot((cur) =>
           cur
-            ? { ...cur, list: cur.list.map((x) => (x.file_id === fileId ? { ...x, culling_flag: flag } : x)) }
+            ? {
+                ...cur,
+                list: cur.list.map((x) =>
+                  x.file_id === fileId ? { ...x, culling_flag: flag } : x,
+                ),
+              }
             : cur,
         );
       }
     },
     [pick],
   );
-
 
   const cur = groups[idx];
   const total = summary.reduce((a, s) => a + s.reclaimable, 0);
@@ -643,87 +692,94 @@ export default function Cull({
         <span className="font-semibold shrink-0">고르기</span>
         {/* 좁아지면 단추가 찌그러지는 대신 이 안이 가로로 밀린다 — 오른쪽 «확보 가능·닫기»는 늘 제자리 */}
         <div className="flex-1 min-w-0 flex items-center gap-3 bar-scroll">
-        {KINDS.map((k) => {
-          const s = summary.find((x) => x.kind === k.id);
-          return (
-            <button
-              key={k.id}
-              onClick={() => setKind(k.id)}
-              title={c2 && s ? `${k.hint} — 미결 ${(s.groups ?? 0).toLocaleString()}` : k.hint}
-              className={`h-control px-3 rounded-md text-[13.5px] ${
-                kind === k.id
-                  ? "bg-raised text-white ring-1 ring-line-strong"
-                  : "text-fg-dim"
-              }`}
-            >
-              {k.label}
-              {k.id !== -3 && k.id !== -4 && !c2 && (
-                <span className="tabular-nums text-fg-mute">
-                  {" "}
-                  {s?.groups ?? 0}
-                </span>
-              )}
-            </button>
-          );
-        })}
-        {scanning ? (
-          // 찾는 중에는 멈출 수 있어야 한다. 해시를 읽느라 오래 걸린다.
-          <button
-            onClick={async () => {
-              await invoke("scan_cancel");
-              setBusy("");
-            }}
-            className="h-control px-3 rounded-md text-[13.5px] text-drop ring-1 ring-drop"
-          >
-            멈추기
-          </button>
-        ) : (
-          <>
-            <button
-              onClick={() => {
-                setElapsed(0);
-                setBusy("찾는 중…");
-                invoke("cull_scan").catch((e) => {
-                  setBusy("");
-                  toast(String(e), "drop");
-                });
-              }}
-              className="h-control px-3 rounded-md text-[13.5px] text-fg-dim ring-1 ring-line-strong"
-            >
-              다시 찾기
-            </button>
-            {/* 전부 찾으면 완전 중복이 파일을 끝까지 읽어 한 시간이 걸린다.
-                「줄인 사본」은 썸네일만 읽어 31초다 — 그것 하나 보려고 기다릴 이유가 없다. */}
-            {kind >= 0 && (
+          {KINDS.map((k) => {
+            const s = summary.find((x) => x.kind === k.id);
+            return (
               <button
-                title={`${KINDS.find((k) => k.id === kind)?.label ?? ""}부터 다시 찾고 필요한 후속 갈래도 갱신합니다`}
+                key={k.id}
+                onClick={() => setKind(k.id)}
+                title={
+                  c2 && s
+                    ? `${k.hint} — 미결 ${(s.groups ?? 0).toLocaleString()}`
+                    : k.hint
+                }
+                className={`h-control px-3 rounded-md text-[13.5px] ${
+                  kind === k.id
+                    ? "bg-raised text-white ring-1 ring-line-strong"
+                    : "text-fg-dim"
+                }`}
+              >
+                {k.label}
+                {k.id !== -3 && k.id !== -4 && !c2 && (
+                  <span className="tabular-nums text-fg-mute">
+                    {" "}
+                    {s?.groups ?? 0}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {scanning ? (
+            // 찾는 중에는 멈출 수 있어야 한다. 해시를 읽느라 오래 걸린다.
+            <button
+              onClick={async () => {
+                await invoke("scan_cancel");
+                setBusy("");
+              }}
+              className="h-control px-3 rounded-md text-[13.5px] text-drop ring-1 ring-drop"
+            >
+              멈추기
+            </button>
+          ) : (
+            <>
+              <button
                 onClick={() => {
                   setElapsed(0);
                   setBusy("찾는 중…");
-                  invoke("cull_scan_kind", { kind }).catch((e) => {
+                  invoke("cull_scan").catch((e) => {
                     setBusy("");
                     toast(String(e), "drop");
                   });
                 }}
-                className="h-control px-3 rounded-md text-[13.5px] text-fg-mute ring-1 ring-line"
+                className="h-control px-3 rounded-md text-[13.5px] text-fg-dim ring-1 ring-line-strong"
               >
-                이 갈래 갱신
+                다시 찾기
               </button>
-            )}
-          </>
-        )}
-        {scanning && (
-          <span className="flex items-center gap-2 text-keep text-[13px] tabular-nums">
-            <i className="w-2 h-2 rounded-full bg-keep animate-pulse" />
-            {scanText}
-            <span className="text-fg-mute">· {fmtElapsed(elapsed)}</span>
-          </span>
-        )}
+              {/* 전부 찾으면 완전 중복이 파일을 끝까지 읽어 한 시간이 걸린다.
+                「줄인 사본」은 썸네일만 읽어 31초다 — 그것 하나 보려고 기다릴 이유가 없다. */}
+              {kind >= 0 && (
+                <button
+                  title={`${KINDS.find((k) => k.id === kind)?.label ?? ""}부터 다시 찾고 필요한 후속 갈래도 갱신합니다`}
+                  onClick={() => {
+                    setElapsed(0);
+                    setBusy("찾는 중…");
+                    invoke("cull_scan_kind", { kind }).catch((e) => {
+                      setBusy("");
+                      toast(String(e), "drop");
+                    });
+                  }}
+                  className="h-control px-3 rounded-md text-[13.5px] text-fg-mute ring-1 ring-line"
+                >
+                  이 갈래 갱신
+                </button>
+              )}
+            </>
+          )}
+          {scanning && (
+            <span className="flex items-center gap-2 text-keep text-[13px] tabular-nums">
+              <i className="w-2 h-2 rounded-full bg-keep animate-pulse" />
+              {scanText}
+              <span className="text-fg-mute">· {fmtElapsed(elapsed)}</span>
+            </span>
+          )}
         </div>
         <span className="shrink-0 whitespace-nowrap text-[13px] text-fg-mute tabular-nums">
           확보 가능 <b className="text-keep">{fmtBytes(total)}</b>
         </span>
-        <button onClick={onClose} className="shrink-0 whitespace-nowrap text-fg-dim px-2">
+        <button
+          onClick={onClose}
+          className="shrink-0 whitespace-nowrap text-fg-dim px-2"
+        >
           닫기 <span className="text-[11px]">Esc</span>
         </button>
       </div>
@@ -748,37 +804,54 @@ export default function Cull({
         </div>
       ) : (
         <>
-      {/* 진행 */}
-      {/* 조작 줄 — 범위·모두 확정·휴지통으로는 여기(늘 같은 자리). 머리는 탭·닫기만 (2026-08-31 좁은 창) */}
-      <div className="h-10 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[13.5px] bar-scroll">
+          {/* 진행 */}
+          {/* 조작 줄 — 범위·모두 확정·휴지통으로는 여기(늘 같은 자리). 머리는 탭·닫기만 (2026-08-31 좁은 창) */}
+          <div className="h-10 shrink-0 flex items-center gap-3 px-4 bg-chrome border-b border-line text-[13.5px] bar-scroll">
             {!scanning && (
-              <label className="flex items-center gap-1.5 text-[13px] text-fg-dim" style={{ flex: "none" }}>
+              <label
+                className="flex items-center gap-1.5 text-[13px] text-fg-dim"
+                style={{ flex: "none" }}
+              >
                 {!c3 && "범위"}
                 <select
                   value={scopeLib ?? ""}
                   style={{ flex: "none" }}
-                  onChange={(e) => setScopeLib(e.target.value === "" ? null : Number(e.target.value))}
+                  onChange={(e) =>
+                    setScopeLib(
+                      e.target.value === "" ? null : Number(e.target.value),
+                    )
+                  }
                   title="지워질 사본이 이 라이브러리에 있는 무리만 봅니다 — 목록·숫자·모두 확정에 모두 걸립니다"
                   className="h-control rounded-md bg-raised text-fg text-[13px] px-2 ring-2 ring-accent/70 hover:ring-accent focus:ring-accent outline-none"
                 >
                   <option value="">전체 라이브러리</option>
                   {libs.map((l) => (
                     <option key={l.id} value={l.id}>
-                      {l.name} 쪽을 지울 것만 ({(scopeCounts.get(l.id) ?? 0).toLocaleString()})
+                      {l.name} 쪽을 지울 것만 (
+                      {(scopeCounts.get(l.id) ?? 0).toLocaleString()})
                     </option>
                   ))}
                 </select>
               </label>
             )}
-            {!scanning && (kind === 0 || kind === 1) && !viewDone && groups.length > 0 && (
-              <button
-                onClick={() => applyAll(null, KINDS.find((k) => k.id === kind)?.label ?? "", scopeLib)}
-                title={`${scopeLib === null ? "전체 라이브러리" : `${libs.find((l) => l.id === scopeLib)?.name ?? ""} 쪽을 지울 무리만`} — 한꺼번에 확정합니다. 공용·내사진 안의 사본이 있는 무리는 건너뜁니다`}
-                className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
-              >
-                모두 확정
-              </button>
-            )}
+            {!scanning &&
+              (kind === 0 || kind === 1) &&
+              !viewDone &&
+              groups.length > 0 && (
+                <button
+                  onClick={() =>
+                    applyAll(
+                      null,
+                      KINDS.find((k) => k.id === kind)?.label ?? "",
+                      scopeLib,
+                    )
+                  }
+                  title={`${scopeLib === null ? "전체 라이브러리" : `${libs.find((l) => l.id === scopeLib)?.name ?? ""} 쪽을 지울 무리만`} — 한꺼번에 확정합니다. 공용·내사진 안의 사본이 있는 무리는 건너뜁니다`}
+                  className="h-control px-3 rounded-md text-[13.5px] bg-keep text-keep-fg font-semibold"
+                >
+                  모두 확정
+                </button>
+              )}
             {!scanning && (toCleanAll?.files ?? 0) > 0 && (
               <button
                 onClick={() => void cleanExcluded()}
@@ -803,7 +876,9 @@ export default function Cull({
                       : summary.find((x) => x.kind === kind)?.groups) ?? 0,
                   ).toLocaleString()}`}
             </span>
-            <div className={`${c3 ? "w-24" : c2 ? "w-36" : "w-56"} h-1.5 rounded bg-raised overflow-hidden`}>
+            <div
+              className={`${c3 ? "w-24" : c2 ? "w-36" : "w-56"} h-1.5 rounded bg-raised overflow-hidden`}
+            >
               <i
                 className="block h-full bg-accent"
                 style={{
@@ -818,7 +893,8 @@ export default function Cull({
                 처리됨 보기 — 취소만 할 수 있습니다
               </span>
             )}
-            {((summary.find((x) => x.kind === kind)?.done ?? 0) > 0 || viewDone) && (
+            {((summary.find((x) => x.kind === kind)?.done ?? 0) > 0 ||
+              viewDone) && (
               <button
                 onClick={() => setViewDone((v) => !v)}
                 title="확정한 무리를 최근 순으로 다시 봅니다 — 앱을 껐다 켜도 남고, «↩ 확정 취소»로 무리 단위로 되돌립니다"
@@ -835,155 +911,182 @@ export default function Cull({
                 {fmtBytes(cur.size_bytes)}
               </span>
             )}
-      </div>
+          </div>
 
-      {/* 후보들 — 크게 보기는 이 안만 덮는다. 위아래 막대는 남는다. */}
-      {/* 스크롤은 안쪽 div가 맡는다. 바깥이 스크롤하면 덮개가 같이 밀려 올라간다. */}
-      <div className="flex-1 relative min-h-0">
-        <div className="absolute inset-0 overflow-y-auto p-4 scroll-thin">
-          {!cur && (
-            <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute">
-              {scanning ? (
-                <>
-                  <i className="w-3 h-3 rounded-full bg-keep animate-pulse" />
-                  <div className="text-fg-dim tabular-nums">{scanText}</div>
-                  <div className="text-[13px] tabular-nums">
-                    {fmtElapsed(elapsed)} 지남 — 디스크를 읽는 동안은 숫자가
-                    단계마다 갱신됩니다. 멈춰도 읽은 해시는 남습니다.
-                  </div>
-                </>
-              ) : (
-                "정리할 그룹이 없습니다 — 「다시 찾기」를 눌러보세요"
+          {/* 후보들 — 크게 보기는 이 안만 덮는다. 위아래 막대는 남는다. */}
+          {/* 스크롤은 안쪽 div가 맡는다. 바깥이 스크롤하면 덮개가 같이 밀려 올라간다. */}
+          <div className="flex-1 relative min-h-0">
+            <div className="absolute inset-0 overflow-y-auto p-4 scroll-thin">
+              {!cur && (
+                <div className="h-full flex flex-col items-center justify-center gap-2 text-fg-mute">
+                  {scanning ? (
+                    <>
+                      <i className="w-3 h-3 rounded-full bg-keep animate-pulse" />
+                      <div className="text-fg-dim tabular-nums">{scanText}</div>
+                      <div className="text-[13px] tabular-nums">
+                        {fmtElapsed(elapsed)} 지남 — 디스크를 읽는 동안은 숫자가
+                        단계마다 갱신됩니다. 멈춰도 읽은 해시는 남습니다.
+                      </div>
+                    </>
+                  ) : (
+                    "정리할 그룹이 없습니다 — 「다시 찾기」를 눌러보세요"
+                  )}
+                </div>
+              )}
+              {cur && (
+                <div
+                  className="grid gap-3"
+                  style={{
+                    gridTemplateColumns:
+                      "repeat(auto-fill, minmax(200px, 1fr))",
+                  }}
+                >
+                  {members.map((m, i) => (
+                    <CullTile
+                      key={m.file_id}
+                      m={m}
+                      i={i}
+                      kind={kind}
+                      onPick={pick}
+                      onView={setViewerAt}
+                      onKeep={keepThis}
+                    />
+                  ))}
+                </div>
               )}
             </div>
-          )}
-          {cur && (
-            <div
-              className="grid gap-3"
-              style={{
-                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-              }}
-            >
-              {members.map((m, i) => (
-                <CullTile key={m.file_id} m={m} i={i} kind={kind} onPick={pick} onView={setViewerAt} onKeep={keepThis} />
+
+            {viewerAt !== null && members[viewerAt] && (
+              <Viewer
+                ids={members.map((m) => m.file_id)}
+                index={viewerAt}
+                onIndex={setViewerAt}
+                onClose={() => {
+                  setViewerAt(null);
+                  setViewerFull(false);
+                }}
+                onMark={viewerMark}
+                fullScreen={viewerFull}
+                onToggleFullScreen={() => setViewerFull((f) => !f)}
+              />
+            )}
+          </div>
+
+          {/* 액션 */}
+          <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line bar-fixed">
+            {viewDone && (
+              <>
+                <button
+                  onClick={() => cur && void unapplyOne(cur)}
+                  disabled={!cur}
+                  title="이 무리의 남김·제외 표시를 지우고 미결로 되돌립니다 — 이미 휴지통으로 옮긴 사진은 그대로"
+                  className="h-control px-3.5 rounded-lg text-fg-dim text-[14px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
+                >
+                  ↩ 확정 취소
+                </button>
+                <span className="text-[13px] text-fg-mute">
+                  최근에 확정한 것부터 — 취소하면 미결 목록 맨 앞으로 돌아갑니다
+                </span>
+              </>
+            )}
+            {!viewDone && (
+              <>
+                <button
+                  onClick={apply}
+                  disabled={!cur}
+                  title="★ 대표는 남기고 나머지에 제외 표시 — 파일은 아직 옮기지 않습니다. 위의 «N장 휴지통으로»가 옮깁니다"
+                  className="h-control px-3.5 rounded-lg bg-keep text-keep-fg font-semibold text-[14px] disabled:opacity-40 flex items-center gap-2"
+                >
+                  확정
+                  <span className="text-[11.5px] bg-black/20 px-1.5 py-0.5 rounded font-mono">
+                    Space
+                  </span>
+                </button>
+                <button
+                  onClick={skip}
+                  disabled={!cur}
+                  title="이 무리는 건너뜁니다 — 판정하지 않고 «보류»로 남깁니다"
+                  className="h-control px-3.5 rounded-lg text-fg-dim text-[14px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
+                >
+                  나중에
+                  <span className="text-[11.5px] bg-white/8 px-1.5 py-0.5 rounded font-mono">
+                    S
+                  </span>
+                </button>
+                {kind === 0 &&
+                  cur &&
+                  members.length === 2 &&
+                  members.some((m) => m.is_best) &&
+                  (() => {
+                    const best = members.find((m) => m.is_best)!;
+                    const other = members.find((m) => !m.is_best)!;
+                    return (
+                      <button
+                        onClick={() => pairAll(best)}
+                        title={`«${best.folder || "/"}»를 남기고 «${other.folder || "/"}»의 사본을 제외 — 같은 두 폴더 사이에서 겹치는 다른 무리들에도 한꺼번에. 먼저 몇 쌍·몇 장인지 보여 주고 묻습니다`}
+                        className="h-control px-3.5 rounded-lg bg-accent text-accent-fg font-semibold text-[14px] flex items-center gap-2"
+                      >
+                        두 폴더 전체
+                        {!c3 && (
+                          <span className="text-[12px] font-normal opacity-80 truncate max-w-[280px]">
+                            {best.folder.split("/").pop() || "/"} 남김 ·{" "}
+                            {other.folder.split("/").pop() || "/"} 제외
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })()}
+              </>
+            )}
+            {/* 긴 설명은 단추의 풍선(title)으로 — 막대엔 핵심 낱말만 (2026-08-30) */}
+            {!viewDone && !c2 && (
+              <span
+                className="text-[13px] text-fg-mute ml-2"
+                title="숫자키를 누르면 그 번호의 사진이 남길 쪽이 됩니다. 두 번 누르면 크게 봅니다"
+              >
+                숫자키 <span className="font-mono">1–9</span> 남길 쪽 · 두 번
+                누르면 크게
+              </span>
+            )}
+            <div className="flex-1" />
+          </div>
+          {/* 확정한 무리 띠 — 몇 쌍 지나간 뒤에도 특정 쌍만 골라 취소할 수 있게 (2026-08-31).
+          이 세션에서 확정한 최근 20개. «다시 찾기» 뒤에는 무리 id 를 못 믿어 비운다 */}
+          {undoStack.length > 0 && (
+            <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-chrome/70 border-t border-line overflow-x-auto scroll-thin">
+              <span className="shrink-0 text-[13px] text-fg-mute whitespace-nowrap">
+                확정한 무리 <b className="text-fg-dim">{undoStack.length}</b>개
+                — ↩ 로 그것만 취소
+              </span>
+              {undoStack.map((g) => (
+                <span
+                  key={g.id}
+                  className="shrink-0 flex items-center gap-1.5 pl-1.5 pr-1 h-12 rounded-md bg-raised ring-1 ring-line"
+                  title={`${g.reason ?? ""} · ${g.member_count}장 · ${fmtBytes(g.size_bytes)} 확보${g.name ? `\n${g.name}` : ""}${g.folder ? `\n${g.folder}` : ""}`}
+                >
+                  {g.cover ? (
+                    <img
+                      src={thumbUrlPath(g.cover)}
+                      className="w-9 h-9 object-cover rounded"
+                      alt=""
+                    />
+                  ) : (
+                    <span className="w-9 h-9 rounded bg-canvas" />
+                  )}
+                  <span className="text-[12px] text-fg-dim tabular-nums">
+                    {g.member_count}장
+                  </span>
+                  <button
+                    onClick={() => void unapplyOne(g)}
+                    title="이 무리의 남김·제외 표시를 지우고 목록 맨 앞에 다시 보여 줍니다 — 이미 휴지통으로 옮긴 사진은 그대로"
+                    className="h-7 w-7 rounded text-fg-dim hover:text-fg hover:bg-hover text-[14px]"
+                  >
+                    ↩
+                  </button>
+                </span>
               ))}
             </div>
           )}
-        </div>
-
-        {viewerAt !== null && members[viewerAt] && (
-          <Viewer
-            ids={members.map((m) => m.file_id)}
-            index={viewerAt}
-            onIndex={setViewerAt}
-            onClose={() => {
-              setViewerAt(null);
-              setViewerFull(false);
-            }}
-            onMark={viewerMark}
-            fullScreen={viewerFull}
-            onToggleFullScreen={() => setViewerFull((f) => !f)}
-          />
-        )}
-      </div>
-
-      {/* 액션 */}
-      <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-chrome border-t border-line bar-fixed">
-        {viewDone && (
-          <>
-            <button
-              onClick={() => cur && void unapplyOne(cur)}
-              disabled={!cur}
-              title="이 무리의 남김·제외 표시를 지우고 미결로 되돌립니다 — 이미 휴지통으로 옮긴 사진은 그대로"
-              className="h-control px-3.5 rounded-lg text-fg-dim text-[14px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
-            >
-              ↩ 확정 취소
-            </button>
-            <span className="text-[13px] text-fg-mute">최근에 확정한 것부터 — 취소하면 미결 목록 맨 앞으로 돌아갑니다</span>
-          </>
-        )}
-        {!viewDone && (
-        <>
-        <button
-          onClick={apply}
-          disabled={!cur}
-          title="★ 대표는 남기고 나머지에 제외 표시 — 파일은 아직 옮기지 않습니다. 위의 «N장 휴지통으로»가 옮깁니다"
-          className="h-control px-3.5 rounded-lg bg-keep text-keep-fg font-semibold text-[14px] disabled:opacity-40 flex items-center gap-2"
-        >
-          확정
-          <span className="text-[11.5px] bg-black/20 px-1.5 py-0.5 rounded font-mono">
-            Space
-          </span>
-        </button>
-        <button
-          onClick={skip}
-          disabled={!cur}
-          title="이 무리는 건너뜁니다 — 판정하지 않고 «보류»로 남깁니다"
-          className="h-control px-3.5 rounded-lg text-fg-dim text-[14px] ring-1 ring-line-strong disabled:opacity-40 flex items-center gap-2"
-        >
-          나중에
-          <span className="text-[11.5px] bg-white/8 px-1.5 py-0.5 rounded font-mono">
-            S
-          </span>
-        </button>
-        {kind === 0 && cur && members.length === 2 && members.some((m) => m.is_best) && (() => {
-          const best = members.find((m) => m.is_best)!;
-          const other = members.find((m) => !m.is_best)!;
-          return (
-            <button
-              onClick={() => pairAll(best)}
-              title={`«${best.folder || "/"}»를 남기고 «${other.folder || "/"}»의 사본을 제외 — 같은 두 폴더 사이에서 겹치는 다른 무리들에도 한꺼번에. 먼저 몇 쌍·몇 장인지 보여 주고 묻습니다`}
-              className="h-control px-3.5 rounded-lg bg-accent text-accent-fg font-semibold text-[14px] flex items-center gap-2"
-            >
-              두 폴더 전체
-              {!c3 && (
-              <span className="text-[12px] font-normal opacity-80 truncate max-w-[280px]">
-                {best.folder.split("/").pop() || "/"} 남김 · {other.folder.split("/").pop() || "/"} 제외
-              </span>
-              )}
-            </button>
-          );
-        })()}
-        </>
-        )}
-        {/* 긴 설명은 단추의 풍선(title)으로 — 막대엔 핵심 낱말만 (2026-08-30) */}
-        {!viewDone && !c2 && (
-        <span className="text-[13px] text-fg-mute ml-2" title="숫자키를 누르면 그 번호의 사진이 남길 쪽이 됩니다. 두 번 누르면 크게 봅니다">
-          숫자키 <span className="font-mono">1–9</span> 남길 쪽 · 두 번 누르면 크게
-        </span>
-        )}
-        <div className="flex-1" />
-      </div>
-      {/* 확정한 무리 띠 — 몇 쌍 지나간 뒤에도 특정 쌍만 골라 취소할 수 있게 (2026-08-31).
-          이 세션에서 확정한 최근 20개. «다시 찾기» 뒤에는 무리 id 를 못 믿어 비운다 */}
-      {undoStack.length > 0 && (
-        <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-chrome/70 border-t border-line overflow-x-auto scroll-thin">
-          <span className="shrink-0 text-[13px] text-fg-mute whitespace-nowrap">
-            확정한 무리 <b className="text-fg-dim">{undoStack.length}</b>개 — ↩ 로 그것만 취소
-          </span>
-          {undoStack.map((g) => (
-            <span
-              key={g.id}
-              className="shrink-0 flex items-center gap-1.5 pl-1.5 pr-1 h-12 rounded-md bg-raised ring-1 ring-line"
-              title={`${g.reason ?? ""} · ${g.member_count}장 · ${fmtBytes(g.size_bytes)} 확보${g.name ? `\n${g.name}` : ""}${g.folder ? `\n${g.folder}` : ""}`}
-            >
-              {g.cover ? (
-                <img src={thumbUrlPath(g.cover)} className="w-9 h-9 object-cover rounded" alt="" />
-              ) : (
-                <span className="w-9 h-9 rounded bg-canvas" />
-              )}
-              <span className="text-[12px] text-fg-dim tabular-nums">{g.member_count}장</span>
-              <button
-                onClick={() => void unapplyOne(g)}
-                title="이 무리의 남김·제외 표시를 지우고 목록 맨 앞에 다시 보여 줍니다 — 이미 휴지통으로 옮긴 사진은 그대로"
-                className="h-7 w-7 rounded text-fg-dim hover:text-fg hover:bg-hover text-[14px]"
-              >
-                ↩
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
         </>
       )}
     </div>

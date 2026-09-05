@@ -142,7 +142,8 @@ function UpdateRow() {
       .finally(() => setBusy(false));
   };
 
-  const hint = info === null
+  const hint =
+    info === null
       ? "GitHub 릴리스에서 새 판이 있는지 살펴봅니다."
       : info.newer
         ? `${info.latest} 이 나왔습니다 (지금 ${info.current}). 공식 릴리스 페이지에서 서명·공증된 설치 파일을 받으세요.`
@@ -178,9 +179,10 @@ function UpdateRow() {
           onClick={() => {
             const next = !auto;
             setAuto(next);
-            invoke("settings_set", { key: "update.auto", value: next ? "on" : "off" }).catch(
-              (e) => toast(String(e), "drop"),
-            );
+            invoke("settings_set", {
+              key: "update.auto",
+              value: next ? "on" : "off",
+            }).catch((e) => toast(String(e), "drop"));
           }}
         >
           {auto ? "켬" : "끔"}

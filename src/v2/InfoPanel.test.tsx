@@ -58,20 +58,28 @@ describe("정보 패널 사진 전환", () => {
     const pending = new Map<number, (d: Detail) => void>();
     vi.mocked(invoke).mockImplementation(async (cmd, args) => {
       if (cmd === "file_detail")
-        return new Promise((resolve) => pending.set((args as { id: number }).id, resolve));
+        return new Promise((resolve) =>
+          pending.set((args as { id: number }).id, resolve),
+        );
       if (cmd === "tags_of" || cmd === "tags_list") return [];
       return null;
     });
 
     const view = render(<InfoPanel file={file(1)} onClose={vi.fn()} />);
     await act(async () => pending.get(1)?.(detail(1, "첫 사진 메모")));
-    expect(screen.getByRole("textbox", { name: "코멘트" })).toHaveValue("첫 사진 메모");
+    expect(screen.getByRole("textbox", { name: "코멘트" })).toHaveValue(
+      "첫 사진 메모",
+    );
 
     view.rerender(<InfoPanel file={file(2)} onClose={vi.fn()} />);
-    expect(screen.queryByRole("textbox", { name: "코멘트" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "코멘트" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("읽는 중…")).toBeInTheDocument();
 
     await act(async () => pending.get(2)?.(detail(2, "둘째 사진 메모")));
-    expect(screen.getByRole("textbox", { name: "코멘트" })).toHaveValue("둘째 사진 메모");
+    expect(screen.getByRole("textbox", { name: "코멘트" })).toHaveValue(
+      "둘째 사진 메모",
+    );
   });
 });

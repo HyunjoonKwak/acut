@@ -73,9 +73,7 @@ export default function ContextMenu({
       window.removeEventListener("mousedown", away);
       window.removeEventListener("keydown", esc);
       window.removeEventListener("scroll", onClose, true);
-      requestAnimationFrame(() =>
-        restoreFocusIfUnclaimed(returnFocus.current),
-      );
+      requestAnimationFrame(() => restoreFocusIfUnclaimed(returnFocus.current));
     };
   }, [at, onClose]);
 

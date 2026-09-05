@@ -23,7 +23,12 @@ export type Detail = {
   comment: string | null;
 };
 
-export const SOURCE_LABEL = ["EXIF", "파일명 추정", "파일시각 추정", "알 수 없음"];
+export const SOURCE_LABEL = [
+  "EXIF",
+  "파일명 추정",
+  "파일시각 추정",
+  "알 수 없음",
+];
 
 /** 셔터·조리개·ISO·초점거리를 한 줄로 */
 export function settingsOf(d: Detail): string {

@@ -61,7 +61,14 @@ export default function OffloadDialog({
 
   return (
     <div className="fixed inset-0 z-[70] bg-canvas/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`「${name}」을 다른 디스크로`} className="w-[520px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`「${name}」을 다른 디스크로`}
+        className="w-[520px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5"
+      >
         <div className="text-[16px] font-semibold text-fg mb-1">
           「{name}」을 다른 디스크로
         </div>

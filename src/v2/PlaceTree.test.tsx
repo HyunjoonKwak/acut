@@ -23,7 +23,9 @@ describe("위치 갈래의 지명 상태", () => {
     );
 
     expect(
-      await screen.findByText(/모든 라이브러리에서 서버가 지명을 찾지 못한 사진 2장/),
+      await screen.findByText(
+        /모든 라이브러리에서 서버가 지명을 찾지 못한 사진 2장/,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/지명 채우기/)).not.toBeInTheDocument();
   });
@@ -40,7 +42,9 @@ describe("위치 갈래의 지명 상태", () => {
     );
 
     expect(
-      await screen.findByText(/모든 라이브러리에서 아직 지명 처리가 필요한 사진 3장/),
+      await screen.findByText(
+        /모든 라이브러리에서 아직 지명 처리가 필요한 사진 3장/,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText(/지명 채우기/)).toBeInTheDocument();
   });

@@ -26,7 +26,13 @@ describe("파일 작업 결과", () => {
   it("부분 실패도 선택을 풀 수 있는 성공으로 돌려주지 않는다", async () => {
     vi.mocked(invoke).mockImplementation(async (cmd) => {
       if (cmd === "trash_restore")
-        return { batch_id: 1, moved: 1, failed: 1, bytes: 0, first_error: "한 장 실패" };
+        return {
+          batch_id: 1,
+          moved: 1,
+          failed: 1,
+          bytes: 0,
+          first_error: "한 장 실패",
+        };
       if (cmd === "libraries_list" || cmd === "ops_recent") return [];
       return null;
     });
@@ -40,7 +46,13 @@ describe("파일 작업 결과", () => {
   it("파일 작업 뒤 화면 갱신만 실패해도 작업 결과는 성공이다", async () => {
     vi.mocked(invoke).mockImplementation(async (cmd) => {
       if (cmd === "trash_restore")
-        return { batch_id: 1, moved: 1, failed: 0, bytes: 10, first_error: null };
+        return {
+          batch_id: 1,
+          moved: 1,
+          failed: 0,
+          bytes: 10,
+          first_error: null,
+        };
       if (cmd === "libraries_list") throw new Error("목록 갱신 실패");
       return null;
     });

@@ -110,8 +110,12 @@ export function useGridKeys(opts: {
       const many = sel.picked.size > 1;
       const mark = (patch: Mark) =>
         many
-          ? void markMany([...sel.picked], patch).catch((err) => toast(String(err), "drop"))
-          : void markOne(r.id, patch).catch((err) => toast(String(err), "drop"));
+          ? void markMany([...sel.picked], patch).catch((err) =>
+              toast(String(err), "drop"),
+            )
+          : void markOne(r.id, patch).catch((err) =>
+              toast(String(err), "drop"),
+            );
       if (/^[0-5]$/.test(e.key)) mark({ rating: +e.key });
       else if (e.key === "p")
         mark({ cullingFlag: many ? 1 : r.culling_flag === 1 ? 0 : 1 });

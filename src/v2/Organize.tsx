@@ -124,7 +124,8 @@ export default function Organize({
             정리
           </span>
           <span className="text-[13px] text-fg-mute">
-            {workIds.length.toLocaleString()}장을 이벤트 폴더로 {publishing ? "복사합니다" : "옮깁니다"}
+            {workIds.length.toLocaleString()}장을 이벤트 폴더로{" "}
+            {publishing ? "복사합니다" : "옮깁니다"}
           </span>
         </div>
 

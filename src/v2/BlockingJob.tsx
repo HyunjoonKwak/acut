@@ -25,16 +25,23 @@ export default function BlockingJob() {
   }, [open]);
 
   if (!open || !job) return null;
-  const pct = job.total > 0 ? Math.min(100, Math.round((job.done / job.total) * 100)) : 0;
+  const pct =
+    job.total > 0 ? Math.min(100, Math.round((job.done / job.total) * 100)) : 0;
   return (
-    <div className="fixed inset-0 z-[80] bg-black/55 flex items-center justify-center" onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[80] bg-black/55 flex items-center justify-center"
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       <div className="w-[420px] rounded-xl bg-chrome ring-1 ring-line-strong shadow-2xl p-5">
         <div className="flex items-center gap-2 text-[15px] font-semibold text-fg">
           <i className="w-2.5 h-2.5 rounded-full bg-keep animate-pulse" />
           {job.label}…
         </div>
         <div className="mt-3 h-2.5 rounded-full bg-raised overflow-hidden">
-          <div className="h-full bg-keep transition-[width] duration-200" style={{ width: `${pct}%` }} />
+          <div
+            className="h-full bg-keep transition-[width] duration-200"
+            style={{ width: `${pct}%` }}
+          />
         </div>
         <div className="mt-2 flex items-baseline justify-between text-[13.5px] tabular-nums">
           <span className="text-fg-dim">
@@ -43,7 +50,8 @@ export default function BlockingJob() {
           <span className="text-fg font-semibold">{pct}%</span>
         </div>
         <div className="mt-3 text-[13px] text-fg-mute">
-          끝날 때까지 다른 일은 할 수 없습니다. 멈추면 옮긴 것은 그대로 두고 ⌘Z 로 되돌릴 수 있습니다.
+          끝날 때까지 다른 일은 할 수 없습니다. 멈추면 옮긴 것은 그대로 두고 ⌘Z
+          로 되돌릴 수 있습니다.
         </div>
         <div className="mt-4 flex justify-end">
           <button

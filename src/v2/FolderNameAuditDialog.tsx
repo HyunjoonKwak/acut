@@ -128,9 +128,7 @@ export default function FolderNameAuditDialog({
             <label
               key={item.source_dir}
               className={`mb-2 flex items-start gap-3 rounded-lg p-3 ring-1 ${
-                item.conflict
-                  ? "bg-drop/5 ring-drop/40"
-                  : "bg-raised ring-line"
+                item.conflict ? "bg-drop/5 ring-drop/40" : "bg-raised ring-line"
               }`}
             >
               <input
@@ -155,7 +153,8 @@ export default function FolderNameAuditDialog({
                 </span>
                 <span className="mt-1 block text-[12px] text-fg-mute">
                   {item.reason} · 사진 {item.file_count.toLocaleString()}장
-                  {item.conflict && " · 같은 이름이 있어 자동 적용하지 않습니다"}
+                  {item.conflict &&
+                    " · 같은 이름이 있어 자동 적용하지 않습니다"}
                 </span>
               </span>
             </label>
@@ -170,7 +169,9 @@ export default function FolderNameAuditDialog({
               disabled={busy || selected.size === 0}
               className="h-control rounded-lg bg-accent px-3.5 text-[14px] font-semibold text-accent-fg disabled:opacity-40"
             >
-              {busy ? "확인 중…" : `선택 ${selected.size.toLocaleString()}개 적용`}
+              {busy
+                ? "확인 중…"
+                : `선택 ${selected.size.toLocaleString()}개 적용`}
             </button>
             <button
               onClick={onClose}
@@ -180,7 +181,9 @@ export default function FolderNameAuditDialog({
               닫기
             </button>
             <div className="flex-1" />
-            <span className="text-[12px] text-fg-mute">한 번에 되돌릴 수 있습니다</span>
+            <span className="text-[12px] text-fg-mute">
+              한 번에 되돌릴 수 있습니다
+            </span>
           </div>
         </div>
       </div>

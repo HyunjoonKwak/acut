@@ -461,44 +461,48 @@ export default function App() {
             </>
           )}
 
-          {ui.organizing && (ui.organizeSelection?.libraryId ?? libId) !== null && (
-            <Organize
-              ids={ui.organizeSelection?.ids ?? pickedIds}
-              libraryId={ui.organizeSelection?.libraryId ?? libId!}
-              onDone={async (o) => {
-                if (o.failed > 0)
-                  toast(
-                    `${o.moved + o.copied}장 처리 · ${o.failed}장 실패 — ${o.first_error ?? ""}`,
-                    "drop",
-                  );
-                else if (o.copied > 0)
-                  toast(
-                    `${o.copied.toLocaleString()}장 공용에 복사${o.already_published > 0 ? ` · ${o.already_published.toLocaleString()}장 이미 발행됨` : ""}`,
-                    "ok",
-                  );
-                else if (o.already_published > 0)
-                  toast(`${o.already_published.toLocaleString()}장은 이미 공용에 있습니다`, "ok");
-                else toast(`${o.moved.toLocaleString()}장 옮겼습니다`, "ok");
-                if (o.failed > 0) {
-                  // 성공한 것은 목록에서 빠지고 실패한 것만 다시 시도할 수 있게 남긴다.
-                  // 예전 백엔드 응답이면 원래 선택을 보존한다.
-                  useSelection
-                    .getState()
-                    .setPicked(
-                      o.failed_ids?.length
-                        ? o.failed_ids
-                        : (ui.organizeSelection?.ids ?? pickedIds),
+          {ui.organizing &&
+            (ui.organizeSelection?.libraryId ?? libId) !== null && (
+              <Organize
+                ids={ui.organizeSelection?.ids ?? pickedIds}
+                libraryId={ui.organizeSelection?.libraryId ?? libId!}
+                onDone={async (o) => {
+                  if (o.failed > 0)
+                    toast(
+                      `${o.moved + o.copied}장 처리 · ${o.failed}장 실패 — ${o.first_error ?? ""}`,
+                      "drop",
                     );
-                } else {
-                  useSelection.getState().clearPicked();
+                  else if (o.copied > 0)
+                    toast(
+                      `${o.copied.toLocaleString()}장 공용에 복사${o.already_published > 0 ? ` · ${o.already_published.toLocaleString()}장 이미 발행됨` : ""}`,
+                      "ok",
+                    );
+                  else if (o.already_published > 0)
+                    toast(
+                      `${o.already_published.toLocaleString()}장은 이미 공용에 있습니다`,
+                      "ok",
+                    );
+                  else toast(`${o.moved.toLocaleString()}장 옮겼습니다`, "ok");
+                  if (o.failed > 0) {
+                    // 성공한 것은 목록에서 빠지고 실패한 것만 다시 시도할 수 있게 남긴다.
+                    // 예전 백엔드 응답이면 원래 선택을 보존한다.
+                    useSelection
+                      .getState()
+                      .setPicked(
+                        o.failed_ids?.length
+                          ? o.failed_ids
+                          : (ui.organizeSelection?.ids ?? pickedIds),
+                      );
+                  } else {
+                    useSelection.getState().clearPicked();
+                  }
+                  await ops.after();
+                }}
+                onClose={() =>
+                  ui.set({ organizing: false, organizeSelection: null })
                 }
-                await ops.after();
-              }}
-              onClose={() =>
-                ui.set({ organizing: false, organizeSelection: null })
-              }
-            />
-          )}
+              />
+            )}
 
           {/* 크게 보기 — 기본은 콘텐츠 영역만 덮는다. 뷰어 상태는 ViewerHost 만 구독한다 */}
           <ViewerHost
@@ -511,11 +515,7 @@ export default function App() {
         </div>
       </div>
 
-      <ContextMenu
-        at={ui.ctxAt}
-        items={ctxItems}
-        onClose={closeContext}
-      />
+      <ContextMenu at={ui.ctxAt} items={ctxItems} onClose={closeContext} />
       <Toasts />
       <BlockingJob />
       {ui.helping && <Shortcuts onClose={() => ui.set({ helping: false })} />}
@@ -615,7 +615,11 @@ export default function App() {
         />
       )}
       {ui.husks !== null && (
-        <HuskDialog libraryId={ui.husks.libraryId} name={ui.husks.name} onClose={() => ui.set({ husks: null })} />
+        <HuskDialog
+          libraryId={ui.husks.libraryId}
+          name={ui.husks.name}
+          onClose={() => ui.set({ husks: null })}
+        />
       )}
       {ui.areaPick !== null && (
         <AreaPickDialog

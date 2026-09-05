@@ -41,8 +41,9 @@ export default function TrashPanel() {
         />
       ))}
       <p className="px-3 pt-3 text-[12px] text-fg-mute leading-snug">
-        휴지통은 라이브러리마다 따로 있습니다 — 같은 디스크 안 <code>.acut/휴지통</code>.
-        되돌리기·영구히 비우기는 지금 보는 라이브러리 것에만 듭니다.
+        휴지통은 라이브러리마다 따로 있습니다 — 같은 디스크 안{" "}
+        <code>.acut/휴지통</code>. 되돌리기·영구히 비우기는 지금 보는 라이브러리
+        것에만 듭니다.
       </p>
     </div>
   );
@@ -75,7 +76,9 @@ function Row({
           empty ? "text-fg-mute" : on ? "text-fg" : "text-fg-dim"
         }`}
       >
-        {empty ? "비어 있음" : `${files.toLocaleString()}장 · ${fmtBytes(bytes)}`}
+        {empty
+          ? "비어 있음"
+          : `${files.toLocaleString()}장 · ${fmtBytes(bytes)}`}
       </span>
     </button>
   );

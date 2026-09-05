@@ -28,19 +28,37 @@ describe("촬영일 감사·교정", () => {
         ];
       }
       if (cmd === "capture_date_apply") {
-        return { batch_id: 9, corrected: 1, failed: 0, first_error: null, failed_ids: [] };
+        return {
+          batch_id: 9,
+          corrected: 1,
+          failed: 0,
+          first_error: null,
+          failed_ids: [],
+        };
       }
       return null;
     });
     const onChanged = vi.fn();
-    render(<CaptureDateDialog target={{ ids: [7] }} onChanged={onChanged} onClose={vi.fn()} />);
+    render(
+      <CaptureDateDialog
+        target={{ ids: [7] }}
+        onChanged={onChanged}
+        onClose={vi.fn()}
+      />,
+    );
 
-    expect(await screen.findByText("JPEG EXIF 3필드 + mtime")).toBeInTheDocument();
+    expect(
+      await screen.findByText("JPEG EXIF 3필드 + mtime"),
+    ).toBeInTheDocument();
     expect(screen.getByText(/지역 wall-clock/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "선택한 자동 후보 교정" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "선택한 자동 후보 교정" }),
+    );
 
     await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
-    const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === "capture_date_apply");
+    const call = vi
+      .mocked(invoke)
+      .mock.calls.find(([cmd]) => cmd === "capture_date_apply");
     expect(call?.[1]).toMatchObject({
       changes: [{ id: 7, takenAt: 1_502_088_228, manual: false }],
     });

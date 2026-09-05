@@ -184,7 +184,9 @@ export function usePhotoList(
   /// 여러 줄을 한 번에 고친다 — 한 장씩 고치면 장수만큼 목록을 다시 훑는다
   const patchRows = useCallback((ids: number[], patch: Partial<FileRow>) => {
     const set = new Set(ids);
-    setRows((prev) => prev.map((r) => (set.has(r.id) ? { ...r, ...patch } : r)));
+    setRows((prev) =>
+      prev.map((r) => (set.has(r.id) ? { ...r, ...patch } : r)),
+    );
   }, []);
 
   /// 여러 장의 판정을 한 번에 — IPC 한 번, 트랜잭션 하나, 목록 한 번.

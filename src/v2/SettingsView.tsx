@@ -5,7 +5,6 @@ import { Backup } from "./SettingsBackup";
 import { Nas } from "./SettingsNas";
 import { Advanced, About } from "./SettingsMisc";
 
-
 /**
  * 설정 — 본문을 통째로 쓴다 (Lap의 Settings.vue).
  *
@@ -36,4 +35,3 @@ export default function SettingsView({
 }
 
 // ── 조각들 ──────────────────────────────────────────────────────────────
-

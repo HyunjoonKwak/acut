@@ -10,7 +10,9 @@ describe("키보드와 접근성 이름", () => {
         <Toggle k="watch" />
       </Row>,
     );
-    expect(screen.getByRole("switch", { name: "폴더 감시" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", { name: "폴더 감시" }),
+    ).toBeInTheDocument();
   });
 
   it("촬영일 타임라인은 키보드로 다음 달과 끝으로 이동한다", () => {
@@ -26,7 +28,9 @@ describe("키보드와 접근성 이름", () => {
         onSeek={onSeek}
       />,
     );
-    const timeline = screen.getByRole("slider", { name: "사진 촬영일 타임라인" });
+    const timeline = screen.getByRole("slider", {
+      name: "사진 촬영일 타임라인",
+    });
     fireEvent.keyDown(timeline, { key: "ArrowDown" });
     expect(onSeek).toHaveBeenLastCalledWith(10);
     fireEvent.keyDown(timeline, { key: "End" });

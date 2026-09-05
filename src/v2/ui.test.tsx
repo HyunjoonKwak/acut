@@ -9,11 +9,14 @@ function MenuOpeningDialog() {
   const [dialog, setDialog] = useState(false);
   return (
     <>
-      <Menu
-        trigger={(_, props) => <Btn {...props}>작업</Btn>}
-      >
+      <Menu trigger={(_, props) => <Btn {...props}>작업</Btn>}>
         {(close) => (
-          <MenuItem onClick={() => { setDialog(true); close(); }}>
+          <MenuItem
+            onClick={() => {
+              setDialog(true);
+              close();
+            }}
+          >
             대화상자 열기
           </MenuItem>
         )}
@@ -39,7 +42,13 @@ function TestModal({
   const ref = useRef<HTMLDivElement>(null);
   useModalFocus(ref, onClose, { locked });
   return (
-    <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label="시험 모달">
+    <div
+      ref={ref}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label="시험 모달"
+    >
       <input aria-label="첫 입력" />
       <input aria-label="가운데 입력" autoFocus={autoFocusLast} />
       <button onClick={onClose}>닫기</button>
@@ -115,7 +124,9 @@ describe("메뉴 초점 복원", () => {
   it("메뉴 항목이 연 대화상자의 초점을 트리거가 빼앗지 않는다", async () => {
     render(<MenuOpeningDialog />);
     await userEvent.click(screen.getByRole("button", { name: "작업" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "대화상자 열기" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "대화상자 열기" }),
+    );
     const input = await screen.findByRole("textbox", { name: "새 이름" });
     await waitFor(() => expect(input).toHaveFocus());
   });
@@ -176,7 +187,9 @@ describe("메뉴 초점 복원", () => {
     topButton.focus();
     await userEvent.keyboard("{Escape}");
     expect(topEscape).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("dialog", { name: "시험 모달" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "시험 모달" }),
+    ).toBeInTheDocument();
     await userEvent.tab();
     expect(screen.getByRole("button", { name: "위 단추 둘" })).toHaveFocus();
   });
@@ -185,7 +198,9 @@ describe("메뉴 초점 복원", () => {
     render(<MenuOpeningModal />);
     const trigger = screen.getByRole("button", { name: "작업" });
     await userEvent.click(trigger);
-    await userEvent.click(screen.getByRole("menuitem", { name: "시험 모달 열기" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "시험 모달 열기" }),
+    );
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "첫 입력" })).toHaveFocus(),
     );

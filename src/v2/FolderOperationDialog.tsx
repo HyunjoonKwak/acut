@@ -46,7 +46,11 @@ const humanBytes = (bytes: number) =>
       ? `${(bytes / 1024).toFixed(1)} KB`
       : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 
-export default function FolderOperationDialog({ target, onChanged, onClose }: {
+export default function FolderOperationDialog({
+  target,
+  onChanged,
+  onClose,
+}: {
   target: FolderOperationTarget;
   onChanged: () => void | Promise<void>;
   onClose: () => void;
@@ -56,15 +60,21 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
   const libs = useData((s) => s.libs);
   const folders = useData((s) => s.folders);
   const [action, setAction] = useState<FolderAction>(target.action);
-  const [destinationLibraryId, setDestinationLibraryId] = useState(target.sourceLibraryId);
+  const [destinationLibraryId, setDestinationLibraryId] = useState(
+    target.sourceLibraryId,
+  );
   const sourceParent = target.sourceDir.split("/").slice(0, -1).join("/");
   const [destinationParent, setDestinationParent] = useState(sourceParent);
-  const [name, setName] = useState(target.action === "create" ? "" : target.sourceName);
+  const [name, setName] = useState(
+    target.action === "create" ? "" : target.sourceName,
+  );
   const [policy, setPolicy] = useState<Policy>("skip");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const destination = libs.find((library) => library.id === destinationLibraryId);
+  const destination = libs.find(
+    (library) => library.id === destinationLibraryId,
+  );
   const choices = useMemo(
     () =>
       folders.filter(
@@ -86,9 +96,7 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
     sourceLibraryId: target.sourceLibraryId,
     sourceDir: target.sourceDir,
     destinationLibraryId:
-      action === "move" || action === "copy"
-        ? destinationLibraryId
-        : null,
+      action === "move" || action === "copy" ? destinationLibraryId : null,
     destinationParent:
       action === "move" || action === "copy"
         ? destinationParent
@@ -143,7 +151,8 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
   };
 
   const needsDestination = action === "move" || action === "copy";
-  const needsName = action === "create" || action === "rename" || needsDestination;
+  const needsName =
+    action === "create" || action === "rename" || needsDestination;
   return (
     <div className="fixed inset-0 z-[67] bg-canvas/95 backdrop-blur-sm flex items-center justify-center p-6">
       <div
@@ -157,7 +166,10 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
         <h2 id={titleId} className="text-[16px] font-semibold text-fg mb-1">
           폴더 작업
         </h2>
-        <p className="text-[12.5px] text-fg-mute mb-4 truncate" title={target.sourceDir}>
+        <p
+          className="text-[12.5px] text-fg-mute mb-4 truncate"
+          title={target.sourceDir}
+        >
           {target.sourceDir || "라이브러리 바로 아래"}
         </p>
 
@@ -185,7 +197,9 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
         {needsDestination && (
           <div className="grid grid-cols-2 gap-3 mb-3">
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] uppercase tracking-wider text-fg-mute">목적지 라이브러리</span>
+              <span className="text-[11px] uppercase tracking-wider text-fg-mute">
+                목적지 라이브러리
+              </span>
               <select
                 value={destinationLibraryId}
                 onChange={(event) => {
@@ -195,7 +209,11 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
                 className="h-control px-2 rounded bg-raised ring-1 ring-line text-fg"
               >
                 {libs.map((library) => (
-                  <option key={library.id} value={library.id} disabled={!library.online}>
+                  <option
+                    key={library.id}
+                    value={library.id}
+                    disabled={!library.online}
+                  >
                     {areaLabel(library.area)} · {library.name}
                     {!library.online ? " (연결 안 됨)" : ""}
                   </option>
@@ -203,7 +221,9 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
               </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] uppercase tracking-wider text-fg-mute">목적지 부모</span>
+              <span className="text-[11px] uppercase tracking-wider text-fg-mute">
+                목적지 부모
+              </span>
               <select
                 value={destinationParent}
                 onChange={(event) => setDestinationParent(event.target.value)}
@@ -225,7 +245,9 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
 
         {needsName && (
           <label className="flex flex-col gap-1 mb-3">
-            <span className="text-[11px] uppercase tracking-wider text-fg-mute">폴더 이름</span>
+            <span className="text-[11px] uppercase tracking-wider text-fg-mute">
+              폴더 이름
+            </span>
             <input
               autoFocus
               value={name}
@@ -236,7 +258,10 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
           </label>
         )}
 
-        {(action === "move" || action === "copy" || action === "rename" || action === "create") && (
+        {(action === "move" ||
+          action === "copy" ||
+          action === "rename" ||
+          action === "create") && (
           <label className="flex items-center gap-2 mb-3 text-[12.5px] text-fg-dim">
             <span>같은 이름 충돌</span>
             <select
@@ -252,26 +277,31 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
 
         {action === "trash" && (
           <div className="mb-3 px-3 py-2 rounded text-[12.5px] text-drop ring-1 ring-drop/50 bg-drop/10">
-            폴더 전체를 Photo Desk 휴지통으로 옮깁니다. 라이브러리 루트와 원본 밖 경로는 차단됩니다.
+            폴더 전체를 Photo Desk 휴지통으로 옮깁니다. 라이브러리 루트와 원본
+            밖 경로는 차단됩니다.
           </div>
         )}
         {preview?.drive_sync_warning && (
           <div className="mb-3 px-3 py-2 rounded text-[12.5px] text-drop ring-1 ring-drop/50 bg-drop/10">
-            내사진/공용은 Drive 동기화 폴더입니다. 이동·이름 변경·휴지통은 동기화 대상에도 반영될 수 있습니다.
+            내사진/공용은 Drive 동기화 폴더입니다. 이동·이름 변경·휴지통은
+            동기화 대상에도 반영될 수 있습니다.
           </div>
         )}
 
         <div className="flex items-center gap-2 mb-3">
           <button
             onClick={inspect}
-            disabled={busy || !destination?.online || (needsName && !name.trim())}
+            disabled={
+              busy || !destination?.online || (needsName && !name.trim())
+            }
             className="h-control px-3 rounded bg-accent text-accent-fg font-semibold disabled:opacity-40"
           >
             충돌 미리보기
           </button>
           {preview && (
             <span className="text-[12px] text-fg-mute">
-              {preview.directories.toLocaleString()}폴더 · {preview.files.toLocaleString()}파일 · {humanBytes(preview.bytes)}
+              {preview.directories.toLocaleString()}폴더 ·{" "}
+              {preview.files.toLocaleString()}파일 · {humanBytes(preview.bytes)}
               {preview.cross_volume ? " · 다른 볼륨" : ""}
             </span>
           )}
@@ -279,16 +309,42 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
 
         {preview && (
           <div className="mb-3 rounded ring-1 ring-line bg-canvas px-3 py-2 text-[12.5px]">
-            <div className="text-fg-dim truncate" title={preview.source}>{preview.source || "라이브러리 루트"}</div>
-            <div className="text-fg truncate" title={preview.destination}>→ {preview.destination}</div>
-            <div className={preview.action === "skip" ? "text-drop mt-1" : preview.conflict === "none" ? "text-keep mt-1" : "text-accent mt-1"}>
-              {preview.action === "skip" ? "같은 이름이 있어 실행하지 않습니다" : preview.action === "rename" ? "충돌을 피해 새 이름으로 실행합니다" : "충돌 없음 · 실행 가능"}
+            <div className="text-fg-dim truncate" title={preview.source}>
+              {preview.source || "라이브러리 루트"}
+            </div>
+            <div className="text-fg truncate" title={preview.destination}>
+              → {preview.destination}
+            </div>
+            <div
+              className={
+                preview.action === "skip"
+                  ? "text-drop mt-1"
+                  : preview.conflict === "none"
+                    ? "text-keep mt-1"
+                    : "text-accent mt-1"
+              }
+            >
+              {preview.action === "skip"
+                ? "같은 이름이 있어 실행하지 않습니다"
+                : preview.action === "rename"
+                  ? "충돌을 피해 새 이름으로 실행합니다"
+                  : "충돌 없음 · 실행 가능"}
             </div>
           </div>
         )}
-        {error && <div role="alert" className="mb-3 text-[13px] text-drop">{error}</div>}
+        {error && (
+          <div role="alert" className="mb-3 text-[13px] text-drop">
+            {error}
+          </div>
+        )}
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="h-control px-3 rounded ring-1 ring-line text-fg-dim disabled:opacity-40">취소</button>
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="h-control px-3 rounded ring-1 ring-line text-fg-dim disabled:opacity-40"
+          >
+            취소
+          </button>
           <button
             onClick={execute}
             disabled={busy || !preview || preview.action === "skip"}

@@ -50,8 +50,7 @@ export function useOps(cb: {
           `${r.moved}장 처리 · ${r.failed}장 실패 — ${r.first_error ?? ""}`,
           "drop",
         );
-      else if (r.moved > 0)
-        toast(`${r.moved.toLocaleString()}장 처리했습니다`);
+      else if (r.moved > 0) toast(`${r.moved.toLocaleString()}장 처리했습니다`);
       // 할 일이 없었던 것도 말한다 — 조용히 끝나면 «안 되는 것 같아»가 된다
       else toast(r.first_error ?? "처리할 것이 없습니다");
 
@@ -61,7 +60,10 @@ export function useOps(cb: {
       } catch (e) {
         // 파일 작업은 이미 끝났다. 뒤의 조회 실패를 작업 실패로 돌려주면
         // 사용자가 같은 파일을 다시 처리하게 되므로 둘을 구분한다.
-        toast(`처리는 끝났지만 화면을 새로 읽지 못했습니다 — ${String(e)}`, "drop");
+        toast(
+          `처리는 끝났지만 화면을 새로 읽지 못했습니다 — ${String(e)}`,
+          "drop",
+        );
       }
       // 부분 실패도 완료로 돌려주면 호출부가 선택을 전부 지워 재시도할
       // 대상을 잃는다. 모두 처리됐을 때만 선택을 풀게 한다.
@@ -88,38 +90,53 @@ export function useOps(cb: {
   /// 옮겨질 뿐이라 되돌릴 수 있다.
   /// `scope` 를 주면 그 라이브러리(null 이면 전부)의 제외 표시를 — 고르기 머리의 단추가 쓴다.
   /// 안 주면 지금 보는 라이브러리(상태바)
-  const cleanExcluded = useCallback(async (scope?: number | null) => {
-    const libId = scope === undefined ? usePrefs.getState().libId : scope;
-    const toClean = scope === undefined ? useData.getState().toClean : useData.getState().toCleanAll;
-    if (!toClean || toClean.files === 0) return;
-    const libName = useData.getState().libs.find((l) => l.id === libId)?.name ?? "모든 라이브러리";
-    const ok = await ask({
-      title: `${libName}에서 제외한 ${toClean.files.toLocaleString()}장을 휴지통으로 옮깁니다`,
-      lines: [
-        `· ${fmtBytes(toClean.bytes)} — 라이브러리 안 .acut/휴지통 으로 갑니다 (디스크 자리는 휴지통을 비워야 빕니다)`,
-        "· 사진이 다 나간 폴더는 디스크에서도 지웁니다",
-        "· 언제든 되돌릴 수 있습니다",
-      ],
-      confirmLabel: "휴지통으로",
-    });
-    if (!ok) return;
-    runTrashOp("trash_apply", { libraryId: libId }, "휴지통으로 옮기는 중…");
-  }, [ask, runTrashOp]);
+  const cleanExcluded = useCallback(
+    async (scope?: number | null) => {
+      const libId = scope === undefined ? usePrefs.getState().libId : scope;
+      const toClean =
+        scope === undefined
+          ? useData.getState().toClean
+          : useData.getState().toCleanAll;
+      if (!toClean || toClean.files === 0) return;
+      const libName =
+        useData.getState().libs.find((l) => l.id === libId)?.name ??
+        "모든 라이브러리";
+      const ok = await ask({
+        title: `${libName}에서 제외한 ${toClean.files.toLocaleString()}장을 휴지통으로 옮깁니다`,
+        lines: [
+          `· ${fmtBytes(toClean.bytes)} — 라이브러리 안 .acut/휴지통 으로 갑니다 (디스크 자리는 휴지통을 비워야 빕니다)`,
+          "· 사진이 다 나간 폴더는 디스크에서도 지웁니다",
+          "· 언제든 되돌릴 수 있습니다",
+        ],
+        confirmLabel: "휴지통으로",
+      });
+      if (!ok) return;
+      runTrashOp("trash_apply", { libraryId: libId }, "휴지통으로 옮기는 중…");
+    },
+    [ask, runTrashOp],
+  );
 
   /// 제외 표시를 전부 되돌린다 — 휴지통으로 보내기 전. 파일은 그대로
   const unmarkExcluded = useCallback(async () => {
     const { toClean } = useData.getState();
     const libId = usePrefs.getState().libId;
     if (!toClean || toClean.files === 0) return;
-    const libName = useData.getState().libs.find((l) => l.id === libId)?.name ?? "모든 라이브러리";
+    const libName =
+      useData.getState().libs.find((l) => l.id === libId)?.name ??
+      "모든 라이브러리";
     const ok = await ask({
       title: `${libName}의 제외 표시 ${toClean.files.toLocaleString()}장을 되돌립니다`,
-      lines: ["· 표시만 지웁니다 — 파일은 그대로, 미판정으로 돌아갑니다", "· 닫혀 있던 완전 중복 무리는 개별 비교에 다시 나옵니다"],
+      lines: [
+        "· 표시만 지웁니다 — 파일은 그대로, 미판정으로 돌아갑니다",
+        "· 닫혀 있던 완전 중복 무리는 개별 비교에 다시 나옵니다",
+      ],
       confirmLabel: "표시 취소",
     });
     if (!ok) return;
     try {
-      const n = await invoke<number>("files_unmark_excluded", { libraryId: libId });
+      const n = await invoke<number>("files_unmark_excluded", {
+        libraryId: libId,
+      });
       toast(`${n.toLocaleString()}장의 제외 표시를 되돌렸습니다`, "ok");
       await after();
       useData.getState().refreshTrash(libId);
@@ -132,7 +149,11 @@ export function useOps(cb: {
   const restoreFiles = useCallback(
     async (ids: number[]) => {
       if (ids.length === 0) return false;
-      return runTrashOp("trash_restore", { libraryId: null, ids }, "되돌리는 중…");
+      return runTrashOp(
+        "trash_restore",
+        { libraryId: null, ids },
+        "되돌리는 중…",
+      );
     },
     [runTrashOp],
   );

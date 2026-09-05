@@ -10,7 +10,6 @@ import { CameraRows, DetailRows, Sep } from "./detail";
 import type { Detail } from "./detailText";
 import { toast } from "./toastStore";
 
-
 export default function Viewer({
   ids,
   index,
@@ -155,7 +154,9 @@ export default function Viewer({
               : d,
           ),
         )
-        .catch((e) => toast(`판정을 저장하지 못했습니다 — ${String(e)}`, "drop"));
+        .catch((e) =>
+          toast(`판정을 저장하지 못했습니다 — ${String(e)}`, "drop"),
+        );
     },
     [id, onMark],
   );
@@ -503,9 +504,7 @@ export default function Viewer({
           onSubmit={async (n) => {
             const next = await onRename(id, n);
             setGot((d) =>
-              d?.id === id
-                ? { ...d, detail: { ...d.detail, name: next } }
-                : d,
+              d?.id === id ? { ...d, detail: { ...d.detail, name: next } } : d,
             );
           }}
           onClose={() => setRenaming(false)}

@@ -55,7 +55,9 @@ export default function SelectionPanel({
           <span className="text-accent font-semibold text-[14px] whitespace-nowrap">
             {picked.size.toLocaleString()}장 선택
           </span>
-          <span className="text-[12.5px] text-fg-mute whitespace-nowrap truncate">{fmtBytes(bytes)}</span>
+          <span className="text-[12.5px] text-fg-mute whitespace-nowrap truncate">
+            {fmtBytes(bytes)}
+          </span>
         </div>
         <Sep />
         <button
@@ -77,7 +79,10 @@ export default function SelectionPanel({
           영구히 지우기
         </button>
         <div className="flex-1" />
-        <button onClick={clearPicked} className="h-control px-2 rounded-md text-fg-dim text-[13.5px]">
+        <button
+          onClick={clearPicked}
+          className="h-control px-2 rounded-md text-fg-dim text-[13.5px]"
+        >
           선택 해제 <span className="text-[11px] font-mono">Esc</span>
         </button>
       </div>
@@ -112,23 +117,21 @@ export default function SelectionPanel({
         즐겨찾기
       </PanelBtn>
       {!narrow && (
-      <div className="flex items-center gap-0.5 px-1">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            onClick={() => markPicked({ rating: n })}
-            title={`별 ${n}개`}
-            className="w-5 h-6 text-[14px] text-fg-faint hover:text-keep"
-          >
-            ★
-          </button>
-        ))}
-      </div>
+        <div className="flex items-center gap-0.5 px-1">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              onClick={() => markPicked({ rating: n })}
+              title={`별 ${n}개`}
+              className="w-5 h-6 text-[14px] text-fg-faint hover:text-keep"
+            >
+              ★
+            </button>
+          ))}
+        </div>
       )}
       <Sep />
-      <PanelBtn
-        onClick={() => setUi({ captureDate: { ids: [...picked] } })}
-      >
+      <PanelBtn onClick={() => setUi({ captureDate: { ids: [...picked] } })}>
         촬영일 감사
       </PanelBtn>
       {libId !== null && (

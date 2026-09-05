@@ -9,14 +9,17 @@ describe("TagEditor 사진 전환", () => {
 
   it("이전 사진의 늦은 reload가 새 사진 태그를 지우지 않는다", async () => {
     let firstLoads = 0;
-    let resolveLate: ((tags: { id: number; name: string }[]) => void) | undefined;
+    let resolveLate:
+      ((tags: { id: number; name: string }[]) => void) | undefined;
     vi.mocked(invoke).mockImplementation(async (command, args) => {
       if (command === "tags_list") return [];
       if (command === "tag_remove") return null;
       if (command === "tags_of" && (args as { id: number }).id === 1) {
         firstLoads += 1;
         if (firstLoads === 1) return [{ id: 10, name: "이전" }];
-        return new Promise((resolve) => { resolveLate = resolve; });
+        return new Promise((resolve) => {
+          resolveLate = resolve;
+        });
       }
       if (command === "tags_of") return [{ id: 20, name: "새사진" }];
       return null;
@@ -24,7 +27,9 @@ describe("TagEditor 사진 전환", () => {
 
     const view = render(<TagEditor id={1} />);
     expect(await screen.findByText("이전")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "이전 태그 떼기" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "이전 태그 떼기" }),
+    );
     await waitFor(() => expect(resolveLate).toBeDefined());
     view.rerender(<TagEditor id={2} />);
     expect(await screen.findByText("새사진")).toBeInTheDocument();

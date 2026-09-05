@@ -108,149 +108,149 @@ export default function PhotoGrid({
             </div>
           </div>
         )}
-      <main
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="flex-1 overflow-y-auto p-2.5"
-      >
-        {empty && (
-          <div className="h-full flex items-center justify-center text-fg-mute">
-            「라이브러리 추가」로 사진 폴더를 등록하세요
-          </div>
-        )}
+        <main
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="flex-1 overflow-y-auto p-2.5"
+        >
+          {empty && (
+            <div className="h-full flex items-center justify-center text-fg-mute">
+              「라이브러리 추가」로 사진 폴더를 등록하세요
+            </div>
+          )}
 
-        {masonry ? (
-          /* 메이슨리 — 상자마다 자리가 정해져 있다. 보이는 것만 그린다. */
-          <div style={{ height: masonry.height, position: "relative" }}>
-            {masonry.headers.map((h) =>
-              header(
-                h.label,
-                h.count,
-                {
-                  position: "absolute",
-                  top: h.y,
+          {masonry ? (
+            /* 메이슨리 — 상자마다 자리가 정해져 있다. 보이는 것만 그린다. */
+            <div style={{ height: masonry.height, position: "relative" }}>
+              {masonry.headers.map((h) =>
+                header(
+                  h.label,
+                  h.count,
+                  {
+                    position: "absolute",
+                    top: h.y,
+                    left: 0,
+                    width: "100%",
+                    height: HEADER_H,
+                  },
+                  `h${h.y}`,
+                ),
+              )}
+              {masonry.visible.map((b) => (
+                <div
+                  key={b.file.id}
+                  style={{
+                    position: "absolute",
+                    left: b.x,
+                    top: b.y,
+                    width: b.w,
+                  }}
+                >
+                  <Tile
+                    file={b.file}
+                    url={thumbUrl(b.file)}
+                    picked={picked.has(b.file.id)}
+                    focused={selected === b.file.id}
+                    onClick={(e) => onPick(b.file.id, e)}
+                    onDoubleClick={() => onOpen(b.index)}
+                    onContextMenu={(e) => onContext(b.file.id, e)}
+                    caption={false}
+                    style="masonry"
+                    aspect={{ width: b.w, height: b.h }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ height: virt.getTotalSize(), position: "relative" }}>
+              {virt.getVirtualItems().map((v) => {
+                const row = grid[v.index];
+                if (!row) return null;
+                const box = {
+                  position: "absolute" as const,
+                  top: 0,
                   left: 0,
                   width: "100%",
-                  height: HEADER_H,
-                },
-                `h${h.y}`,
-              ),
-            )}
-            {masonry.visible.map((b) => (
-              <div
-                key={b.file.id}
-                style={{
-                  position: "absolute",
-                  left: b.x,
-                  top: b.y,
-                  width: b.w,
-                }}
-              >
-                <Tile
-                  file={b.file}
-                  url={thumbUrl(b.file)}
-                  picked={picked.has(b.file.id)}
-                  focused={selected === b.file.id}
-                  onClick={(e) => onPick(b.file.id, e)}
-                  onDoubleClick={() => onOpen(b.index)}
-                  onContextMenu={(e) => onContext(b.file.id, e)}
-                  caption={false}
-                  style="masonry"
-                  aspect={{ width: b.w, height: b.h }}
-                />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ height: virt.getTotalSize(), position: "relative" }}>
-            {virt.getVirtualItems().map((v) => {
-              const row = grid[v.index];
-              if (!row) return null;
-              const box = {
-                position: "absolute" as const,
-                top: 0,
-                left: 0,
-                width: "100%",
-                transform: `translateY(${v.start}px)`,
-              };
-              if (row.kind === "header") {
-                return header(
-                  row.label,
-                  row.count,
-                  { ...box, height: HEADER_H },
-                  String(v.key),
-                );
-              }
-              const jrows = justified?.get(v.index);
-              if (jrows) {
-                // 양쪽 맞춤 — 한 「줄」 안에 여러 소줄이 들어간다
-                let n = row.start;
+                  transform: `translateY(${v.start}px)`,
+                };
+                if (row.kind === "header") {
+                  return header(
+                    row.label,
+                    row.count,
+                    { ...box, height: HEADER_H },
+                    String(v.key),
+                  );
+                }
+                const jrows = justified?.get(v.index);
+                if (jrows) {
+                  // 양쪽 맞춤 — 한 「줄」 안에 여러 소줄이 들어간다
+                  let n = row.start;
+                  return (
+                    <div key={v.key} style={box}>
+                      {jrows.map((jr, ri) => (
+                        <div
+                          key={ri}
+                          className="flex"
+                          style={{ gap: GAP, marginBottom: GAP }}
+                        >
+                          {jr.items.map(({ file, width }) => {
+                            const at = n++;
+                            return (
+                              <Tile
+                                key={file.id}
+                                file={file}
+                                url={thumbUrl(file)}
+                                picked={picked.has(file.id)}
+                                focused={selected === file.id}
+                                onClick={(e) => onPick(file.id, e)}
+                                onDoubleClick={() => onOpen(at)}
+                                onContextMenu={(e) => onContext(file.id, e)}
+                                caption={cap}
+                                style="justified"
+                                aspect={{ width, height: jr.height }}
+                              />
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
                 return (
-                  <div key={v.key} style={box}>
-                    {jrows.map((jr, ri) => (
-                      <div
-                        key={ri}
-                        className="flex"
-                        style={{ gap: GAP, marginBottom: GAP }}
-                      >
-                        {jr.items.map(({ file, width }) => {
-                          const at = n++;
-                          return (
-                            <Tile
-                              key={file.id}
-                              file={file}
-                              url={thumbUrl(file)}
-                              picked={picked.has(file.id)}
-                              focused={selected === file.id}
-                              onClick={(e) => onPick(file.id, e)}
-                              onDoubleClick={() => onOpen(at)}
-                              onContextMenu={(e) => onContext(file.id, e)}
-                              caption={cap}
-                              style="justified"
-                              aspect={{ width, height: jr.height }}
-                            />
-                          );
-                        })}
-                      </div>
+                  <div
+                    key={v.key}
+                    style={{
+                      ...box,
+                      height: rowH,
+                      display: "grid",
+                      gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`,
+                      gap: GAP,
+                    }}
+                  >
+                    {row.items.map((r, ci) => (
+                      <Tile
+                        key={r.id}
+                        file={r}
+                        url={thumbUrl(r)}
+                        picked={picked.has(r.id)}
+                        focused={selected === r.id}
+                        onClick={(e) => onPick(r.id, e)}
+                        onDoubleClick={() => onOpen(row.start + ci)}
+                        onContextMenu={(e) => onContext(r.id, e)}
+                        caption={cap}
+                        style={gridStyle}
+                        aspect={{ height: imageH }}
+                      />
                     ))}
                   </div>
                 );
-              }
-              return (
-                <div
-                  key={v.key}
-                  style={{
-                    ...box,
-                    height: rowH,
-                    display: "grid",
-                    gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`,
-                    gap: GAP,
-                  }}
-                >
-                  {row.items.map((r, ci) => (
-                    <Tile
-                      key={r.id}
-                      file={r}
-                      url={thumbUrl(r)}
-                      picked={picked.has(r.id)}
-                      focused={selected === r.id}
-                      onClick={(e) => onPick(r.id, e)}
-                      onDoubleClick={() => onOpen(row.start + ci)}
-                      onContextMenu={(e) => onContext(r.id, e)}
-                      caption={cap}
-                      style={gridStyle}
-                      aspect={{ height: imageH }}
-                    />
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {loading && (
-          <div className="py-4 text-center text-fg-mute">불러오는 중…</div>
-        )}
-      </main>
+              })}
+            </div>
+          )}
+          {loading && (
+            <div className="py-4 text-center text-fg-mute">불러오는 중…</div>
+          )}
+        </main>
       </div>
 
       {/* 타임라인 스크롤바 — 전역 순번으로 주고받는다 */}

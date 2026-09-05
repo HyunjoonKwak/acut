@@ -39,7 +39,11 @@ export default function ViewerHost({
   useEffect(() => {
     const cur = useUi.getState().viewerAt;
     if (cur === null || cur < total) return;
-    set(total === 0 ? { viewerAt: null, viewerFull: false } : { viewerAt: total - 1 });
+    set(
+      total === 0
+        ? { viewerAt: null, viewerFull: false }
+        : { viewerAt: total - 1 },
+    );
   }, [total, set]);
 
   if (at === null || at >= ids.length) return null;

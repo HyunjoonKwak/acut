@@ -42,8 +42,14 @@ export default function EventDiscoveryDialog({
   const [error, setError] = useState<string | null>(null);
 
   const search = async () => {
-    const safeGapMinutes = Math.max(1, Math.trunc(Number.isFinite(gapMinutes) ? gapMinutes : 1));
-    const safeMinCount = Math.max(2, Math.trunc(Number.isFinite(minCount) ? minCount : 2));
+    const safeGapMinutes = Math.max(
+      1,
+      Math.trunc(Number.isFinite(gapMinutes) ? gapMinutes : 1),
+    );
+    const safeMinCount = Math.max(
+      2,
+      Math.trunc(Number.isFinite(minCount) ? minCount : 2),
+    );
     setBusy(true);
     setError(null);
     try {
@@ -92,8 +98,9 @@ export default function EventDiscoveryDialog({
             이벤트 자동 발견
           </h2>
           <p className="mt-1 text-[12.5px] text-fg-mute">
-            「{libraryName}」의 사진만 묶습니다. 후보 확인은 파일을 바꾸지 않으며,
-            사진별로 제외한 뒤 기존 정리 화면에서 최종 목적지를 확인합니다.
+            「{libraryName}」의 사진만 묶습니다. 후보 확인은 파일을 바꾸지
+            않으며, 사진별로 제외한 뒤 기존 정리 화면에서 최종 목적지를
+            확인합니다.
           </p>
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-[11.5px] text-fg-mute">
@@ -147,7 +154,8 @@ export default function EventDiscoveryDialog({
                 <div className="flex items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="text-[14px] font-semibold text-fg">
-                      {candidate.date} · {clock(candidate.start_at)}–{clock(candidate.end_at)}
+                      {candidate.date} · {clock(candidate.start_at)}–
+                      {clock(candidate.end_at)}
                     </div>
                     <div className="mt-0.5 text-[12px] text-fg-mute">
                       {candidate.count.toLocaleString()}장
@@ -184,30 +192,32 @@ export default function EventDiscoveryDialog({
                   {expanded.has(candidate.key) && (
                     <div className="mt-2 max-h-44 overflow-auto rounded bg-canvas/60 p-2">
                       {candidate.items.map((item) => (
-                      <label
-                        key={item.id}
-                        className="flex items-center gap-2 py-1 text-[12.5px] text-fg-dim"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={chosen.has(item.id)}
-                          onChange={(event) => {
-                            const next = new Map(selected);
-                            const ids = new Set(next.get(candidate.key) ?? []);
-                            if (event.target.checked) ids.add(item.id);
-                            else ids.delete(item.id);
-                            next.set(candidate.key, ids);
-                            setSelected(next);
-                          }}
-                          className="accent-accent"
-                        />
-                        <span className="w-14 shrink-0 tabular-nums text-fg-mute">
-                          {clock(item.taken_at)}
-                        </span>
-                        <span className="truncate" title={item.name}>
-                          {item.name}
-                        </span>
-                      </label>
+                        <label
+                          key={item.id}
+                          className="flex items-center gap-2 py-1 text-[12.5px] text-fg-dim"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={chosen.has(item.id)}
+                            onChange={(event) => {
+                              const next = new Map(selected);
+                              const ids = new Set(
+                                next.get(candidate.key) ?? [],
+                              );
+                              if (event.target.checked) ids.add(item.id);
+                              else ids.delete(item.id);
+                              next.set(candidate.key, ids);
+                              setSelected(next);
+                            }}
+                            className="accent-accent"
+                          />
+                          <span className="w-14 shrink-0 tabular-nums text-fg-mute">
+                            {clock(item.taken_at)}
+                          </span>
+                          <span className="truncate" title={item.name}>
+                            {item.name}
+                          </span>
+                        </label>
                       ))}
                     </div>
                   )}

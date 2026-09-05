@@ -218,14 +218,16 @@ export function ViewerSection() {
   );
 }
 
-
 function geoEndpointProblem(value: string): string | null {
   if (!value) return null;
   try {
     const u = new URL(value);
     if (u.protocol !== "http:" && u.protocol !== "https:")
       return "http 또는 https 주소를 입력해 주세요";
-    if (u.hostname.replace(/\.$/, "").toLowerCase() === "nominatim.openstreetmap.org")
+    if (
+      u.hostname.replace(/\.$/, "").toLowerCase() ===
+      "nominatim.openstreetmap.org"
+    )
       return "OSM 공개 Nominatim은 배치 조회에 사용할 수 없습니다";
     return null;
   } catch {
@@ -285,7 +287,10 @@ function GeoRow() {
   // 않아야 한다 — 0 과 «아직 모름»은 다르다. 화면 그리는 중에 상태를 건드리지
   // 않으려고 따로 loading 을 두는 대신 열쇠를 견준다.
   const requestKey = String(geoRev);
-  const [state, setState] = useState<{ key: string | null; data: GeoStats | null }>({
+  const [state, setState] = useState<{
+    key: string | null;
+    data: GeoStats | null;
+  }>({
     key: null,
     data: null,
   });
@@ -307,12 +312,18 @@ function GeoRow() {
   // 서버 없이 할 수 있는 일 = 새로 판정할 자리 + 가진 값을 옮길 자리.
   // 둘을 합쳐야 화면의 수와 실제로 도는 일이 같아진다 — 스캔으로 새 사진이
   // 들어오면 판정할 자리는 0 이어도 붙일 자리는 남는다.
-  const offlineLeft = (st?.offline_cells_left ?? 0) + (st?.cache_cells_left ?? 0);
-  const cacheOnly = (st?.offline_cells_left ?? 0) === 0 && (st?.cache_cells_left ?? 0) > 0;
+  const offlineLeft =
+    (st?.offline_cells_left ?? 0) + (st?.cache_cells_left ?? 0);
+  const cacheOnly =
+    (st?.offline_cells_left ?? 0) === 0 && (st?.cache_cells_left ?? 0) > 0;
   const onlineLeft = st?.online_cells_left ?? 0;
   const ready = st?.endpoint_ready ?? false;
 
-  const start = (mode: "offline" | "online", limit: number | null, msg: string) => {
+  const start = (
+    mode: "offline" | "online",
+    limit: number | null,
+    msg: string,
+  ) => {
     invoke("geo_fill_start", { limit, mode })
       .then(() => toast(msg))
       .catch((e) => toast(String(e), "drop"));
@@ -321,11 +332,11 @@ function GeoRow() {
   const summary = loading
     ? "얼마나 남았는지 세는 중입니다…"
     : st
-    ? `유효한 좌표가 있는 사진 ${st.with_gps.toLocaleString()}장 중 ${st.named.toLocaleString()}장에 지명이 붙어 있습니다.` +
-      (st.unavailable_files > 0
-        ? ` 서버가 이름을 찾지 못한 ${st.unavailable_files.toLocaleString()}장은 좌표로만 표시됩니다.`
-        : "")
-    : "좌표를 국가·시도·시군구 이름으로 바꿔 위치 갈래에서 이름으로 찾습니다.";
+      ? `유효한 좌표가 있는 사진 ${st.with_gps.toLocaleString()}장 중 ${st.named.toLocaleString()}장에 지명이 붙어 있습니다.` +
+        (st.unavailable_files > 0
+          ? ` 서버가 이름을 찾지 못한 ${st.unavailable_files.toLocaleString()}장은 좌표로만 표시됩니다.`
+          : "")
+      : "좌표를 국가·시도·시군구 이름으로 바꿔 위치 갈래에서 이름으로 찾습니다.";
 
   // 서버에 초당 한 건이라 남은 곳에 1.1초를 곱한다
   const mins = Math.max(1, Math.ceil((onlineLeft * 1.1) / 60));
@@ -363,21 +374,25 @@ function GeoRow() {
           loading
             ? "얼마나 남았는지 세는 중입니다…"
             : onlineLeft === 0
-            ? "서버에 더 물어볼 곳이 없습니다."
-            : `지명 서버에 물어 ${
-                st && st.approximate_files > 0
-                  ? `근사로 붙은 사진 ${st.approximate_files.toLocaleString()}장을 `
-                  : ""
-              }더 좁은 단위까지 채웁니다. 남은 곳 ${onlineLeft.toLocaleString()}곳 — 초당 한 건이라 약 ${mins}분입니다.${
-                ready ? "" : " 먼저 위에 지명 서버를 설정해 주세요."
-              }`
+              ? "서버에 더 물어볼 곳이 없습니다."
+              : `지명 서버에 물어 ${
+                  st && st.approximate_files > 0
+                    ? `근사로 붙은 사진 ${st.approximate_files.toLocaleString()}장을 `
+                    : ""
+                }더 좁은 단위까지 채웁니다. 남은 곳 ${onlineLeft.toLocaleString()}곳 — 초당 한 건이라 약 ${mins}분입니다.${
+                  ready ? "" : " 먼저 위에 지명 서버를 설정해 주세요."
+                }`
         }
       >
         <>
           <Btn
             disabled={hasJob || loading || onlineLeft === 0 || !ready}
             onClick={() =>
-              start("online", 100, "최대 100곳을 보강합니다 — 진행은 위 작업 표시에서")
+              start(
+                "online",
+                100,
+                "최대 100곳을 보강합니다 — 진행은 위 작업 표시에서",
+              )
             }
           >
             {loading
@@ -391,7 +406,11 @@ function GeoRow() {
           <Btn
             disabled={hasJob || loading || onlineLeft === 0 || !ready}
             onClick={() =>
-              start("online", null, "남은 곳을 모두 보강합니다 — 멈추면 채운 것은 남습니다")
+              start(
+                "online",
+                null,
+                "남은 곳을 모두 보강합니다 — 멈추면 채운 것은 남습니다",
+              )
             }
           >
             전부

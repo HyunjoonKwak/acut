@@ -22,7 +22,9 @@ export function useUpdateAuto() {
       invoke<UpdateInfo | null>("update_check_auto")
         .then((info) => {
           if (!live || !info?.newer) return;
-          toast(`${info.latest} 이 나왔습니다 — 설정 › 정보에서 받으세요 (지금 ${info.current})`);
+          toast(
+            `${info.latest} 이 나왔습니다 — 설정 › 정보에서 받으세요 (지금 ${info.current})`,
+          );
         })
         .catch(() => {
           /* 살피지 못한 것은 알릴 일이 아니다 */

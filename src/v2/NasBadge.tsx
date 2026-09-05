@@ -38,7 +38,10 @@ export default function NasBadge() {
         if (mode === "off") {
           setSource("settings");
           window.setTimeout(
-            () => document.getElementById("settings-nas")?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            () =>
+              document
+                .getElementById("settings-nas")
+                ?.scrollIntoView({ behavior: "smooth", block: "start" }),
             50,
           );
           return;
@@ -47,7 +50,12 @@ export default function NasBadge() {
         setProbing(true);
         try {
           const p = await probeNas(mode);
-          toast(p?.online ? `NAS 연결됨 — ${p.hostname}` : `NAS 연결 실패 — ${p?.error ?? "응답 없음"}`, p?.online ? "ok" : "drop");
+          toast(
+            p?.online
+              ? `NAS 연결됨 — ${p.hostname}`
+              : `NAS 연결 실패 — ${p?.error ?? "응답 없음"}`,
+            p?.online ? "ok" : "drop",
+          );
         } finally {
           setProbing(false);
         }

@@ -41,7 +41,9 @@ export default function StatusActions({
   const noThumb = useView((s) => s.picks.no_thumb);
   const hasJob = useJob((s) => s.job !== null);
   const libId = usePrefs((s) => s.libId);
-  const libName = useData((s) => s.libs.find((l) => l.id === libId)?.name ?? null);
+  const libName = useData(
+    (s) => s.libs.find((l) => l.id === libId)?.name ?? null,
+  );
   // 되돌리기는 **가장 최근 작업**만 — 그 뒤에 휴지통을 비우는 등 다른 일을 했으면 옛 정리를 되돌리라고
   // 권하지 않는다(«휴지통은 비었는데 되돌리기 28,383장이 살아 있다» 지적 2026-08-30).
   // 영구히 비운 것(delete)은 되돌릴 수 없고, 휴지통 오간 것(trash·restore)은 휴지통 화면이 맡는다
@@ -127,7 +129,8 @@ export default function StatusActions({
           title={`가장 최근 작업을 물립니다 (${undoable.label ?? ""} · ${undoable.item_count.toLocaleString()}장). 파일이 원래 자리로 돌아갑니다`}
           className="hover:text-fg"
         >
-          ↩ {undoLabel(undoable.kind, undoable.item_count, undoable.label)} <Kbd>⌘Z</Kbd>
+          ↩ {undoLabel(undoable.kind, undoable.item_count, undoable.label)}{" "}
+          <Kbd>⌘Z</Kbd>
         </button>
       )}
       {stats && stats.thumbs_pending > 0 && !hasJob && !narrow && (
@@ -149,66 +152,75 @@ export default function StatusActions({
             : `썸네일 없음 ${stats.thumbs_pending.toLocaleString()}장`}
         </button>
       )}
-      {narrow && !hasJob && (nasNew || undoable || (stats && stats.thumbs_pending > 0)) && (
-        <Menu
-          align="right"
-          up
-          width={230}
-          trigger={(_, props) => (
-            <button
-              {...props}
-              title="더보기 — NAS 받기·되돌리기·썸네일 없음"
-              className="h-5 px-2 rounded text-fg-dim ring-1 ring-line-strong hover:bg-hover"
-            >
-              ⋯
-            </button>
-          )}
-        >
-          {(close) => (
-            <>
-              {nasNew && (
-                <MenuItem
-                  onClick={async () => {
-                    close();
-                    try {
-                      await invoke("nas_pull_start", { libraryId: nasNew.libraryId });
-                      useData.getState().setNasNew(null);
-                    } catch (e) {
-                      toast(String(e), "drop");
-                    }
-                  }}
-                >
-                  NAS 새 사진 {nasNew.files.toLocaleString()}장 받기
-                </MenuItem>
-              )}
-              {undoable && (
-                <MenuItem
-                  hint="⌘Z"
-                  onClick={() => {
-                    close();
-                    undoLast();
-                  }}
-                >
-                  ↩ {undoLabel(undoable.kind, undoable.item_count, undoable.label)}
-                </MenuItem>
-              )}
-              {stats && stats.thumbs_pending > 0 && (
-                <MenuItem
-                  selected={noThumb}
-                  onClick={() => {
-                    close();
-                    useView.getState().patchPicks({ no_thumb: !noThumb });
-                  }}
-                >
-                  {noThumb
-                    ? "썸네일 없음만 보기 끄기"
-                    : `썸네일 없음 ${stats.thumbs_pending.toLocaleString()}장 보기`}
-                </MenuItem>
-              )}
-            </>
-          )}
-        </Menu>
-      )}
+      {narrow &&
+        !hasJob &&
+        (nasNew || undoable || (stats && stats.thumbs_pending > 0)) && (
+          <Menu
+            align="right"
+            up
+            width={230}
+            trigger={(_, props) => (
+              <button
+                {...props}
+                title="더보기 — NAS 받기·되돌리기·썸네일 없음"
+                className="h-5 px-2 rounded text-fg-dim ring-1 ring-line-strong hover:bg-hover"
+              >
+                ⋯
+              </button>
+            )}
+          >
+            {(close) => (
+              <>
+                {nasNew && (
+                  <MenuItem
+                    onClick={async () => {
+                      close();
+                      try {
+                        await invoke("nas_pull_start", {
+                          libraryId: nasNew.libraryId,
+                        });
+                        useData.getState().setNasNew(null);
+                      } catch (e) {
+                        toast(String(e), "drop");
+                      }
+                    }}
+                  >
+                    NAS 새 사진 {nasNew.files.toLocaleString()}장 받기
+                  </MenuItem>
+                )}
+                {undoable && (
+                  <MenuItem
+                    hint="⌘Z"
+                    onClick={() => {
+                      close();
+                      undoLast();
+                    }}
+                  >
+                    ↩{" "}
+                    {undoLabel(
+                      undoable.kind,
+                      undoable.item_count,
+                      undoable.label,
+                    )}
+                  </MenuItem>
+                )}
+                {stats && stats.thumbs_pending > 0 && (
+                  <MenuItem
+                    selected={noThumb}
+                    onClick={() => {
+                      close();
+                      useView.getState().patchPicks({ no_thumb: !noThumb });
+                    }}
+                  >
+                    {noThumb
+                      ? "썸네일 없음만 보기 끄기"
+                      : `썸네일 없음 ${stats.thumbs_pending.toLocaleString()}장 보기`}
+                  </MenuItem>
+                )}
+              </>
+            )}
+          </Menu>
+        )}
     </>
   );
 }

@@ -22,7 +22,14 @@ export default function AreaPickDialog({
 
   return (
     <div className="fixed inset-0 z-[70] bg-canvas/80 backdrop-blur-sm flex items-center justify-center p-6">
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="이 폴더는 어느 영역입니까?" className="w-[460px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="이 폴더는 어느 영역입니까?"
+        className="w-[460px] max-w-full bg-chrome rounded-xl ring-1 ring-line shadow-2xl p-5"
+      >
         <div className="text-[16px] font-semibold text-fg mb-1">
           이 폴더는 어느 영역입니까?
         </div>

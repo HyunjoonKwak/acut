@@ -39,8 +39,9 @@ export function useScanEvents(cb: {
       subs.push(listen<T>(name, (e) => alive && f(e.payload)));
     };
 
-    on<{ total: number; done: number; asked: number; files: number }>("geo-progress", (p) =>
-      job().progress({ label: "지명", done: p.done, total: p.total }),
+    on<{ total: number; done: number; asked: number; files: number }>(
+      "geo-progress",
+      (p) => job().progress({ label: "지명", done: p.done, total: p.total }),
     );
     on<{
       files: number;
@@ -48,27 +49,24 @@ export function useScanEvents(cb: {
       empty: number;
       stopped: string | null;
       cancelled: boolean;
-    }>(
-      "geo-done",
-      (p) => {
-        job().clear();
-        // 화면을 열어 둔 채로 끝나도 트리와 «이름 없는 N장»이 바로 새로 센다
-        data().bumpGeo();
-        if (p.stopped) {
-          // 스스로 멈춘 것은 경고가 아니다 — 서버가 막은 것과 다르게 보인다
-          toast(
-            `${p.stopped} — ${p.files.toLocaleString()}장까지 붙였습니다`,
-            p.cancelled ? "ok" : "drop",
-          );
-          return;
-        }
-        const tail = p.empty > 0 ? `이름 없는 곳 ${p.empty}` : "";
+    }>("geo-done", (p) => {
+      job().clear();
+      // 화면을 열어 둔 채로 끝나도 트리와 «이름 없는 N장»이 바로 새로 센다
+      data().bumpGeo();
+      if (p.stopped) {
+        // 스스로 멈춘 것은 경고가 아니다 — 서버가 막은 것과 다르게 보인다
         toast(
-          `지명 ${p.files.toLocaleString()}장에 붙였습니다${tail ? ` (${tail})` : ""}`,
-          "ok",
+          `${p.stopped} — ${p.files.toLocaleString()}장까지 붙였습니다`,
+          p.cancelled ? "ok" : "drop",
         );
-      },
-    );
+        return;
+      }
+      const tail = p.empty > 0 ? `이름 없는 곳 ${p.empty}` : "";
+      toast(
+        `지명 ${p.files.toLocaleString()}장에 붙였습니다${tail ? ` (${tail})` : ""}`,
+        "ok",
+      );
+    });
     on<string>("geo-error", (e) => {
       job().clear();
       toast(e, "drop");
@@ -80,7 +78,8 @@ export function useScanEvents(cb: {
     on<number>("watch-busy", (n) => {
       const HEAD = "바뀐 폴더 다시 스캔 중";
       const cur = useData.getState().busy;
-      if (n > 0) useData.getState().setBusy(`${HEAD} — ${n.toLocaleString()}개 남음`);
+      if (n > 0)
+        useData.getState().setBusy(`${HEAD} — ${n.toLocaleString()}개 남음`);
       else if (cur.startsWith(HEAD)) useData.getState().setBusy("");
     });
     on<{ found: number; inserted: number; skipped: number }>(
@@ -120,7 +119,11 @@ export function useScanEvents(cb: {
         3: "비슷한 장면",
         4: "줄인 사본",
       };
-      job().progress({ label: `고르기 — ${labels[kind] ?? "분석"}`, done: 0, total: 0 });
+      job().progress({
+        label: `고르기 — ${labels[kind] ?? "분석"}`,
+        done: 0,
+        total: 0,
+      });
     });
     on<{
       phase: string;
@@ -133,10 +136,22 @@ export function useScanEvents(cb: {
     }>("cull-dedup-progress", (p) =>
       job().progress(
         p.phase === "image"
-          ? { label: "고르기 — 메타데이터만 다른 사본", done: p.image_done, total: p.image_total }
+          ? {
+              label: "고르기 — 메타데이터만 다른 사본",
+              done: p.image_done,
+              total: p.image_total,
+            }
           : p.phase === "full"
-            ? { label: "고르기 — 전체 해시", done: p.full_done, total: p.full_total }
-            : { label: "고르기 — 빠른 해시", done: p.hashed, total: p.candidates },
+            ? {
+                label: "고르기 — 전체 해시",
+                done: p.full_done,
+                total: p.full_total,
+              }
+            : {
+                label: "고르기 — 빠른 해시",
+                done: p.hashed,
+                total: p.candidates,
+              },
       ),
     );
     on<{
@@ -147,7 +162,11 @@ export function useScanEvents(cb: {
     }>("cull-phash-progress", (p) =>
       job().progress(
         p.phase === "fill"
-          ? { label: "고르기 — 줄인 사본 그림 해시", done: p.fill_done, total: p.fill_total }
+          ? {
+              label: "고르기 — 줄인 사본 그림 해시",
+              done: p.fill_done,
+              total: p.fill_total,
+            }
           : { label: "고르기 — 줄인 사본 묶는 중", done: 0, total: p.photos },
       ),
     );
@@ -272,22 +291,24 @@ export function useScanEvents(cb: {
     on<{ done: number; total: number }>("merge-progress", (p) =>
       job().progress({ label: "폴더 합치는 중", done: p.done, total: p.total }),
     );
-    on<{ moved: number; failed: number; first_error: string | null; folders_removed?: number }>(
-      "merge-done",
-      async (o) => {
-        job().clear();
-        toast(
-          o.failed > 0
-            ? `${o.moved.toLocaleString()}장 옮김 · ${o.failed}장 실패 — ${o.first_error ?? ""}`
-            : `${o.moved.toLocaleString()}장을 합쳤습니다${(o.folders_removed ?? 0) > 0 ? ` · 빈 폴더 ${o.folders_removed}개 지움` : ""} — ⌘Z 로 되돌릴 수 있습니다`,
-          o.failed > 0 ? "drop" : "ok",
-        );
-        await useData.getState().refreshLibs();
-        useData.getState().loadFolders();
-        ref.current.reload();
-        ref.current.refreshMeta();
-      },
-    );
+    on<{
+      moved: number;
+      failed: number;
+      first_error: string | null;
+      folders_removed?: number;
+    }>("merge-done", async (o) => {
+      job().clear();
+      toast(
+        o.failed > 0
+          ? `${o.moved.toLocaleString()}장 옮김 · ${o.failed}장 실패 — ${o.first_error ?? ""}`
+          : `${o.moved.toLocaleString()}장을 합쳤습니다${(o.folders_removed ?? 0) > 0 ? ` · 빈 폴더 ${o.folders_removed}개 지움` : ""} — ⌘Z 로 되돌릴 수 있습니다`,
+        o.failed > 0 ? "drop" : "ok",
+      );
+      await useData.getState().refreshLibs();
+      useData.getState().loadFolders();
+      ref.current.reload();
+      ref.current.refreshMeta();
+    });
     on<string>("merge-error", (e) => {
       job().clear();
       toast(`폴더 합치기 실패 — ${e}`, "drop");

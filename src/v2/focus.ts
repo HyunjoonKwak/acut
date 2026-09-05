@@ -35,8 +35,9 @@ function topModal(): Element | null {
  * 묶어 돌려주는 DOM 구현(jsdom)이 있어 `querySelectorAll` 순서를 믿지 않는다.
  */
 function focusableIn(dialog: HTMLElement): HTMLElement[] {
-  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).sort((a, b) =>
-    a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).sort(
+    (a, b) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
   );
 }
 

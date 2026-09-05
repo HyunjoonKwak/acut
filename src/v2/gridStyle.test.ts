@@ -235,7 +235,9 @@ test("보이는 구간 — y 오름차순 상자에서 이분 탐색으로 자�
     [10 ** 9, 10 ** 9 + 800],
   ]) {
     const [s, e] = visibleRange(boxes, top, bottom, maxH);
-    const got = boxes.slice(s, e).filter((b) => b.y + b.h >= top && b.y <= bottom);
+    const got = boxes
+      .slice(s, e)
+      .filter((b) => b.y + b.h >= top && b.y <= bottom);
     const want = boxes.filter((b) => b.y + b.h >= top && b.y <= bottom);
     assert.deepEqual(got, want, `[${top}, ${bottom}]`);
   }

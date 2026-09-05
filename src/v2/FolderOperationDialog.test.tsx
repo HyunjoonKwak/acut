@@ -5,15 +5,37 @@ import FolderOperationDialog from "./FolderOperationDialog";
 import { useData } from "./dataStore";
 
 const invoke = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => invoke(...args),
+}));
 
 describe("FolderOperationDialog", () => {
   beforeEach(() => {
     invoke.mockReset();
     useData.setState({
       libs: [
-        { id: 1, volume_uuid: "A", volume_name: "A", rel_path: "", name: "내사진", area: 1, online: true, dir: "/A", file_count: 2 },
-        { id: 2, volume_uuid: "B", volume_name: "B", rel_path: "", name: "공용", area: 2, online: false, dir: null, file_count: 0 },
+        {
+          id: 1,
+          volume_uuid: "A",
+          volume_name: "A",
+          rel_path: "",
+          name: "내사진",
+          area: 1,
+          online: true,
+          dir: "/A",
+          file_count: 2,
+        },
+        {
+          id: 2,
+          volume_uuid: "B",
+          volume_name: "B",
+          rel_path: "",
+          name: "공용",
+          area: 2,
+          online: false,
+          dir: null,
+          file_count: 0,
+        },
       ],
       folders: [],
     });
@@ -21,50 +43,97 @@ describe("FolderOperationDialog", () => {
 
   it("실행 전에 미리보기를 요구하고 Drive 및 충돌 경고를 보여 준다", async () => {
     invoke.mockResolvedValueOnce({
-      source: "2026/여행", destination: "여행 (2)", planned_name: "여행 (2)",
-      conflict: "name_exists", action: "rename", files: 20, directories: 3,
-      bytes: 2048, cross_volume: false, drive_sync_warning: true,
+      source: "2026/여행",
+      destination: "여행 (2)",
+      planned_name: "여행 (2)",
+      conflict: "name_exists",
+      action: "rename",
+      files: 20,
+      directories: 3,
+      bytes: 2048,
+      cross_volume: false,
+      drive_sync_warning: true,
     });
     render(
       <FolderOperationDialog
-        target={{ action: "copy", sourceLibraryId: 1, sourceDir: "2026/여행", sourceName: "여행" }}
+        target={{
+          action: "copy",
+          sourceLibraryId: 1,
+          sourceDir: "2026/여행",
+          sourceName: "여행",
+        }}
         onChanged={vi.fn()}
         onClose={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "폴더 복사 실행" })).toBeDisabled();
-    await userEvent.selectOptions(screen.getByText("같은 이름 충돌").parentElement!.querySelector("select")!, "rename");
-    await userEvent.click(screen.getByRole("button", { name: "충돌 미리보기" }));
+    expect(
+      screen.getByRole("button", { name: "폴더 복사 실행" }),
+    ).toBeDisabled();
+    await userEvent.selectOptions(
+      screen
+        .getByText("같은 이름 충돌")
+        .parentElement!.querySelector("select")!,
+      "rename",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "충돌 미리보기" }),
+    );
     expect(await screen.findByText(/충돌을 피해 새 이름/)).toBeInTheDocument();
     expect(screen.getByText(/Drive 동기화 폴더/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "폴더 복사 실행" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "폴더 복사 실행" }),
+    ).toBeEnabled();
   });
 
   it("실행 결과가 0건이면 성공처럼 닫지 않는다", async () => {
     invoke
       .mockResolvedValueOnce({
-        source: "2026/여행", destination: "2026/여행2", planned_name: "여행2",
-        conflict: "none", action: "run", files: 20, directories: 3,
-        bytes: 2048, cross_volume: false, drive_sync_warning: false,
+        source: "2026/여행",
+        destination: "2026/여행2",
+        planned_name: "여행2",
+        conflict: "none",
+        action: "run",
+        files: 20,
+        directories: 3,
+        bytes: 2048,
+        cross_volume: false,
+        drive_sync_warning: false,
       })
       .mockResolvedValueOnce({
-        batch_id: 0, completed: 0, failed: 0, files: 20, directories: 3,
-        bytes: 2048, first_error: "실행 직전 충돌", manifest_sha256: null,
+        batch_id: 0,
+        completed: 0,
+        failed: 0,
+        files: 20,
+        directories: 3,
+        bytes: 2048,
+        first_error: "실행 직전 충돌",
+        manifest_sha256: null,
       });
     const onChanged = vi.fn();
     const onClose = vi.fn();
     render(
       <FolderOperationDialog
-        target={{ action: "rename", sourceLibraryId: 1, sourceDir: "2026/여행", sourceName: "여행" }}
+        target={{
+          action: "rename",
+          sourceLibraryId: 1,
+          sourceDir: "2026/여행",
+          sourceName: "여행",
+        }}
         onChanged={onChanged}
         onClose={onClose}
       />,
     );
     await userEvent.clear(screen.getByLabelText("폴더 이름"));
     await userEvent.type(screen.getByLabelText("폴더 이름"), "여행2");
-    await userEvent.click(screen.getByRole("button", { name: "충돌 미리보기" }));
-    await userEvent.click(await screen.findByRole("button", { name: "이름 변경 실행" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("실행 직전 충돌");
+    await userEvent.click(
+      screen.getByRole("button", { name: "충돌 미리보기" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "이름 변경 실행" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "실행 직전 충돌",
+    );
     expect(onChanged).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -72,25 +141,43 @@ describe("FolderOperationDialog", () => {
   it("실행 호출이 실패하면 오류를 보여 주고 닫지 않는다", async () => {
     invoke
       .mockResolvedValueOnce({
-        source: "2026/여행", destination: "2026/여행2", planned_name: "여행2",
-        conflict: "none", action: "run", files: 20, directories: 3,
-        bytes: 2048, cross_volume: false, drive_sync_warning: false,
+        source: "2026/여행",
+        destination: "2026/여행2",
+        planned_name: "여행2",
+        conflict: "none",
+        action: "run",
+        files: 20,
+        directories: 3,
+        bytes: 2048,
+        cross_volume: false,
+        drive_sync_warning: false,
       })
       .mockRejectedValueOnce(new Error("디스크 연결 끊김"));
     const onChanged = vi.fn();
     const onClose = vi.fn();
     render(
       <FolderOperationDialog
-        target={{ action: "rename", sourceLibraryId: 1, sourceDir: "2026/여행", sourceName: "여행" }}
+        target={{
+          action: "rename",
+          sourceLibraryId: 1,
+          sourceDir: "2026/여행",
+          sourceName: "여행",
+        }}
         onChanged={onChanged}
         onClose={onClose}
       />,
     );
     await userEvent.clear(screen.getByLabelText("폴더 이름"));
     await userEvent.type(screen.getByLabelText("폴더 이름"), "여행2");
-    await userEvent.click(screen.getByRole("button", { name: "충돌 미리보기" }));
-    await userEvent.click(await screen.findByRole("button", { name: "이름 변경 실행" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("디스크 연결 끊김");
+    await userEvent.click(
+      screen.getByRole("button", { name: "충돌 미리보기" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "이름 변경 실행" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "디스크 연결 끊김",
+    );
     expect(onChanged).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -98,28 +185,54 @@ describe("FolderOperationDialog", () => {
   it("실행 성공 시 변경을 알린 뒤 닫는다", async () => {
     invoke
       .mockResolvedValueOnce({
-        source: "2026/여행", destination: "2026/여행2", planned_name: "여행2",
-        conflict: "none", action: "run", files: 20, directories: 3,
-        bytes: 2048, cross_volume: false, drive_sync_warning: false,
+        source: "2026/여행",
+        destination: "2026/여행2",
+        planned_name: "여행2",
+        conflict: "none",
+        action: "run",
+        files: 20,
+        directories: 3,
+        bytes: 2048,
+        cross_volume: false,
+        drive_sync_warning: false,
       })
       .mockResolvedValueOnce({
-        batch_id: 1, completed: 1, failed: 0, files: 20, directories: 3,
-        bytes: 2048, first_error: null, manifest_sha256: "sha256",
+        batch_id: 1,
+        completed: 1,
+        failed: 0,
+        files: 20,
+        directories: 3,
+        bytes: 2048,
+        first_error: null,
+        manifest_sha256: "sha256",
       });
     const calls: string[] = [];
-    const onChanged = vi.fn(async () => { calls.push("changed"); });
-    const onClose = vi.fn(() => { calls.push("closed"); });
+    const onChanged = vi.fn(async () => {
+      calls.push("changed");
+    });
+    const onClose = vi.fn(() => {
+      calls.push("closed");
+    });
     render(
       <FolderOperationDialog
-        target={{ action: "rename", sourceLibraryId: 1, sourceDir: "2026/여행", sourceName: "여행" }}
+        target={{
+          action: "rename",
+          sourceLibraryId: 1,
+          sourceDir: "2026/여행",
+          sourceName: "여행",
+        }}
         onChanged={onChanged}
         onClose={onClose}
       />,
     );
     await userEvent.clear(screen.getByLabelText("폴더 이름"));
     await userEvent.type(screen.getByLabelText("폴더 이름"), "여행2");
-    await userEvent.click(screen.getByRole("button", { name: "충돌 미리보기" }));
-    await userEvent.click(await screen.findByRole("button", { name: "이름 변경 실행" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "충돌 미리보기" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "이름 변경 실행" }),
+    );
     expect(onChanged).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();
     expect(calls).toEqual(["changed", "closed"]);

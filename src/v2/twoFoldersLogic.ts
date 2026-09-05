@@ -41,13 +41,25 @@ export function droppable(r: PairRow, side: "a" | "b"): boolean {
 }
 
 /** 줄의 상태 문구 */
-export function verdict(r: PairRow): { kind: "same" | "b_in_a" | "a_in_b" | "partial" | "a_only" | "b_only"; text: string } {
+export function verdict(r: PairRow): {
+  kind: "same" | "b_in_a" | "a_in_b" | "partial" | "a_only" | "b_only";
+  text: string;
+} {
   if (!r.a) return { kind: "b_only", text: "B에만 있음" };
   if (!r.b) return { kind: "a_only", text: "A에만 있음" };
-  const keptNote = r.kept_a > 0 && r.kept_b > 0 ? " — 양쪽 다 남김" : r.kept_a > 0 ? " — A쪽은 남김" : r.kept_b > 0 ? " — B쪽은 남김" : "";
+  const keptNote =
+    r.kept_a > 0 && r.kept_b > 0
+      ? " — 양쪽 다 남김"
+      : r.kept_a > 0
+        ? " — A쪽은 남김"
+        : r.kept_b > 0
+          ? " — B쪽은 남김"
+          : "";
   if (r.same) return { kind: "same", text: "✓ 똑같음" + keptNote };
-  if (r.b_in_a) return { kind: "b_in_a", text: "B쪽 사진이 A쪽에 다 있음" + keptNote };
-  if (r.a_in_b) return { kind: "a_in_b", text: "A쪽 사진이 B쪽에 다 있음" + keptNote };
+  if (r.b_in_a)
+    return { kind: "b_in_a", text: "B쪽 사진이 A쪽에 다 있음" + keptNote };
+  if (r.a_in_b)
+    return { kind: "a_in_b", text: "A쪽 사진이 B쪽에 다 있음" + keptNote };
   return { kind: "partial", text: `${r.common.toLocaleString()}장 똑같음` };
 }
 
@@ -78,4 +90,3 @@ export function doneSide(r: PairRow): "a" | "b" | null {
   if (r.files_b > 0 && r.flagged_b >= r.files_b) return "b";
   return null;
 }
-

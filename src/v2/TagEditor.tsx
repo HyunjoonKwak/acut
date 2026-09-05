@@ -22,7 +22,9 @@ export default function TagEditor({
     tags: { id: number; name: string }[];
   } | null>(null);
   const [all, setAll] = useState<string[]>([]);
-  const [draft, setDraft] = useState<{ fileId: number; text: string } | null>(null);
+  const [draft, setDraft] = useState<{ fileId: number; text: string } | null>(
+    null,
+  );
   const currentId = useRef(id);
   useEffect(() => {
     currentId.current = id;

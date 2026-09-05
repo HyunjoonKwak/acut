@@ -64,7 +64,9 @@ describe("상태바 오른쪽", () => {
     useView.setState({ viewTrash: true });
     useData.setState({ trash: { files: 0, bytes: 0 } });
     const { unmount } = render(<StatusActions {...noop} />);
-    expect(screen.queryByRole("button", { name: "전부 되돌리기" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "전부 되돌리기" }),
+    ).not.toBeInTheDocument();
     unmount();
     useData.setState({ trash: { files: 4, bytes: 10 } });
     render(<StatusActions {...noop} />);
@@ -106,11 +108,27 @@ describe("상태바 오른쪽", () => {
     // 가장 최근 작업이 휴지통 비우기면 그 전의 정리를 되돌리라고 권하지 않는다
     useData.setState({
       batches: [
-        { id: 6, kind: "delete", label: "휴지통 비우기", item_count: 9, created_at: 0, undone_at: null },
-        { id: 5, kind: "move", label: "정리 → 2024/여행", item_count: 7, created_at: 0, undone_at: null },
+        {
+          id: 6,
+          kind: "delete",
+          label: "휴지통 비우기",
+          item_count: 9,
+          created_at: 0,
+          undone_at: null,
+        },
+        {
+          id: 5,
+          kind: "move",
+          label: "정리 → 2024/여행",
+          item_count: 7,
+          created_at: 0,
+          undone_at: null,
+        },
       ],
     });
     render(<StatusActions {...noop} />);
-    expect(screen.queryByRole("button", { name: /되돌리기/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /되돌리기/ }),
+    ).not.toBeInTheDocument();
   });
 });

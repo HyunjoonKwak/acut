@@ -16,8 +16,8 @@ use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
 pub mod kinds;
-pub mod watch;
 pub mod thumbs;
+pub mod watch;
 
 pub use kinds::Kind;
 
@@ -111,7 +111,10 @@ pub fn scan_folder(
     let found = walk(root, &vol.mount_path, |n| {
         if last_found.elapsed() >= std::time::Duration::from_millis(200) {
             last_found = std::time::Instant::now();
-            on_progress(&Progress { found: n, ..Default::default() });
+            on_progress(&Progress {
+                found: n,
+                ..Default::default()
+            });
         }
     });
     let progress = Arc::new(std::sync::Mutex::new(Progress {
@@ -364,8 +367,10 @@ pub fn scan_folder(
 /// 폴더 행도 남긴다(FK CASCADE). 안전장치: 훑은 것이 하나도 없거나 절반 넘게 사라졌으면
 /// 마운트가 빠졌거나 잘못 붙은 것으로 보고 손대지 않는다.
 fn prune_gone(db: &Db, library_id: i64, root_rel: &str, found: &[Found]) -> Result<(usize, usize)> {
-    let seen: std::collections::HashSet<(&str, &str)> =
-        found.iter().map(|f| (f.rel_dir.as_str(), f.name.as_str())).collect();
+    let seen: std::collections::HashSet<(&str, &str)> = found
+        .iter()
+        .map(|f| (f.rel_dir.as_str(), f.name.as_str()))
+        .collect();
     let rows: Vec<(i64, String, String)> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fo.rel_path, fi.name FROM files fi JOIN folders fo ON fo.id = fi.folder_id
@@ -374,7 +379,9 @@ fn prune_gone(db: &Db, library_id: i64, root_rel: &str, found: &[Found]) -> Resu
         let it = st.query_map([library_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
-    let under = |dir: &str| root_rel.is_empty() || dir == root_rel || dir.starts_with(&format!("{root_rel}/"));
+    let under = |dir: &str| {
+        root_rel.is_empty() || dir == root_rel || dir.starts_with(&format!("{root_rel}/"))
+    };
     let scoped: Vec<&(i64, String, String)> = rows.iter().filter(|(_, d, _)| under(d)).collect();
     let gone: Vec<i64> = scoped
         .iter()
@@ -404,7 +411,11 @@ fn prune_gone(db: &Db, library_id: i64, root_rel: &str, found: &[Found]) -> Resu
             [library_id],
         )
     })?;
-    log::info!("사라진 파일 {}개·빈 폴더 {}개 행을 지웠다 (뿌리 «{root_rel}»)", gone.len(), folders_removed);
+    log::info!(
+        "사라진 파일 {}개·빈 폴더 {}개 행을 지웠다 (뿌리 «{root_rel}»)",
+        gone.len(),
+        folders_removed
+    );
     Ok((gone.len(), folders_removed))
 }
 
@@ -413,19 +424,16 @@ fn prune_gone(db: &Db, library_id: i64, root_rel: &str, found: &[Found]) -> Resu
 /// 스캔은 있는 것만 넣는다. 파인더에서 지운 것은 여기서 뺀다. 휴지통에 든
 /// 것(`trashed_at`)은 원래 자리에 없는 게 정상이라 건드리지 않는다.
 /// 썸네일 파일은 두고 행만 지운다 — 같은 파일이 돌아오면 캐시 키가 같아 그대로 쓴다.
-pub fn prune_missing(
-    db: &Db,
-    mount: &Path,
-    library_id: i64,
-    rel_dir: &str,
-) -> Result<usize> {
+pub fn prune_missing(db: &Db, mount: &Path, library_id: i64, rel_dir: &str) -> Result<usize> {
     let rows: Vec<(i64, String)> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fo.rel_path || CASE WHEN fo.rel_path = '' THEN '' ELSE '/' END || fi.name
                FROM files fi JOIN folders fo ON fo.id = fi.folder_id
               WHERE fo.library_id = ?1 AND fo.rel_path = ?2 AND fi.trashed_at IS NULL",
         )?;
-        let it = st.query_map(rusqlite::params![library_id, rel_dir], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let it = st.query_map(rusqlite::params![library_id, rel_dir], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
     let gone: Vec<i64> = rows
@@ -506,7 +514,9 @@ fn walk(root: &Path, mount: &Path, mut on_found: impl FnMut(usize)) -> Vec<Found
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in rd.flatten() {
             let path = entry.path();
             let Ok(ft) = entry.file_type() else { continue };
@@ -522,7 +532,9 @@ fn walk(root: &Path, mount: &Path, mut on_found: impl FnMut(usize)) -> Vec<Found
                 stack.push(path);
                 continue;
             }
-            let Some(kind) = kinds::classify(&name) else { continue };
+            let Some(kind) = kinds::classify(&name) else {
+                continue;
+            };
             let Ok(md) = entry.metadata() else { continue };
             let rel_dir = dir
                 .strip_prefix(mount)
@@ -588,7 +600,6 @@ mod tests {
         assert_eq!(known.len(), 1, "영상은 다시 읽을 대상이 된다");
     }
 
-
     use super::*;
 
     /// 스캔이 끝나면 이미 아는 지명이 새 사진에 붙어 있어야 한다.
@@ -613,14 +624,20 @@ mod tests {
         })
         .unwrap();
         let named = |n: &str| -> Option<String> {
-            db.read(|c| c.query_row("SELECT geo_name FROM files WHERE name=?1", [n], |r| r.get(0)))
-                .unwrap()
+            db.read(|c| {
+                c.query_row("SELECT geo_name FROM files WHERE name=?1", [n], |r| {
+                    r.get(0)
+                })
+            })
+            .unwrap()
         };
         assert_eq!(named("a.jpg"), None, "아직 붙지 않았다");
 
         // 사진이 하나 더 들어와 스캔이 다시 돈다 (가져오기·감시도 같은 길이다)
         std::fs::write(dir.path().join("b.jpg"), b"y".repeat(50)).unwrap();
-        let lib: i64 = db.read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0))).unwrap();
+        let lib: i64 = db
+            .read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0)))
+            .unwrap();
         let p = scan_folder(&db, lib, dir.path(), 0, |_| {}).unwrap();
         assert_eq!(p.inserted, 1);
 
@@ -644,11 +661,17 @@ mod tests {
         })
         .unwrap();
 
-        let lib: i64 = db.read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0))).unwrap();
+        let lib: i64 = db
+            .read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0)))
+            .unwrap();
         let p = scan_folder(&db, lib, dir.path(), 0, |_| {}).unwrap();
         assert_eq!((p.inserted, p.updated), (0, 0), "바뀐 것이 없다");
         let name: Option<String> = db
-            .read(|c| c.query_row("SELECT geo_name FROM files WHERE name='a.jpg'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row("SELECT geo_name FROM files WHERE name='a.jpg'", [], |r| {
+                    r.get(0)
+                })
+            })
             .unwrap();
         assert_eq!(name, None, "할 일이 없으면 파일 표를 훑지도 않는다");
     }
@@ -745,24 +768,31 @@ mod tests {
         std::fs::write(&f, b"first body").unwrap();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
-        db.write(|c| c.execute(
-            "UPDATE files SET cam_model='old camera', orientation=6,
+        db.write(|c| {
+            c.execute(
+                "UPDATE files SET cam_model='old camera', orientation=6,
                 gps_lat=37.5, gps_lon=127.0, geo_name='old place',
                 sharpness=1.0, exposure=2.0, embedding=X'01', faces_at=123,
                 phash=456, psig=X'0102'",
-            [],
-        )).unwrap();
+                [],
+            )
+        })
+        .unwrap();
 
         std::fs::write(&f, b"second body is longer").unwrap();
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
-        let stale: i64 = db.read(|c| c.query_row(
+        let stale: i64 = db
+            .read(|c| {
+                c.query_row(
             "SELECT COUNT(*) FROM files WHERE cam_model IS NOT NULL OR orientation IS NOT NULL
                 OR gps_lat IS NOT NULL OR geo_name IS NOT NULL OR sharpness IS NOT NULL
                 OR exposure IS NOT NULL OR embedding IS NOT NULL OR faces_at IS NOT NULL
                 OR phash IS NOT NULL OR psig IS NOT NULL",
             [],
             |r| r.get(0),
-        )).unwrap();
+        )
+            })
+            .unwrap();
         assert_eq!(stale, 0);
     }
 
@@ -800,8 +830,15 @@ mod tests {
         let p = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         assert_eq!((p.removed, p.folders_removed), (2, 1), "{p:?}");
         assert_eq!(count("SELECT COUNT(*) FROM files"), 2);
-        assert_eq!(count("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%2004'"), 0, "빈 폴더 행도");
-        assert_eq!(count("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%2005'"), 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%2004'"),
+            0,
+            "빈 폴더 행도"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%2005'"),
+            1
+        );
     }
 
     /// 마운트가 빠져 아무것도 안 보이면 지우지 않는다
@@ -815,8 +852,13 @@ mod tests {
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         std::fs::remove_dir_all(&p).unwrap();
         let r = scan_test(&db, dir.path(), 0, |_| {}).unwrap();
-        assert_eq!(r.removed, 0, "훑은 것이 0이면 마운트 문제로 보고 손대지 않는다");
-        let n: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))).unwrap();
+        assert_eq!(
+            r.removed, 0,
+            "훑은 것이 0이면 마운트 문제로 보고 손대지 않는다"
+        );
+        let n: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)))
+            .unwrap();
         assert_eq!(n, 1);
     }
 
@@ -837,7 +879,11 @@ mod tests {
             .unwrap();
         let mount = crate::db::volumes::describe(&lib_dir).unwrap().mount_path;
         let rel_dir: String = db
-            .read(|c| c.query_row("SELECT rel_path FROM folders WHERE name='2024'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row("SELECT rel_path FROM folders WHERE name='2024'", [], |r| {
+                    r.get(0)
+                })
+            })
             .unwrap();
 
         // c는 휴지통에 든 것처럼 — 원래 자리에 없어도 정상
@@ -857,7 +903,13 @@ mod tests {
             .unwrap();
         assert_eq!(names, vec!["a.jpg", "c.jpg"]);
         let cnt: i64 = db
-            .read(|c| c.query_row("SELECT file_count FROM folders WHERE name='2024'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT file_count FROM folders WHERE name='2024'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(cnt, 1, "폴더 장수도 맞춘다 (휴지통 것은 안 센다)");
 
@@ -898,7 +950,11 @@ mod real {
             let mut l = last.lock().unwrap();
             if l.elapsed().as_secs() >= 2 {
                 let done = pr.inserted + pr.updated + pr.skipped;
-                eprintln!("   {done:>7}/{} · {:.0}s", pr.found, t0.elapsed().as_secs_f64());
+                eprintln!(
+                    "   {done:>7}/{} · {:.0}s",
+                    pr.found,
+                    t0.elapsed().as_secs_f64()
+                );
                 *l = std::time::Instant::now();
             }
         })
@@ -909,19 +965,31 @@ mod real {
         println!("  발견   {:>7}", p.found);
         println!("  삽입   {:>7}", p.inserted);
         println!("  실패   {:>7}", p.failed);
-        println!("  소요   {secs:>7.1}초  ({:.0}장/초)", p.found as f64 / secs);
+        println!(
+            "  소요   {secs:>7.1}초  ({:.0}장/초)",
+            p.found as f64 / secs
+        );
 
         // 쿼리 성능 — 스캔 직후 실제 데이터로
         let bench = |label: &str, sql: &str| {
             let t = std::time::Instant::now();
             let n: i64 = db.read(|c| c.query_row(sql, [], |r| r.get(0))).unwrap();
-            println!("  {label:<28} {:>7.1} ms  (n={n})", t.elapsed().as_secs_f64() * 1000.0);
+            println!(
+                "  {label:<28} {:>7.1} ms  (n={n})",
+                t.elapsed().as_secs_f64() * 1000.0
+            );
         };
         println!("\n═══ 쿼리 ═══");
         bench("전체 개수", "SELECT COUNT(*) FROM files");
-        bench("최신 200장", "SELECT COUNT(*) FROM (SELECT id FROM files ORDER BY taken_at DESC LIMIT 200)");
+        bench(
+            "최신 200장",
+            "SELECT COUNT(*) FROM (SELECT id FROM files ORDER BY taken_at DESC LIMIT 200)",
+        );
         bench("RAW만", "SELECT COUNT(*) FROM files WHERE kind=2");
-        bench("GPS 있는 것", "SELECT COUNT(*) FROM files WHERE gps_lat IS NOT NULL");
+        bench(
+            "GPS 있는 것",
+            "SELECT COUNT(*) FROM files WHERE gps_lat IS NOT NULL",
+        );
         bench("카메라별", "SELECT COUNT(DISTINCT cam_model) FROM files");
 
         // 촬영일 출처 분포 — 폴백 체인이 실제로 어떻게 작동했는지
@@ -969,7 +1037,12 @@ mod real {
         let p = scan_test(&db, root, 1, |_| {}).expect("스캔");
         let scan_s = t0.elapsed().as_secs_f64();
         println!("\n═══ 1단계 스캔 ═══");
-        println!("  {}장 · {:.1}초 · {:.0}장/초", p.found, scan_s, p.found as f64 / scan_s);
+        println!(
+            "  {}장 · {:.1}초 · {:.0}장/초",
+            p.found,
+            scan_s,
+            p.found as f64 / scan_s
+        );
 
         let vol = crate::db::volumes::describe(root).unwrap();
         let lib: i64 = db
@@ -978,25 +1051,49 @@ mod real {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let t1 = std::time::Instant::now();
         let last = std::sync::Mutex::new(std::time::Instant::now());
-        let tp = thumbs::generate(&db, lib, &vol.mount_path, &tmp.path().join("cache"), cancel, |pr| {
-            let mut l = last.lock().unwrap();
-            if l.elapsed().as_secs() >= 5 {
-                eprintln!("   썸네일 {}/{} · {:.0}s", pr.done, pr.total, t1.elapsed().as_secs_f64());
-                *l = std::time::Instant::now();
-            }
-        })
+        let tp = thumbs::generate(
+            &db,
+            lib,
+            &vol.mount_path,
+            &tmp.path().join("cache"),
+            cancel,
+            |pr| {
+                let mut l = last.lock().unwrap();
+                if l.elapsed().as_secs() >= 5 {
+                    eprintln!(
+                        "   썸네일 {}/{} · {:.0}s",
+                        pr.done,
+                        pr.total,
+                        t1.elapsed().as_secs_f64()
+                    );
+                    *l = std::time::Instant::now();
+                }
+            },
+        )
         .expect("썸네일");
         let thumb_s = t1.elapsed().as_secs_f64();
 
         println!("\n═══ 2단계 썸네일 ═══");
-        println!("  대상 {}장 · 성공 {} · 실패 {}", tp.total, tp.done - tp.failed, tp.failed);
-        println!("  {:.1}초 · {:.0}장/초 · {:.1}ms/장",
-                 thumb_s, tp.total as f64 / thumb_s, thumb_s * 1000.0 / tp.total as f64);
+        println!(
+            "  대상 {}장 · 성공 {} · 실패 {}",
+            tp.total,
+            tp.done - tp.failed,
+            tp.failed
+        );
+        println!(
+            "  {:.1}초 · {:.0}장/초 · {:.1}ms/장",
+            thumb_s,
+            tp.total as f64 / thumb_s,
+            thumb_s * 1000.0 / tp.total as f64
+        );
 
         let (bytes, count) = crate::media::cache::cache_stats(&tmp.path().join("cache"));
-        println!("  캐시 {}개 · {:.0} MB (원본 대비 {:.1}%)",
-                 count, bytes as f64 / 1024.0 / 1024.0,
-                 bytes as f64 / 373.5 / 1024.0 / 1024.0 / 1024.0 * 100.0);
+        println!(
+            "  캐시 {}개 · {:.0} MB (원본 대비 {:.1}%)",
+            count,
+            bytes as f64 / 1024.0 / 1024.0,
+            bytes as f64 / 373.5 / 1024.0 / 1024.0 / 1024.0 * 100.0
+        );
         println!("\n  전체 {:.1}초\n", scan_s + thumb_s);
     }
 }

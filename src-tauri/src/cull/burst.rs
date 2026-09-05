@@ -114,25 +114,32 @@ pub fn scan(db: &Db, gap_secs: i64) -> Result<BurstProgress> {
             // 대표 고르기 — 선명도가 있으면 그것, 없으면 용량
             let best = g
                 .iter()
-                .max_by(|a, b| {
-                    match (a.sharpness, b.sharpness) {
-                        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
-                        (Some(_), None) => std::cmp::Ordering::Greater,
-                        (None, Some(_)) => std::cmp::Ordering::Less,
-                        (None, None) => a.size.cmp(&b.size),
-                    }
+                .max_by(|a, b| match (a.sharpness, b.sharpness) {
+                    (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+                    (Some(_), None) => std::cmp::Ordering::Greater,
+                    (None, Some(_)) => std::cmp::Ordering::Less,
+                    (None, None) => a.size.cmp(&b.size),
                 })
                 .map(|r| r.id)
                 .unwrap_or(g[0].id);
 
             for r in g {
-                ins_m.execute(rusqlite::params![gid, r.id, (r.id == best) as i32, r.sharpness])?;
+                ins_m.execute(rusqlite::params![
+                    gid,
+                    r.id,
+                    (r.id == best) as i32,
+                    r.sharpness
+                ])?;
             }
         }
         Ok(())
     })?;
 
-    Ok(BurstProgress { groups: groups.len(), photos, reclaimable })
+    Ok(BurstProgress {
+        groups: groups.len(),
+        photos,
+        reclaimable,
+    })
 }
 
 #[cfg(test)]
@@ -144,7 +151,10 @@ mod tests {
     fn seed(db: &Db, items: &[(i64, i64, i64, i64, Option<f64>)]) {
         // (id, folder_id, taken_at, size, sharpness)
         db.transaction(|tx| {
-            tx.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')", [])?;
+            tx.execute(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')",
+                [],
+            )?;
             for fid in [1i64, 2] {
                 tx.execute(
                     "INSERT INTO folders(id,volume_uuid,rel_path,name,area)
@@ -174,13 +184,16 @@ mod tests {
     #[test]
     fn groups_photos_taken_close_together() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, 1, 1000, 100, None),
-            (2, 1, 1003, 100, None),
-            (3, 1, 1005, 100, None),
-            // 한참 뒤 — 다른 순간
-            (4, 1, 5000, 100, None),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, 1, 1000, 100, None),
+                (2, 1, 1003, 100, None),
+                (3, 1, 1005, 100, None),
+                // 한참 뒤 — 다른 순간
+                (4, 1, 5000, 100, None),
+            ],
+        );
         let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.groups, 1);
         assert_eq!(p.photos, 3);
@@ -198,12 +211,15 @@ mod tests {
     fn does_not_cross_folders() {
         let (_d, db) = db();
         // 시각은 가깝지만 폴더가 다르다
-        seed(&db, &[
-            (1, 1, 1000, 100, None),
-            (2, 1, 1001, 100, None),
-            (3, 2, 1002, 100, None),
-            (4, 2, 1003, 100, None),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, 1, 1000, 100, None),
+                (2, 1, 1001, 100, None),
+                (3, 2, 1002, 100, None),
+                (4, 2, 1003, 100, None),
+            ],
+        );
         let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.groups, 0, "폴더가 다르면 묶지 않는다");
     }
@@ -212,7 +228,9 @@ mod tests {
     fn a_long_sequence_stays_one_group() {
         let (_d, db) = db();
         // 3초 간격으로 10장 — 전체 27초지만 연속이므로 한 그룹
-        let items: Vec<_> = (1..=10).map(|i| (i, 1i64, 1000 + i * 3, 100i64, None)).collect();
+        let items: Vec<_> = (1..=10)
+            .map(|i| (i, 1i64, 1000 + i * 3, 100i64, None))
+            .collect();
         seed(&db, &items);
         let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.groups, 1);
@@ -222,15 +240,22 @@ mod tests {
     #[test]
     fn sharpest_is_picked_as_best() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, 1, 1000, 100, Some(10.0)),
-            (2, 1, 1002, 100, Some(90.0)), // 가장 선명
-            (3, 1, 1004, 100, Some(50.0)),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, 1, 1000, 100, Some(10.0)),
+                (2, 1, 1002, 100, Some(90.0)), // 가장 선명
+                (3, 1, 1004, 100, Some(50.0)),
+            ],
+        );
         scan(&db, DEFAULT_GAP_SECS).unwrap();
         let best: i64 = db
             .read(|c| {
-                c.query_row("SELECT file_id FROM group_members WHERE is_best=1", [], |r| r.get(0))
+                c.query_row(
+                    "SELECT file_id FROM group_members WHERE is_best=1",
+                    [],
+                    |r| r.get(0),
+                )
             })
             .unwrap();
         assert_eq!(best, 2);
@@ -239,15 +264,22 @@ mod tests {
     #[test]
     fn falls_back_to_size_without_sharpness() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, 1, 1000, 100, None),
-            (2, 1, 1002, 900, None), // 가장 큼
-            (3, 1, 1004, 300, None),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, 1, 1000, 100, None),
+                (2, 1, 1002, 900, None), // 가장 큼
+                (3, 1, 1004, 300, None),
+            ],
+        );
         scan(&db, DEFAULT_GAP_SECS).unwrap();
         let best: i64 = db
             .read(|c| {
-                c.query_row("SELECT file_id FROM group_members WHERE is_best=1", [], |r| r.get(0))
+                c.query_row(
+                    "SELECT file_id FROM group_members WHERE is_best=1",
+                    [],
+                    |r| r.get(0),
+                )
             })
             .unwrap();
         assert_eq!(best, 2, "선명도가 없으면 용량이 큰 쪽");
@@ -256,11 +288,14 @@ mod tests {
     #[test]
     fn reclaimable_keeps_the_largest() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, 1, 1000, 100, None),
-            (2, 1, 1002, 500, None),
-            (3, 1, 1004, 300, None),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, 1, 1000, 100, None),
+                (2, 1, 1002, 500, None),
+                (3, 1, 1004, 300, None),
+            ],
+        );
         let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.reclaimable, 400, "900 - 500(남길 것)");
     }
@@ -268,24 +303,34 @@ mod tests {
     #[test]
     fn gap_setting_changes_grouping() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, 1, 1000, 100, None),
-            (2, 1, 1020, 100, None),
-            (3, 1, 1040, 100, None),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, 1, 1000, 100, None),
+                (2, 1, 1020, 100, None),
+                (3, 1, 1040, 100, None),
+            ],
+        );
         // 간격 10초면 따로따로
         assert_eq!(scan(&db, 10).unwrap().groups, 0);
         // 30초면 한 그룹
         assert_eq!(scan(&db, 30).unwrap().groups, 1);
     }
 
-
     #[test]
     fn file_time_stamps_are_not_a_burst() {
         let (_d, db) = db();
-        seed(&db, &[(1, 1, 1000, 100, None), (2, 1, 1000, 100, None), (3, 1, 1000, 100, None)]);
+        seed(
+            &db,
+            &[
+                (1, 1, 1000, 100, None),
+                (2, 1, 1000, 100, None),
+                (3, 1, 1000, 100, None),
+            ],
+        );
         // 셋 다 촬영 시각이 파일 시각(복사한 날)에서 왔다 — 같은 초여도 «순간»이 아니다
-        db.write(|c| c.execute("UPDATE files SET taken_at_source = 2", [])).unwrap();
+        db.write(|c| c.execute("UPDATE files SET taken_at_source = 2", []))
+            .unwrap();
         let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
         assert_eq!(p.groups, 0);
     }
@@ -293,10 +338,16 @@ mod tests {
     #[test]
     fn a_run_larger_than_max_group_is_not_a_burst() {
         let (_d, db) = db();
-        let items: Vec<(i64, i64, i64, i64, Option<f64>)> =
-            (1..=(MAX_GROUP as i64 + 1)).map(|i| (i, 1, 1000 + i, 100, None)).collect();
+        let items: Vec<(i64, i64, i64, i64, Option<f64>)> = (1..=(MAX_GROUP as i64 + 1))
+            .map(|i| (i, 1, 1000 + i, 100, None))
+            .collect();
         seed(&db, &items);
         let p = scan(&db, DEFAULT_GAP_SECS).unwrap();
-        assert_eq!(p.groups, 0, "{}장은 연사가 아니라 시각이 뭉개진 것", MAX_GROUP + 1);
+        assert_eq!(
+            p.groups,
+            0,
+            "{}장은 연사가 아니라 시각이 뭉개진 것",
+            MAX_GROUP + 1
+        );
     }
 }

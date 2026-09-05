@@ -40,7 +40,10 @@ fn jobs(db: &Db, cache_base: &Path) -> Result<Vec<Job>> {
     })?;
     Ok(rows
         .into_iter()
-        .map(|(id, lib, rel)| Job { id, thumb: cache::cache_root(cache_base, lib).join(rel) })
+        .map(|(id, lib, rel)| Job {
+            id,
+            thumb: cache::cache_root(cache_base, lib).join(rel),
+        })
         .collect())
 }
 
@@ -57,7 +60,10 @@ pub fn run(
     on_progress: impl Fn(&EmbedProgress) + Sync + Send,
 ) -> Result<EmbedProgress> {
     let list = jobs(db, cache_base)?;
-    let progress = Mutex::new(EmbedProgress { total: list.len(), ..Default::default() });
+    let progress = Mutex::new(EmbedProgress {
+        total: list.len(),
+        ..Default::default()
+    });
     on_progress(&progress.lock().unwrap().clone());
     if list.is_empty() {
         return Ok(progress.into_inner().unwrap());
@@ -77,7 +83,10 @@ pub fn run(
 
         let mut out: Vec<(i64, Vec<u8>)> = Vec::with_capacity(chunk.len());
         let mut failed = pre.iter().filter(|(_, v)| v.is_none()).count();
-        let good: Vec<(i64, Vec<f32>)> = pre.into_iter().filter_map(|(id, v)| v.map(|v| (id, v))).collect();
+        let good: Vec<(i64, Vec<f32>)> = pre
+            .into_iter()
+            .filter_map(|(id, v)| v.map(|v| (id, v)))
+            .collect();
         for b in good.chunks(BATCH) {
             let inputs: Vec<Vec<f32>> = b.iter().map(|(_, v)| v.clone()).collect();
             match clip.embed(&inputs) {
@@ -143,7 +152,10 @@ mod tests {
         let base = PathBuf::from(&home).join("Library/Application Support/com.acut.media");
         // ACUT_CLIP_MODEL=vision_model_fp16.onnx ACUT_CLIP_BATCH=32 로 바꿔 잰다
         let name = std::env::var("ACUT_CLIP_MODEL").unwrap_or_else(|_| "vision_model.onnx".into());
-        let batch: usize = std::env::var("ACUT_CLIP_BATCH").ok().and_then(|s| s.parse().ok()).unwrap_or(BATCH);
+        let batch: usize = std::env::var("ACUT_CLIP_BATCH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(BATCH);
         let model = base.join("models/clip-vit-b32").join(&name);
         if !model.is_file() {
             eprintln!("모델 없음 — 건너뜀");
@@ -153,7 +165,9 @@ mod tests {
         let mut files = Vec::new();
         for lib in std::fs::read_dir(base.join("thumbs")).unwrap().flatten() {
             // .DS_Store 같은 파일이 섞여 있을 수 있다
-            let Ok(shards) = std::fs::read_dir(lib.path()) else { continue };
+            let Ok(shards) = std::fs::read_dir(lib.path()) else {
+                continue;
+            };
             for shard in shards.flatten() {
                 if let Ok(rd) = std::fs::read_dir(shard.path()) {
                     for f in rd.flatten() {
@@ -179,7 +193,10 @@ mod tests {
         }
         let clip = Clip::load(&model).unwrap();
         let t0 = Instant::now();
-        let pre: Vec<Vec<f32>> = files.par_iter().filter_map(|p| Clip::preprocess(p).ok()).collect();
+        let pre: Vec<Vec<f32>> = files
+            .par_iter()
+            .filter_map(|p| Clip::preprocess(p).ok())
+            .collect();
         let t_pre = t0.elapsed();
         let t1 = Instant::now();
         let mut n = 0;

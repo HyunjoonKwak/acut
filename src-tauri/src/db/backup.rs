@@ -51,7 +51,12 @@ pub fn make(db: &Db, dir: &Path, now: i64) -> Result<Backup> {
         .map_err(|e| DbError::Invalid(format!("만든 백업 파일 정보를 읽다가 실패했습니다: {e}")))?
         .len();
     prune(dir, KEEP)?;
-    Ok(Backup { path, name, bytes, made_at: now })
+    Ok(Backup {
+        path,
+        name,
+        bytes,
+        made_at: now,
+    })
 }
 
 /// 앱을 켤 때 부른다 — 마지막 사본이 이보다 오래됐으면 한 벌 더 뜬다.
@@ -85,7 +90,9 @@ pub fn restore(db: &Db, dir: &Path, from: &Path, now: i64) -> Result<Backup> {
 /// 있는 백업들 — 최신 것부터.
 pub fn list(dir: &Path) -> Result<Vec<Backup>> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir) else { return Ok(out) };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Ok(out);
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if !(name.starts_with("acut-") && name.ends_with(".db")) {
@@ -94,7 +101,12 @@ pub fn list(dir: &Path) -> Result<Vec<Backup>> {
         let Ok(md) = e.metadata() else { continue };
         // 만든 시각은 이름에서 읽는다. 파일 mtime은 복사·동기화로 바뀐다.
         let made_at = parse_stamp(&name).unwrap_or(0);
-        out.push(Backup { path: e.path(), name, bytes: md.len(), made_at });
+        out.push(Backup {
+            path: e.path(),
+            name,
+            bytes: md.len(),
+            made_at,
+        });
     }
     // 이름에 시각이 있어 이름 내림차순이 곧 최신순이다
     out.sort_by(|a, b| b.name.cmp(&a.name));
@@ -134,7 +146,9 @@ mod tests {
 
         let copy = rusqlite::Connection::open(&b.path).unwrap();
         let n: i64 = copy
-            .query_row("SELECT COUNT(*) FROM tags WHERE name='여행'", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM tags WHERE name='여행'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(n, 1);
     }
@@ -193,7 +207,9 @@ mod tests {
         assert!(safety.path.is_file());
         // 안전 사본에는 되돌리기 직전(둘)이 들어 있다
         let c = rusqlite::Connection::open(&safety.path).unwrap();
-        let m: i64 = c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
+        let m: i64 = c
+            .query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(m, 2);
         // 되돌린 뒤에도 계속 쓸 수 있다
         db.write(|c| c.execute("INSERT INTO tags(name) VALUES('생일')", []))
@@ -215,10 +231,18 @@ mod tests {
         let (d, db) = seeded();
         let dir = d.path().join("backups");
         let t = 1_724_716_800;
-        assert!(make_if_stale(&db, &dir, t).unwrap().is_some(), "처음엔 뜬다");
-        assert!(make_if_stale(&db, &dir, t + 3600).unwrap().is_none(), "한 시간 뒤엔 안 뜬다");
         assert!(
-            make_if_stale(&db, &dir, t + AUTO_EVERY_SECS + 1).unwrap().is_some(),
+            make_if_stale(&db, &dir, t).unwrap().is_some(),
+            "처음엔 뜬다"
+        );
+        assert!(
+            make_if_stale(&db, &dir, t + 3600).unwrap().is_none(),
+            "한 시간 뒤엔 안 뜬다"
+        );
+        assert!(
+            make_if_stale(&db, &dir, t + AUTO_EVERY_SECS + 1)
+                .unwrap()
+                .is_some(),
             "하루 지나면 뜬다"
         );
         assert_eq!(list(&dir).unwrap().len(), 2);

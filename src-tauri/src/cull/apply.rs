@@ -30,7 +30,9 @@ pub fn apply_groups(tx: &Transaction, group_ids: &[i64]) -> rusqlite::Result<(us
     let mut rejected = 0;
     for gid in group_ids {
         let Some(kind) = tx
-            .query_row("SELECT kind FROM groups WHERE id=?1", [gid], |r| r.get::<_, i32>(0))
+            .query_row("SELECT kind FROM groups WHERE id=?1", [gid], |r| {
+                r.get::<_, i32>(0)
+            })
             .optional()?
         else {
             continue;
@@ -51,7 +53,10 @@ pub fn apply_groups(tx: &Transaction, group_ids: &[i64]) -> rusqlite::Result<(us
                 [gid],
             )?;
         }
-        tx.execute("UPDATE groups SET state = 1, done_at = strftime('%s','now') WHERE id = ?1", [gid])?;
+        tx.execute(
+            "UPDATE groups SET state = 1, done_at = strftime('%s','now') WHERE id = ?1",
+            [gid],
+        )?;
     }
     Ok((kept, rejected))
 }
@@ -68,7 +73,10 @@ pub fn unapply_groups(tx: &Transaction, group_ids: &[i64]) -> rusqlite::Result<u
                AND id IN (SELECT file_id FROM group_members WHERE group_id = ?1)",
             [gid],
         )?;
-        tx.execute("UPDATE groups SET state = 0, done_at = NULL WHERE id = ?1", [gid])?;
+        tx.execute(
+            "UPDATE groups SET state = 0, done_at = NULL WHERE id = ?1",
+            [gid],
+        )?;
     }
     Ok(n)
 }
@@ -103,7 +111,8 @@ pub fn apply_all(
                  WHERE m.group_id = g.id AND m.is_best = 0 AND fo.library_id = ?3))",
         params![kind, folder_id, library_id],
     )?;
-    let total = tx.query_row("SELECT COUNT(*) FROM temp.todo", [], |r| r.get::<_, i64>(0))? as usize;
+    let total =
+        tx.query_row("SELECT COUNT(*) FROM temp.todo", [], |r| r.get::<_, i64>(0))? as usize;
     // 잡동사니는 무리가 «사유»별이라 수천 장이 한 무리다 — 정착 구역 한 장 때문에 무리째
     // 건너뛰면 버튼이 영영 먹통이다. 구성원 단위로 정착 구역만 빼고 나머지는 표시한다 (리뷰 H7)
     let skipped = if skip_settled && kind == 1 {
@@ -136,7 +145,11 @@ pub fn apply_all(
         .map(|n| n as usize)
     };
     let (kept, rejected) = if kind == 1 {
-        let area = if skip_settled { " AND fo.area NOT IN (1, 2)" } else { "" };
+        let area = if skip_settled {
+            " AND fo.area NOT IN (1, 2)"
+        } else {
+            ""
+        };
         let all = tx.query_row(
             &format!(
                 "SELECT COUNT(DISTINCT m.file_id) FROM group_members m
@@ -195,7 +208,12 @@ pub fn apply_all(
     tx.execute_batch("DROP TABLE temp.todo;")?;
     // 잡동사니의 skipped 는 «건너뛴 사진 수», 나머지 갈래는 «건너뛴 무리 수»
     let groups = if kind == 1 { total } else { total - skipped };
-    Ok(ApplyAll { groups, kept, rejected, skipped })
+    Ok(ApplyAll {
+        groups,
+        kept,
+        rejected,
+        skipped,
+    })
 }
 
 #[cfg(test)]
@@ -237,15 +255,33 @@ mod tests {
     #[test]
     fn applies_groups_whose_copies_are_outside_settled_areas() {
         let (_d, db) = setup(false);
-        let dry = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
-        assert_eq!(dry, ApplyAll { groups: 1, kept: 1, rejected: 2, skipped: 0 });
+        let dry = db
+            .transaction(|tx| apply_all(tx, 0, true, true, None, None))
+            .unwrap();
+        assert_eq!(
+            dry,
+            ApplyAll {
+                groups: 1,
+                kept: 1,
+                rejected: 2,
+                skipped: 0
+            }
+        );
         // dry_run 은 아무것도 바꾸지 않는다
         let flagged: i64 = db
-            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE culling_flag <> 0", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM files WHERE culling_flag <> 0",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(flagged, 0);
 
-        let real = db.transaction(|tx| apply_all(tx, 0, true, false, None, None)).unwrap();
+        let real = db
+            .transaction(|tx| apply_all(tx, 0, true, false, None, None))
+            .unwrap();
         assert_eq!(real, dry);
         let (kept, rejected): (i64, i64) = db
             .read(|c| {
@@ -258,7 +294,9 @@ mod tests {
             .unwrap();
         assert_eq!((kept, rejected), (1, 2));
         // 두 번째는 할 것이 없다
-        let again = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
+        let again = db
+            .transaction(|tx| apply_all(tx, 0, true, true, None, None))
+            .unwrap();
         assert_eq!(again.groups, 0);
     }
 
@@ -267,13 +305,24 @@ mod tests {
     fn explicit_apply_rejects_settled_and_kept_copies_too() {
         let (_d, db) = setup(true);
         // 한꺼번에는 건너뛰는 무리 — b/ 에 제외될 사본이 있다
-        let dry = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
+        let dry = db
+            .transaction(|tx| apply_all(tx, 0, true, true, None, None))
+            .unwrap();
         assert_eq!(dry.skipped, 1);
         // 폴더 비교가 남긴 쪽에 붙이듯 전부 «남김»으로
-        db.write(|c| c.execute("UPDATE files SET culling_flag = 1", [])).unwrap();
-        let gid: i64 = db.read(|c| c.query_row("SELECT id FROM groups", [], |r| r.get(0))).unwrap();
-        let (kept, rejected) = db.transaction(|tx| apply_groups(tx, &[gid, 9_999])).unwrap();
-        assert_eq!((kept, rejected), (1, 3), "대표 하나만 남고 셋은 제외 — 없는 무리는 건너뛴다");
+        db.write(|c| c.execute("UPDATE files SET culling_flag = 1", []))
+            .unwrap();
+        let gid: i64 = db
+            .read(|c| c.query_row("SELECT id FROM groups", [], |r| r.get(0)))
+            .unwrap();
+        let (kept, rejected) = db
+            .transaction(|tx| apply_groups(tx, &[gid, 9_999]))
+            .unwrap();
+        assert_eq!(
+            (kept, rejected),
+            (1, 3),
+            "대표 하나만 남고 셋은 제외 — 없는 무리는 건너뛴다"
+        );
         let (b_rejected, state): (i64, i64) = db
             .read(|c| {
                 c.query_row(
@@ -293,7 +342,9 @@ mod tests {
     #[test]
     fn unapply_reopens_the_group_and_clears_its_marks() {
         let (_d, db) = setup(false);
-        let gid: i64 = db.read(|c| c.query_row("SELECT id FROM groups", [], |r| r.get(0))).unwrap();
+        let gid: i64 = db
+            .read(|c| c.query_row("SELECT id FROM groups", [], |r| r.get(0)))
+            .unwrap();
         db.transaction(|tx| apply_groups(tx, &[gid])).unwrap();
         let n = db.transaction(|tx| unapply_groups(tx, &[gid])).unwrap();
         assert_eq!(n, 3, "남김 하나 + 제외 둘");
@@ -313,13 +364,32 @@ mod tests {
     #[test]
     fn skips_groups_with_a_settled_copy_to_reject() {
         let (_d, db) = setup(true);
-        let r = db.transaction(|tx| apply_all(tx, 0, true, true, None, None)).unwrap();
-        assert_eq!(r, ApplyAll { groups: 0, kept: 0, rejected: 0, skipped: 1 });
+        let r = db
+            .transaction(|tx| apply_all(tx, 0, true, true, None, None))
+            .unwrap();
+        assert_eq!(
+            r,
+            ApplyAll {
+                groups: 0,
+                kept: 0,
+                rejected: 0,
+                skipped: 1
+            }
+        );
         // 건너뛰지 않으면 확정된다 — 대표는 b 의 이른 것, 나머지 셋은 제외
-        let r = db.transaction(|tx| apply_all(tx, 0, false, true, None, None)).unwrap();
-        assert_eq!(r, ApplyAll { groups: 1, kept: 1, rejected: 3, skipped: 0 });
+        let r = db
+            .transaction(|tx| apply_all(tx, 0, false, true, None, None))
+            .unwrap();
+        assert_eq!(
+            r,
+            ApplyAll {
+                groups: 1,
+                kept: 1,
+                rejected: 3,
+                skipped: 0
+            }
+        );
     }
-
 
     /// 「줄인 사본」(kind 4)에도 정착 구역 안전판이 그대로 걸린다.
     ///
@@ -346,11 +416,18 @@ mod tests {
         })
         .unwrap();
         // 뺄 것이 공용에 있으므로 건너뛴다
-        let r = db.transaction(|tx| apply_all(tx, 4, true, true, None, None)).unwrap();
-        assert_eq!(r.groups, 0, "정착 구역의 사본을 빼려는 무리는 건너뛰어야 한다");
+        let r = db
+            .transaction(|tx| apply_all(tx, 4, true, true, None, None))
+            .unwrap();
+        assert_eq!(
+            r.groups, 0,
+            "정착 구역의 사본을 빼려는 무리는 건너뛰어야 한다"
+        );
         assert_eq!(r.skipped, 1);
         // 안전판을 끄면 확정된다 — 규칙이 «건너뛴다»이지 «무리가 없다»가 아님을 못 박는다
-        let r = db.transaction(|tx| apply_all(tx, 4, false, true, None, None)).unwrap();
+        let r = db
+            .transaction(|tx| apply_all(tx, 4, false, true, None, None))
+            .unwrap();
         assert_eq!((r.groups, r.kept, r.rejected), (1, 1, 1));
     }
 
@@ -358,12 +435,25 @@ mod tests {
     fn never_demotes_a_kept_file() {
         let (_d, db) = setup(false);
         // a 의 사본 하나가 다른 무리의 대표라 이미 «남김»이다
-        db.write(|c| c.execute("UPDATE files SET culling_flag = 1 WHERE name = 'copy.jpg'", []))
+        db.write(|c| {
+            c.execute(
+                "UPDATE files SET culling_flag = 1 WHERE name = 'copy.jpg'",
+                [],
+            )
+        })
+        .unwrap();
+        let r = db
+            .transaction(|tx| apply_all(tx, 0, true, false, None, None))
             .unwrap();
-        let r = db.transaction(|tx| apply_all(tx, 0, true, false, None, None)).unwrap();
         assert_eq!(r.groups, 1);
         let flag: i32 = db
-            .read(|c| c.query_row("SELECT culling_flag FROM files WHERE name = 'copy.jpg'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT culling_flag FROM files WHERE name = 'copy.jpg'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(flag, 1, "남김은 어느 갈래에서도 제외로 내리지 않는다");
     }

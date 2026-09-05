@@ -161,7 +161,9 @@ pub async fn cull_scan_kind(app: AppHandle, kind: i32) -> Result<(), String> {
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
     let cache_base = state.cache_base.clone();
-    let Some(guard) = job::try_start_wait(&state.running, "고르기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) =
+        job::try_start_wait(&state.running, "고르기", std::time::Duration::from_secs(20))
+    else {
         return Err("다른 일이 도는 중입니다 — 끝난 뒤 다시 눌러 주세요".into());
     };
     cancel.store(false, Ordering::Relaxed);
@@ -183,7 +185,9 @@ pub async fn cull_scan(app: AppHandle) -> Result<(), String> {
     let cache_base = state.cache_base.clone();
     // 스캔·벡터와 같은 스위치 — 같이 돌면 DB와 디스크를 다툰다. 상태바에 보이고
     // 창이 뒤로 가도 App Nap에 걸리지 않는다 (해시는 한 시간도 걸린다).
-    let Some(guard) = job::try_start_wait(&state.running, "고르기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) =
+        job::try_start_wait(&state.running, "고르기", std::time::Duration::from_secs(20))
+    else {
         return Err("다른 일이 도는 중입니다 — 끝난 뒤 «다시 찾기»를 눌러 주세요".into());
     };
     cancel.store(false, Ordering::Relaxed);
@@ -220,7 +224,11 @@ pub async fn cull_groups(
     let settled = settled.unwrap_or(false);
     // «처리됨 보기» — 확정한 무리를 최근 순으로. 앱을 껐다 켜도 남는다 (2026-08-31)
     let done = done.unwrap_or(false);
-    let (want_state, order) = if done { (1, "g.done_at DESC, g.id DESC") } else { (0, "g.size_bytes DESC") };
+    let (want_state, order) = if done {
+        (1, "g.done_at DESC, g.id DESC")
+    } else {
+        (0, "g.size_bytes DESC")
+    };
     state
         .db
         .read(|c| {
@@ -249,7 +257,14 @@ pub async fn cull_groups(
                  LIMIT ?2 OFFSET ?3"
             ))?;
             let it = st.query_map(
-                rusqlite::params![kind, limit as i64, offset as i64, settled as i32, library_id, want_state],
+                rusqlite::params![
+                    kind,
+                    limit as i64,
+                    offset as i64,
+                    settled as i32,
+                    library_id,
+                    want_state
+                ],
                 |r| {
                     Ok(GroupRow {
                         id: r.get(0)?,
@@ -271,7 +286,10 @@ pub async fn cull_groups(
 
 /// 그룹 하나의 구성원. 대표가 맨 앞에 온다.
 #[tauri::command]
-pub async fn cull_members(state: State<'_, AppState>, group_id: i64) -> Result<Vec<MemberRow>, String> {
+pub async fn cull_members(
+    state: State<'_, AppState>,
+    group_id: i64,
+) -> Result<Vec<MemberRow>, String> {
     state
         .db
         .read(|c| {
@@ -338,7 +356,10 @@ pub async fn cull_set_best(
             if member == 0 {
                 return Err(rusqlite::Error::QueryReturnedNoRows);
             }
-            tx.execute("UPDATE group_members SET is_best=0 WHERE group_id=?1", [group_id])?;
+            tx.execute(
+                "UPDATE group_members SET is_best=0 WHERE group_id=?1",
+                [group_id],
+            )?;
             tx.execute(
                 "UPDATE group_members SET is_best=1 WHERE group_id=?1 AND file_id=?2",
                 rusqlite::params![group_id, file_id],
@@ -363,20 +384,34 @@ pub struct ApplyResult {
 /// 따로 확인한 뒤에 한다. 잘못 눌러도 되돌릴 수 있어야 한다.
 /// 사람이 보고 누른 것이라 정착 구역·«남김» 도 넘어선다 — 규칙은 [`apply::apply_groups`].
 #[tauri::command]
-pub async fn cull_apply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<ApplyResult, String> {
+pub async fn cull_apply(
+    state: State<'_, AppState>,
+    group_ids: Vec<i64>,
+) -> Result<ApplyResult, String> {
     if group_ids.is_empty() {
-        return Ok(ApplyResult { kept: 0, rejected: 0, skipped: 0 });
+        return Ok(ApplyResult {
+            kept: 0,
+            rejected: 0,
+            skipped: 0,
+        });
     }
     let (kept, rejected) = state
         .db
         .transaction(|tx| apply::apply_groups(tx, &group_ids))
         .map_err(err)?;
-    Ok(ApplyResult { kept, rejected, skipped: 0 })
+    Ok(ApplyResult {
+        kept,
+        rejected,
+        skipped: 0,
+    })
 }
 
 /// 확정을 무리 단위로 되돌린다 — «↩ 확정 취소» (규칙은 [`apply::unapply_groups`])
 #[tauri::command]
-pub async fn cull_unapply(state: State<'_, AppState>, group_ids: Vec<i64>) -> Result<usize, String> {
+pub async fn cull_unapply(
+    state: State<'_, AppState>,
+    group_ids: Vec<i64>,
+) -> Result<usize, String> {
     state
         .db
         .transaction(|tx| apply::unapply_groups(tx, &group_ids))
@@ -391,7 +426,10 @@ pub struct ScopeCount {
 }
 
 #[tauri::command]
-pub async fn cull_scope_counts(state: State<'_, AppState>, kind: i32) -> Result<Vec<ScopeCount>, String> {
+pub async fn cull_scope_counts(
+    state: State<'_, AppState>,
+    kind: i32,
+) -> Result<Vec<ScopeCount>, String> {
     state
         .db
         .read(|c| {
@@ -403,7 +441,10 @@ pub async fn cull_scope_counts(state: State<'_, AppState>, kind: i32) -> Result<
                  GROUP BY fo.library_id",
             )?;
             let it = st.query_map([kind], |r| {
-                Ok(ScopeCount { library_id: r.get(0)?, groups: r.get(1)? })
+                Ok(ScopeCount {
+                    library_id: r.get(0)?,
+                    groups: r.get(1)?,
+                })
             })?;
             it.collect::<rusqlite::Result<Vec<_>>>()
         })
@@ -450,7 +491,10 @@ pub async fn cull_folder_set_unapply(
     state: State<'_, AppState>,
     folder_ids: Vec<i64>,
 ) -> Result<(usize, usize), String> {
-    state.db.transaction(|tx| folders::unapply_folders(tx, &folder_ids)).map_err(err)
+    state
+        .db
+        .transaction(|tx| folders::unapply_folders(tx, &folder_ids))
+        .map_err(err)
 }
 
 /// 두 폴더 비교의 «전부» — (남길 폴더, 지울 폴더) 짝 목록을 한 트랜잭션에.
@@ -463,14 +507,21 @@ pub async fn cull_folder_pairs_apply(
         return Ok(folders::PairsApplied::default());
     }
     let pairs: Vec<(Vec<i64>, Vec<i64>)> = pairs.into_iter().map(|p| (p.keep, p.drop)).collect();
-    state.db.transaction(|tx| folders::apply_pairs(tx, &pairs)).map_err(err)
+    state
+        .db
+        .transaction(|tx| folders::apply_pairs(tx, &pairs))
+        .map_err(err)
 }
 
 /// 두 나무의 해시 없는 사진에 해시를 붙인다 — 비교가 «똑같음»을 가릴 수 있게
 #[tauri::command]
 pub async fn cull_hash_folders(app: AppHandle, folder_ids: Vec<i64>) -> Result<usize, String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start_wait(&state.running, "해시 계산", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "해시 계산",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -492,7 +543,10 @@ pub async fn cull_folder_pair_photos(
     a_ids: Vec<i64>,
     b_ids: Vec<i64>,
 ) -> Result<folders::PairPhotos, String> {
-    state.db.read(|c| folders::pair_photos(c, &a_ids, &b_ids)).map_err(err)
+    state
+        .db
+        .read(|c| folders::pair_photos(c, &a_ids, &b_ids))
+        .map_err(err)
 }
 
 /// 두 폴더 비교의 짝 하나 — 남길 쪽 폴더 행들과 제외할 쪽 폴더 행들(하위 폴더 포함)
@@ -504,8 +558,13 @@ pub struct PairIds {
 
 /// 폴더 비교 — 내용이 완전히 같은 폴더 묶음들.
 #[tauri::command]
-pub async fn cull_folder_sets(state: State<'_, AppState>) -> Result<Vec<folders::FolderSet>, String> {
-    state.db.read(|c| folders::identical_sets(c, 5000)).map_err(err)
+pub async fn cull_folder_sets(
+    state: State<'_, AppState>,
+) -> Result<Vec<folders::FolderSet>, String> {
+    state
+        .db
+        .read(|c| folders::identical_sets(c, 5000))
+        .map_err(err)
 }
 
 /// 두 폴더 비교 — A·B 아래 폴더들을 내용으로 짝짓는다.
@@ -611,7 +670,10 @@ mod tests {
             scan_plan(KIND_DUP),
             Some(&[KIND_DUP, KIND_RESIZED, KIND_SCENE][..])
         );
-        assert_eq!(scan_plan(KIND_RESIZED), Some(&[KIND_RESIZED, KIND_SCENE][..]));
+        assert_eq!(
+            scan_plan(KIND_RESIZED),
+            Some(&[KIND_RESIZED, KIND_SCENE][..])
+        );
         assert_eq!(scan_plan(KIND_SCENE), Some(&[KIND_SCENE][..]));
         assert_eq!(scan_plan(99), None);
     }
@@ -674,7 +736,10 @@ mod tests {
         let count = |lib: Option<i64>| -> i64 {
             db.read(|c| {
                 c.query_row(
-                    &format!("SELECT COUNT(*) FROM groups g WHERE {}", super::SCOPE.replace("?5", "?1")),
+                    &format!(
+                        "SELECT COUNT(*) FROM groups g WHERE {}",
+                        super::SCOPE.replace("?5", "?1")
+                    ),
                     [lib],
                     |r| r.get(0),
                 )
@@ -732,11 +797,14 @@ mod tests {
     #[test]
     fn nothing_is_deleted_by_apply() {
         let (_d, db) = seed(0);
-        let before: i64 =
-            db.read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))).unwrap();
-        db.write(|c| c.execute("UPDATE files SET culling_flag=2", [])).unwrap();
-        let after: i64 =
-            db.read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))).unwrap();
+        let before: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)))
+            .unwrap();
+        db.write(|c| c.execute("UPDATE files SET culling_flag=2", []))
+            .unwrap();
+        let after: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)))
+            .unwrap();
         assert_eq!(before, after, "판정은 삭제가 아니다");
     }
 }

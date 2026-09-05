@@ -37,11 +37,15 @@ fn under(root: &str, p: &str) -> bool {
 fn validate_library_rel(lib_rel: &str, rel: &str, allow_root: bool) -> Result<()> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute()
-        || rel_path.components().any(|c| !matches!(c, Component::Normal(_)))
+        || rel_path
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
         || !under(lib_rel, rel)
         || (!allow_root && rel == lib_rel)
     {
-        return Err(bad("같은 라이브러리 안의 정상적인 상대경로만 사용할 수 있습니다"));
+        return Err(bad(
+            "같은 라이브러리 안의 정상적인 상대경로만 사용할 수 있습니다",
+        ));
     }
     Ok(())
 }
@@ -56,9 +60,16 @@ fn checked_library_dir(
     allow_root: bool,
 ) -> Result<PathBuf> {
     validate_library_rel(lib_rel, rel, allow_root)?;
-    let root = lib_dir.canonicalize().map_err(|e| bad(format!("라이브러리 경로를 확인할 수 없습니다: {e}")))?;
+    let root = lib_dir
+        .canonicalize()
+        .map_err(|e| bad(format!("라이브러리 경로를 확인할 수 없습니다: {e}")))?;
     let candidate = mount.join(rel);
-    let actual = candidate.canonicalize().map_err(|e| bad(format!("폴더 경로를 확인할 수 없습니다: {}: {e}", candidate.display())))?;
+    let actual = candidate.canonicalize().map_err(|e| {
+        bad(format!(
+            "폴더 경로를 확인할 수 없습니다: {}: {e}",
+            candidate.display()
+        ))
+    })?;
     if !actual.starts_with(&root) {
         return Err(bad("라이브러리 밖의 폴더는 사용할 수 없습니다"));
     }
@@ -74,16 +85,25 @@ pub fn merge_tree(
     cancel: &AtomicBool,
     on_progress: impl Fn(&MergeProgress),
 ) -> Result<Outcome> {
-    let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
-    let lib_dir = lib.dir.clone().ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
-    let mount = crate::db::volumes::find_mount(&lib.volume_uuid).ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let lib =
+        libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let lib_dir = lib
+        .dir
+        .clone()
+        .ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let mount = crate::db::volumes::find_mount(&lib.volume_uuid)
+        .ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
     if src_rel == dst_rel || under(src_rel, dst_rel) || under(dst_rel, src_rel) {
-        return Err(bad("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더여야 합니다"));
+        return Err(bad(
+            "두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더여야 합니다",
+        ));
     }
     let _src = checked_library_dir(&lib_dir, &mount, &lib.rel_path, src_rel, false)?;
     let dst = checked_library_dir(&lib_dir, &mount, &lib.rel_path, dst_rel, true)?;
     if !dst.is_dir() {
-        return Err(bad(format!("합쳐 넣을 폴더가 디스크에 없습니다: {dst_rel}")));
+        return Err(bad(format!(
+            "합쳐 넣을 폴더가 디스크에 없습니다: {dst_rel}"
+        )));
     }
 
     let items: Vec<Item> = db.read(|c| {
@@ -100,21 +120,40 @@ pub fn merge_tree(
     })?;
     let total = items.len();
     if total == 0 {
-        return Ok(Outcome { first_error: Some("합칠 사진이 없습니다".into()), ..Default::default() });
+        return Ok(Outcome {
+            first_error: Some("합칠 사진이 없습니다".into()),
+            ..Default::default()
+        });
     }
     let tail = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
-    let batch_id = super::open_batch(db, "move", &format!("폴더 합치기 «{}» → «{}»", tail(src_rel), tail(dst_rel)))?;
-    let mut out = Outcome { batch_id, ..Default::default() };
+    let batch_id = super::open_batch(
+        db,
+        "move",
+        &format!("폴더 합치기 «{}» → «{}»", tail(src_rel), tail(dst_rel)),
+    )?;
+    let mut out = Outcome {
+        batch_id,
+        ..Default::default()
+    };
     let mut src_dirs: BTreeSet<PathBuf> = BTreeSet::new();
     let mut folder_cache: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
 
     for (i, it) in items.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
-            out.first_error.get_or_insert("멈췄습니다 — 옮긴 것은 그대로, ⌘Z 로 되돌릴 수 있습니다".into());
+            out.first_error
+                .get_or_insert("멈췄습니다 — 옮긴 것은 그대로, ⌘Z 로 되돌릴 수 있습니다".into());
             break;
         }
-        let sub = it.dir.strip_prefix(src_rel).map(|s| s.trim_start_matches('/')).unwrap_or("");
-        let dest_dir_rel = if sub.is_empty() { dst_rel.to_string() } else { format!("{dst_rel}/{sub}") };
+        let sub = it
+            .dir
+            .strip_prefix(src_rel)
+            .map(|s| s.trim_start_matches('/'))
+            .unwrap_or("");
+        let dest_dir_rel = if sub.is_empty() {
+            dst_rel.to_string()
+        } else {
+            format!("{dst_rel}/{sub}")
+        };
         let folder_id = match folder_cache.get(&dest_dir_rel) {
             Some(&id) => id,
             None => {
@@ -126,13 +165,29 @@ pub fn merge_tree(
         let src_path = mount.join(&it.dir).join(&it.name);
         // 이름은 디스크에도 DB 에도 비어 있어야 한다 — 휴지통에 간 파일의 행이 그 이름을 쥐고 있으면
         // UNIQUE(folder_id, name) 에 걸려 합치기가 중간에 멈춘다 (실측 2026-08-30: 17,067장에서 멈춤)
-        let dest_path = free_name(db, folder_id, free_path(mount.join(&dest_dir_rel).join(&it.name)))?;
-        let new_name = dest_path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| it.name.clone());
+        let dest_path = free_name(
+            db,
+            folder_id,
+            free_path(mount.join(&dest_dir_rel).join(&it.name)),
+        )?;
+        let new_name = dest_path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| it.name.clone());
         let from_vol_rel = format!("{}/{}", it.dir, it.name);
         let to_vol_rel = format!("{dest_dir_rel}/{new_name}");
         match move_with_sidecars(&src_path, &dest_path) {
             Ok(()) => {
-                super::record(db, batch_id, "move", it.id, &lib.volume_uuid, &from_vol_rel, Some(&to_vol_rel), Ok(()))?;
+                super::record(
+                    db,
+                    batch_id,
+                    "move",
+                    it.id,
+                    &lib.volume_uuid,
+                    &from_vol_rel,
+                    Some(&to_vol_rel),
+                    Ok(()),
+                )?;
                 // 행 갱신이 실패해도 합치기를 통째로 멈추지 않는다 — 파일은 이미 옮겨졌으니 세어 알리고
                 // 계속 간다. 남은 어긋남은 다시 스캔이 맞춘다
                 let upd = db.write(|c| {
@@ -149,14 +204,25 @@ pub fn merge_tree(
                     Err(e) => {
                         log::warn!("합치기: 파일은 옮겼는데 행 갱신 실패 {to_vol_rel}: {e}");
                         out.failed += 1;
-                        out.first_error.get_or_insert(format!("옮긴 뒤 기록 실패 — 다시 스캔으로 맞춰집니다: {e}"));
+                        out.first_error.get_or_insert(format!(
+                            "옮긴 뒤 기록 실패 — 다시 스캔으로 맞춰집니다: {e}"
+                        ));
                     }
                 }
                 src_dirs.insert(mount.join(&it.dir));
             }
             Err(e) => {
                 let msg = e.to_string();
-                super::record(db, batch_id, "move", it.id, &lib.volume_uuid, &from_vol_rel, None, Err(&msg))?;
+                super::record(
+                    db,
+                    batch_id,
+                    "move",
+                    it.id,
+                    &lib.volume_uuid,
+                    &from_vol_rel,
+                    None,
+                    Err(&msg),
+                )?;
                 out.failed += 1;
                 out.first_error.get_or_insert(msg);
             }
@@ -197,7 +263,10 @@ fn free_name(db: &Db, folder_id: i64, want: PathBuf) -> Result<PathBuf> {
         })
         .map(|n| n > 0)
     };
-    let name = want.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = want
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     if !taken(&name)? {
         return Ok(want);
     }
@@ -220,8 +289,18 @@ fn free_name(db: &Db, folder_id: i64, want: PathBuf) -> Result<PathBuf> {
 }
 
 /// 목적지 폴더 행 — 없으면 만든다 (organize::ensure_folder 와 같은 규칙)
-fn ensure_folder(db: &Db, volume_uuid: &str, library_id: i64, vol_rel_dir: &str, area: i32) -> Result<i64> {
-    let name = vol_rel_dir.rsplit('/').next().unwrap_or(vol_rel_dir).to_string();
+fn ensure_folder(
+    db: &Db,
+    volume_uuid: &str,
+    library_id: i64,
+    vol_rel_dir: &str,
+    area: i32,
+) -> Result<i64> {
+    let name = vol_rel_dir
+        .rsplit('/')
+        .next()
+        .unwrap_or(vol_rel_dir)
+        .to_string();
     db.write(|c| {
         c.execute(
             "INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,scanned_at)
@@ -254,9 +333,14 @@ fn is_junk_file(name: &str) -> bool {
 }
 
 pub fn leftovers(db: &Db, library_id: i64, rel: &str) -> Result<Leftovers> {
-    let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
-    let lib_dir = lib.dir.clone().ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
-    let mount = crate::db::volumes::find_mount(&lib.volume_uuid).ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let lib =
+        libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let lib_dir = lib
+        .dir
+        .clone()
+        .ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let mount = crate::db::volumes::find_mount(&lib.volume_uuid)
+        .ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
     let mut out = Leftovers::default();
     validate_library_rel(&lib.rel_path, rel, false)?;
     let candidate = mount.join(rel);
@@ -265,7 +349,11 @@ pub fn leftovers(db: &Db, library_id: i64, rel: &str) -> Result<Leftovers> {
     }
     let root = checked_library_dir(&lib_dir, &mount, &lib.rel_path, rel, false)?;
     let mut kinds: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for e in walkdir::WalkDir::new(&root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+    for e in walkdir::WalkDir::new(&root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if !e.file_type().is_file() {
             continue;
         }
@@ -275,7 +363,10 @@ pub fn leftovers(db: &Db, library_id: i64, rel: &str) -> Result<Leftovers> {
         }
         out.files += 1;
         out.bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
-        let ext = name.rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase()).unwrap_or_else(|| "(없음)".into());
+        let ext = name
+            .rsplit_once('.')
+            .map(|(_, x)| x.to_ascii_lowercase())
+            .unwrap_or_else(|| "(없음)".into());
         *kinds.entry(ext).or_default() += 1;
     }
     let mut v: Vec<(String, usize)> = kinds.into_iter().collect();
@@ -288,23 +379,39 @@ pub fn leftovers(db: &Db, library_id: i64, rel: &str) -> Result<Leftovers> {
 /// 남은 파일도 같은 자리로 — 사진이 아니라 DB 에는 안 적는다. 같은 이름은 (2). 찌꺼기(.DS_Store 등)는 지우고
 /// 비는 폴더는 지운다. (옮긴 수, 실패 수, 지운 폴더 수)
 pub fn merge_rest(db: &Db, library_id: i64, src_rel: &str, dst_rel: &str) -> Result<Outcome> {
-    let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
-    let lib_dir = lib.dir.clone().ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
-    let mount = crate::db::volumes::find_mount(&lib.volume_uuid).ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let lib =
+        libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let lib_dir = lib
+        .dir
+        .clone()
+        .ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let mount = crate::db::volumes::find_mount(&lib.volume_uuid)
+        .ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
     if src_rel == dst_rel || under(src_rel, dst_rel) || under(dst_rel, src_rel) {
-        return Err(bad("두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더여야 합니다"));
+        return Err(bad(
+            "두 폴더가 서로를 품고 있습니다 — 겹치지 않는 두 폴더여야 합니다",
+        ));
     }
     validate_library_rel(&lib.rel_path, src_rel, false)?;
     validate_library_rel(&lib.rel_path, dst_rel, true)?;
     if !mount.join(src_rel).is_dir() {
-        return Ok(Outcome { first_error: Some("남은 폴더가 없습니다".into()), ..Default::default() });
+        return Ok(Outcome {
+            first_error: Some("남은 폴더가 없습니다".into()),
+            ..Default::default()
+        });
     }
     let src = checked_library_dir(&lib_dir, &mount, &lib.rel_path, src_rel, false)?;
     let dst = checked_library_dir(&lib_dir, &mount, &lib.rel_path, dst_rel, true)?;
-    let prune_stop = lib_dir.canonicalize().map_err(|e| bad(format!("라이브러리 경로를 확인할 수 없습니다: {e}")))?;
+    let prune_stop = lib_dir
+        .canonicalize()
+        .map_err(|e| bad(format!("라이브러리 경로를 확인할 수 없습니다: {e}")))?;
     let mut out = Outcome::default();
     let mut dirs: Vec<PathBuf> = Vec::new();
-    for e in walkdir::WalkDir::new(&src).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+    for e in walkdir::WalkDir::new(&src)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if e.file_type().is_dir() {
             dirs.push(e.path().to_path_buf());
             continue;
@@ -317,7 +424,9 @@ pub fn merge_rest(db: &Db, library_id: i64, src_rel: &str, dst_rel: &str) -> Res
             let _ = std::fs::remove_file(e.path());
             continue;
         }
-        let Ok(rel) = e.path().strip_prefix(&src) else { continue };
+        let Ok(rel) = e.path().strip_prefix(&src) else {
+            continue;
+        };
         let dest = free_path(dst.join(rel));
         match crate::ops::trash::move_file(e.path(), &dest) {
             Ok(()) => {
@@ -326,7 +435,8 @@ pub fn merge_rest(db: &Db, library_id: i64, src_rel: &str, dst_rel: &str) -> Res
             }
             Err(err) => {
                 out.failed += 1;
-                out.first_error.get_or_insert(format!("{}: {err}", e.path().display()));
+                out.first_error
+                    .get_or_insert(format!("{}: {err}", e.path().display()));
             }
         }
     }
@@ -360,9 +470,19 @@ mod tests {
         let db = Db::open(dir.path().join("t.db")).unwrap();
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         let (lib, lib_rel): (i64, String) = db
-            .read(|c| c.query_row("SELECT id, rel_path FROM libraries", [], |r| Ok((r.get(0)?, r.get(1)?))))
+            .read(|c| {
+                c.query_row("SELECT id, rel_path FROM libraries", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+            })
             .unwrap();
-        let j = |s: &str| if lib_rel.is_empty() { s.to_string() } else { format!("{lib_rel}/{s}") };
+        let j = |s: &str| {
+            if lib_rel.is_empty() {
+                s.to_string()
+            } else {
+                format!("{lib_rel}/{s}")
+            }
+        };
         (dir, db, lib, j("B"), j("A"), lib_rel)
     }
 
@@ -371,17 +491,41 @@ mod tests {
         let (dir, db, lib, b, a, _) = setup();
         let out = merge_tree(&db, lib, &b, &a, &AtomicBool::new(false), |_| {}).unwrap();
         assert_eq!((out.moved, out.failed), (3, 0), "{out:?}");
-        assert!(dir.path().join("A/2016/a (2).jpg").is_file(), "같은 이름은 (2) — 덮어쓰지 않는다");
-        assert!(dir.path().join("A/2016/a.jpg").is_file(), "A 의 원래 사진은 그대로");
+        assert!(
+            dir.path().join("A/2016/a (2).jpg").is_file(),
+            "같은 이름은 (2) — 덮어쓰지 않는다"
+        );
+        assert!(
+            dir.path().join("A/2016/a.jpg").is_file(),
+            "A 의 원래 사진은 그대로"
+        );
         assert!(dir.path().join("A/2016/only-b.jpg").is_file());
-        assert!(dir.path().join("A/2016/x/deep.jpg").is_file(), "하위 폴더도 같은 자리로");
-        assert!(!dir.path().join("B").exists(), "비어 버린 B 는 디스크에서 사라진다");
+        assert!(
+            dir.path().join("A/2016/x/deep.jpg").is_file(),
+            "하위 폴더도 같은 자리로"
+        );
+        assert!(
+            !dir.path().join("B").exists(),
+            "비어 버린 B 는 디스크에서 사라진다"
+        );
         let b_rows: i64 = db
-            .read(|c| c.query_row("SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%/B%' OR rel_path = 'B'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM folders WHERE rel_path LIKE '%/B%' OR rel_path = 'B'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(b_rows, 0, "B 폴더 행도 없다");
         let named: i64 = db
-            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE name = 'a (2).jpg'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM files WHERE name = 'a (2).jpg'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(named, 1, "DB 도 새 이름을 안다");
 
@@ -399,7 +543,13 @@ mod tests {
         let (dir, db, lib, b, a, _) = setup();
         // A/2016/only-b.jpg 라는 «휴지통 행»을 만든다 — 디스크엔 없고 DB 에만 있다
         let a2016: i64 = db
-            .read(|c| c.query_row("SELECT id FROM folders WHERE rel_path LIKE '%A/2016'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT id FROM folders WHERE rel_path LIKE '%A/2016'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         // 기존 행(A/2017/c.jpg)을 «A/2016 의 only-b.jpg 휴지통 행»으로 바꿔 둔다 — NOT NULL 열을 다 채울 필요 없이
         db.write(|c| {
@@ -411,7 +561,14 @@ mod tests {
         .unwrap();
         let out = merge_tree(&db, lib, &b, &a, &AtomicBool::new(false), |_| {}).unwrap();
         assert_eq!((out.moved, out.failed), (3, 0), "{out:?}");
-        assert!(dir.path().join("A/2016/only-b (2).jpg").is_file(), "DB 에서도 빈 이름으로: {:?}", std::fs::read_dir(dir.path().join("A/2016")).unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>());
+        assert!(
+            dir.path().join("A/2016/only-b (2).jpg").is_file(),
+            "DB 에서도 빈 이름으로: {:?}",
+            std::fs::read_dir(dir.path().join("A/2016"))
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect::<Vec<_>>()
+        );
     }
 
     /// 사진이 아닌 파일이 남아 폴더가 남았을 때 — «남은 파일도 옮기기»가 마저 치운다
@@ -421,14 +578,20 @@ mod tests {
         std::fs::write(dir.path().join("B/2016/노트.txt"), b"memo").unwrap();
         std::fs::write(dir.path().join("B/2016/x/Thumbs.db"), b"junk").unwrap();
         merge_tree(&db, lib, &b, &a, &AtomicBool::new(false), |_| {}).unwrap();
-        assert!(dir.path().join("B/2016/노트.txt").is_file(), "사진이 아닌 것은 안 옮겨져 폴더가 남는다");
+        assert!(
+            dir.path().join("B/2016/노트.txt").is_file(),
+            "사진이 아닌 것은 안 옮겨져 폴더가 남는다"
+        );
         let l = leftovers(&db, lib, &b).unwrap();
         assert_eq!(l.files, 1, "{l:?}");
         assert_eq!(l.kinds[0].0, "txt");
         let r = merge_rest(&db, lib, &b, &a).unwrap();
         assert_eq!((r.moved, r.failed), (1, 0), "{r:?}");
         assert!(dir.path().join("A/2016/노트.txt").is_file());
-        assert!(!dir.path().join("B").exists(), "찌꺼기(Thumbs.db)는 지우고 빈 폴더도 지운다");
+        assert!(
+            !dir.path().join("B").exists(),
+            "찌꺼기(Thumbs.db)는 지우고 빈 폴더도 지운다"
+        );
         assert_eq!(leftovers(&db, lib, &b).unwrap().files, 0);
     }
 
@@ -437,10 +600,22 @@ mod tests {
         let (d, db, lib, b, a, lib_rel) = setup();
         assert!(merge_tree(&db, lib, &b, &b, &AtomicBool::new(false), |_| {}).is_err());
         let inner = format!("{b}/2016");
-        assert!(merge_tree(&db, lib, &b, &inner, &AtomicBool::new(false), |_| {}).is_err(), "품는 관계");
-        assert!(merge_tree(&db, lib, &lib_rel, &a, &AtomicBool::new(false), |_| {}).is_err(), "라이브러리 뿌리째는 안 된다");
+        assert!(
+            merge_tree(&db, lib, &b, &inner, &AtomicBool::new(false), |_| {}).is_err(),
+            "품는 관계"
+        );
+        assert!(
+            merge_tree(&db, lib, &lib_rel, &a, &AtomicBool::new(false), |_| {}).is_err(),
+            "라이브러리 뿌리째는 안 된다"
+        );
         let outside = d.path().parent().unwrap().to_string_lossy();
-        assert!(leftovers(&db, lib, &outside).is_err(), "절대경로는 거부한다");
-        assert!(merge_rest(&db, lib, "../", &a).is_err(), "부모 경로로 빠져나갈 수 없다");
+        assert!(
+            leftovers(&db, lib, &outside).is_err(),
+            "절대경로는 거부한다"
+        );
+        assert!(
+            merge_rest(&db, lib, "../", &a).is_err(),
+            "부모 경로로 빠져나갈 수 없다"
+        );
     }
 }

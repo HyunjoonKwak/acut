@@ -164,14 +164,23 @@ mod tests {
     fn middle_folders_are_invented() {
         // 스캐너는 잎만 준다. 「연도별」과 「연도별/2001」은 DB에 없다.
         let t = build(
-            vec![leaf(1, "연도별/2001/정동진", 10), leaf(2, "연도별/2002/제주", 5)],
+            vec![
+                leaf(1, "연도별/2001/정동진", 10),
+                leaf(2, "연도별/2002/제주", 5),
+            ],
             "",
             7,
         );
         let paths: Vec<&str> = t.iter().map(|n| n.path.as_str()).collect();
         assert_eq!(
             paths,
-            vec!["연도별", "연도별/2001", "연도별/2001/정동진", "연도별/2002", "연도별/2002/제주"]
+            vec![
+                "연도별",
+                "연도별/2001",
+                "연도별/2001/정동진",
+                "연도별/2002",
+                "연도별/2002/제주"
+            ]
         );
         // 만들어 낸 마디는 DB id가 없다
         assert_eq!(t[0].id, None);
@@ -181,7 +190,10 @@ mod tests {
     #[test]
     fn counts_roll_up() {
         let t = build(
-            vec![leaf(1, "연도별/2001/정동진", 10), leaf(2, "연도별/2002/제주", 5)],
+            vec![
+                leaf(1, "연도별/2001/정동진", 10),
+                leaf(2, "연도별/2002/제주", 5),
+            ],
             "",
             7,
         );
@@ -193,7 +205,11 @@ mod tests {
 
     #[test]
     fn depth_starts_at_zero_under_the_library_root() {
-        let t = build(vec![leaf(1, "연도별/2001/정동진", 1)], "MERGE/사진통합작업", 7);
+        let t = build(
+            vec![leaf(1, "연도별/2001/정동진", 1)],
+            "MERGE/사진통합작업",
+            7,
+        );
         assert_eq!(t[0].depth, 0, "라이브러리 바로 아래가 0단계");
         assert_eq!(t[2].depth, 2);
         // 볼륨 기준 경로는 라이브러리 앞부분을 되붙인다
@@ -266,18 +282,27 @@ mod tests {
     #[test]
     fn same_folder_name_in_two_libraries_stays_apart() {
         let mut all = under_root(build(vec![leaf(1, "행사/졸업", 1)], "", 1), 1, "가", 1);
-        all.extend(under_root(build(vec![leaf(2, "행사/졸업", 1)], "", 2), 2, "나", 1));
+        all.extend(under_root(
+            build(vec![leaf(2, "행사/졸업", 1)], "", 2),
+            2,
+            "나",
+            1,
+        ));
 
         let paths: Vec<&str> = all.iter().map(|n| n.path.as_str()).collect();
         assert_eq!(
             paths,
-            vec!["#1", "#1/행사", "#1/행사/졸업", "#2", "#2/행사", "#2/행사/졸업"]
+            vec![
+                "#1",
+                "#1/행사",
+                "#1/행사/졸업",
+                "#2",
+                "#2/행사",
+                "#2/행사/졸업"
+            ]
         );
         // 경로가 다르니 하나를 펴도 다른 쪽은 접힌 채로 남는다
-        assert_eq!(
-            paths.iter().filter(|p| **p == "#1/행사").count(),
-            1
-        );
+        assert_eq!(paths.iter().filter(|p| **p == "#1/행사").count(), 1);
     }
 
     /// 실제로 `#0_사진백업-NAS…`처럼 `#`으로 시작하는 폴더가 있다.
@@ -285,12 +310,19 @@ mod tests {
     #[test]
     fn a_folder_whose_name_starts_with_hash_is_not_a_library() {
         let t = under_root(
-            build(vec![leaf(1, "#0_사진백업-NAS 자료와 동기화/2003", 3)], "", 2),
+            build(
+                vec![leaf(1, "#0_사진백업-NAS 자료와 동기화/2003", 3)],
+                "",
+                2,
+            ),
             2,
             "PHOTO 1",
             3,
         );
-        let f = t.iter().find(|n| n.name == "#0_사진백업-NAS 자료와 동기화").unwrap();
+        let f = t
+            .iter()
+            .find(|n| n.name == "#0_사진백업-NAS 자료와 동기화")
+            .unwrap();
         assert!(!f.is_library);
         assert_eq!(f.depth, 1);
         assert!(t[0].is_library);

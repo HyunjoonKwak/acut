@@ -61,7 +61,10 @@ pub fn interesting(path: &Path) -> bool {
             return false;
         }
     }
-    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
     if name.starts_with("._") || name == ".DS_Store" {
         return false;
     }
@@ -128,7 +131,8 @@ impl Watchers {
             notify::Config::default(),
         )
         .map_err(|e| e.to_string())?;
-        w.watch(dir, RecursiveMode::Recursive).map_err(|e| e.to_string())?;
+        w.watch(dir, RecursiveMode::Recursive)
+            .map_err(|e| e.to_string())?;
         live.insert(library_id, Live { _watcher: w });
         Ok(())
     }
@@ -203,7 +207,8 @@ impl Watchers {
                         }
                         break;
                     }
-                    let Some(_guard) = crate::api::job::try_start_with(&running, "폴더 감시", true) else {
+                    let Some(_guard) = crate::api::job::try_start_with(&running, "폴더 감시", true)
+                    else {
                         // 사용자 일이 도는 중 — 이것과 나머지를 되돌려 놓고 다음 틱에
                         let mut p = pending.lock().unwrap_or_else(|e| e.into_inner());
                         p.entry((library_id, dir)).or_insert_with(Instant::now);
@@ -234,7 +239,12 @@ fn rescan_dir(
 ) -> Option<Changed> {
     let lib = crate::db::libraries::get(db, library_id).ok()??;
     let mount = crate::db::volumes::find_mount(&lib.volume_uuid)?;
-    let mut out = Changed { library_id, inserted: 0, updated: 0, removed: 0 };
+    let mut out = Changed {
+        library_id,
+        inserted: 0,
+        updated: 0,
+        removed: 0,
+    };
 
     // 폴더가 안 보이면(이름을 바꿨거나 디스크가 잠깐 빠짐) 아무것도 지우지 않는다.
     // 옛 경로로 온 알림에 행을 지우면 별점·판정·태그·코멘트가 통째로 사라진다 (리뷰 C2).
@@ -252,7 +262,10 @@ fn rescan_dir(
         Err(e) => log::warn!("감시 스캔 실패 {}: {e}", dir.display()),
     }
     // 마운트 이름이 바뀌어 접두사가 안 맞으면 rel이 ""가 되어 볼륨 전체를 정리해 버린다 — 하지 않는다
-    let Ok(rel) = dir.strip_prefix(&mount).map(|r| r.to_string_lossy().into_owned()) else {
+    let Ok(rel) = dir
+        .strip_prefix(&mount)
+        .map(|r| r.to_string_lossy().into_owned())
+    else {
         return (out.inserted + out.updated > 0).then_some(out);
     };
     out.removed = crate::scan::prune_missing(db, &mount, library_id, &rel).unwrap_or(0);
@@ -261,7 +274,14 @@ fn rescan_dir(
         // 멈춤 신호로 «사용자가 기다리는 중» 깃발을 준다 — 썸네일이 몇 분씩 스위치를 쥐고
         // 사용자 명령을 굶기지 않게. 못 만든 썸네일은 다음 판에 이어서 만든다 (재개 가능)
         let cache_root = crate::media::cache::cache_root(cache_base, library_id);
-        let _ = crate::scan::thumbs::generate(db, library_id, &mount, &cache_root, crate::api::job::waiting(), |_| {});
+        let _ = crate::scan::thumbs::generate(
+            db,
+            library_id,
+            &mount,
+            &cache_root,
+            crate::api::job::waiting(),
+            |_| {},
+        );
     }
     if out.inserted + out.updated + out.removed == 0 {
         return None;
@@ -285,7 +305,10 @@ mod tests {
 
     #[test]
     fn a_file_points_at_its_folder_and_a_folder_at_itself() {
-        assert_eq!(folder_of(Path::new("/a/b/c.jpg")), Some(PathBuf::from("/a/b")));
+        assert_eq!(
+            folder_of(Path::new("/a/b/c.jpg")),
+            Some(PathBuf::from("/a/b"))
+        );
         assert_eq!(folder_of(Path::new("/a/b")), Some(PathBuf::from("/a/b")));
     }
 
@@ -313,6 +336,9 @@ mod tests {
         p.insert((1, PathBuf::from("/a")), t0);
         p.insert((1, PathBuf::from("/a")), t0 + Duration::from_millis(500));
         assert_eq!(p.len(), 1);
-        assert!(take_due(&mut p, t0 + Duration::from_millis(1000), QUIET).is_empty(), "다시 미뤄졌다");
+        assert!(
+            take_due(&mut p, t0 + Duration::from_millis(1000), QUIET).is_empty(),
+            "다시 미뤄졌다"
+        );
     }
 }

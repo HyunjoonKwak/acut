@@ -51,7 +51,12 @@ fn read_boxes(f: &mut File, start: u64, end: u64) -> Vec<Box> {
         if size < header {
             break;
         }
-        out.push(Box { offset: pos, size, header, kind });
+        out.push(Box {
+            offset: pos,
+            size,
+            header,
+            kind,
+        });
         pos += size;
         if out.len() > 512 {
             break;
@@ -138,7 +143,10 @@ fn find_iso_in(f: &mut File, b: &Box, keys: &[&[u8]]) -> Option<i64> {
             // 키 뒤 200바이트 안에 «YYYY-MM-DDT» 꼴이 온다
             let win = &body[at..body.len().min(at + 200)];
             if let Some(j) = win.windows(11).position(|w| {
-                w[4] == b'-' && w[7] == b'-' && w[10] == b'T' && w[..4].iter().all(u8::is_ascii_digit)
+                w[4] == b'-'
+                    && w[7] == b'-'
+                    && w[10] == b'T'
+                    && w[..4].iter().all(u8::is_ascii_digit)
             }) {
                 let s: String = win[j..].iter().take(40).map(|&c| c as char).collect();
                 if let Some(t) = parse_iso(&s) {
@@ -157,20 +165,33 @@ pub fn creation_time(path: &Path) -> Option<i64> {
     let end = f.metadata().ok()?.len();
     // 앞 8바이트가 상자 꼴인지 — ftyp/moov/mdat/wide/free 아니면 MP4가 아니다
     let head = read_at(&mut f, 4, 4)?;
-    if !matches!(&head[..], b"ftyp" | b"moov" | b"mdat" | b"wide" | b"free" | b"skip") {
+    if !matches!(
+        &head[..],
+        b"ftyp" | b"moov" | b"mdat" | b"wide" | b"free" | b"skip"
+    ) {
         return None;
     }
     let top = read_boxes(&mut f, 0, end);
     let moov = top.iter().find(|b| &b.kind == b"moov")?;
     let inner = read_boxes(&mut f, moov.offset + moov.header, moov.offset + moov.size);
     // 1) 시간대가 든 문자열 — 아이폰·DJI·고프로
-    for b in inner.iter().filter(|b| &b.kind == b"meta" || &b.kind == b"udta") {
-        if let Some(t) = find_iso_in(&mut f, b, &[b"com.apple.quicktime.creationdate", b"\xa9day"]) {
+    for b in inner
+        .iter()
+        .filter(|b| &b.kind == b"meta" || &b.kind == b"udta")
+    {
+        if let Some(t) = find_iso_in(
+            &mut f,
+            b,
+            &[b"com.apple.quicktime.creationdate", b"\xa9day"],
+        ) {
             return Some(t);
         }
     }
     // 2) mvhd — 표준. UTC로 본다 (일부 기기는 현지 시각을 그대로 넣는다)
-    inner.iter().find(|b| &b.kind == b"mvhd").and_then(|b| mvhd_creation(&mut f, b))
+    inner
+        .iter()
+        .find(|b| &b.kind == b"mvhd")
+        .and_then(|b| mvhd_creation(&mut f, b))
 }
 
 #[cfg(test)]
@@ -228,7 +249,10 @@ mod tests {
     fn iso_strings_with_offsets() {
         assert_eq!(parse_iso("2015-04-08T11:33:09+0900"), Some(1_428_460_389));
         assert_eq!(parse_iso("2015-04-08T02:33:09Z"), Some(1_428_460_389));
-        assert_eq!(parse_iso("2015-04-08T02:33:09.123+00:00"), Some(1_428_460_389));
+        assert_eq!(
+            parse_iso("2015-04-08T02:33:09.123+00:00"),
+            Some(1_428_460_389)
+        );
         assert_eq!(parse_iso("1999-01-01T00:00:00Z"), None);
     }
 }

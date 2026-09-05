@@ -51,10 +51,22 @@ fn folder(db: &Db, id: i64) -> Result<Option<FolderRow>> {
         c.query_row(
             "SELECT id, library_id, rel_path FROM folders WHERE id = ?1",
             [id],
-            |r| Ok(FolderRow { id: r.get(0)?, library_id: r.get(1)?, rel_path: r.get(2)? }),
+            |r| {
+                Ok(FolderRow {
+                    id: r.get(0)?,
+                    library_id: r.get(1)?,
+                    rel_path: r.get(2)?,
+                })
+            },
         )
         .map(Some)
-        .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+        .or_else(|e| {
+            if e == rusqlite::Error::QueryReturnedNoRows {
+                Ok(None)
+            } else {
+                Err(e)
+            }
+        })
     })
 }
 
@@ -68,17 +80,27 @@ fn subtree(db: &Db, f: &FolderRow) -> Result<Vec<(i64, String)>> {
         )?;
         // `_`·`%` 가 든 폴더 이름(«2015_여행»)이 «2015년여행»까지 끌어와 재지정하던 길 (리뷰 H14)
         let esc = crate::db::query::escape_like(&f.rel_path);
-        let it = st.query_map(rusqlite::params![f.library_id, f.rel_path, esc], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let it = st.query_map(rusqlite::params![f.library_id, f.rel_path, esc], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
         it.collect()
     })
 }
 
 pub fn folder_size(db: &Db, folder_id: i64) -> Result<FolderSize> {
     let Some(f) = folder(db, folder_id)? else {
-        return Ok(FolderSize { folders: 0, files: 0, bytes: 0 });
+        return Ok(FolderSize {
+            folders: 0,
+            files: 0,
+            bytes: 0,
+        });
     };
     let sub = subtree(db, &f)?;
-    let ids = sub.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>().join(",");
+    let ids = sub
+        .iter()
+        .map(|(id, _)| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     let (files, bytes): (i64, i64) = db.read(|c| {
         c.query_row(
             &format!("SELECT COUNT(*), COALESCE(SUM(size),0) FROM files WHERE folder_id IN ({ids}) AND trashed_at IS NULL"),
@@ -86,7 +108,11 @@ pub fn folder_size(db: &Db, folder_id: i64) -> Result<FolderSize> {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
     })?;
-    Ok(FolderSize { folders: sub.len(), files: files as usize, bytes: bytes as u64 })
+    Ok(FolderSize {
+        folders: sub.len(),
+        files: files as usize,
+        bytes: bytes as u64,
+    })
 }
 
 /// 라이브러리 루트 기준 경로 — 볼륨 기준에서 라이브러리 접두어를 뗀다
@@ -94,7 +120,10 @@ fn under_library(lib_rel: &str, vol_rel: &str) -> Option<String> {
     if lib_rel.is_empty() {
         return Some(vol_rel.to_string());
     }
-    vol_rel.strip_prefix(lib_rel).and_then(|s| s.strip_prefix('/')).map(str::to_string)
+    vol_rel
+        .strip_prefix(lib_rel)
+        .and_then(|s| s.strip_prefix('/'))
+        .map(str::to_string)
 }
 
 fn bad(msg: impl Into<String>) -> crate::db::conn::DbError {
@@ -129,7 +158,11 @@ fn copy_tree(
         .collect();
     let total = files.len();
     let bytes_total: u64 = files.iter().map(|f| f.1).sum();
-    let mut p = OffloadProgress { total, bytes_total, ..Default::default() };
+    let mut p = OffloadProgress {
+        total,
+        bytes_total,
+        ..Default::default()
+    };
     let mut copied: Vec<PathBuf> = Vec::new();
     let undo = |copied: &[PathBuf]| {
         for c in copied {
@@ -140,7 +173,9 @@ fn copy_tree(
     for (path, size) in &files {
         if cancel.load(Ordering::Relaxed) {
             undo(&copied);
-            return Err(std::io::Error::other("멈췄습니다 — 원본은 그대로, 복사한 것은 지웠습니다"));
+            return Err(std::io::Error::other(
+                "멈췄습니다 — 원본은 그대로, 복사한 것은 지웠습니다",
+            ));
         }
         let Ok(rel) = path.strip_prefix(src) else {
             undo(&copied);
@@ -155,7 +190,10 @@ fn copy_tree(
         if let Some(parent) = to.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 undo(&copied);
-                return Err(std::io::Error::other(format!("폴더를 못 만들었습니다: {} — {e}. 되돌렸습니다", parent.display())));
+                return Err(std::io::Error::other(format!(
+                    "폴더를 못 만들었습니다: {} — {e}. 되돌렸습니다",
+                    parent.display()
+                )));
             }
         }
         let n = match std::fs::copy(path, &to) {
@@ -163,7 +201,10 @@ fn copy_tree(
             Err(e) => {
                 copied.push(to.clone());
                 undo(&copied);
-                return Err(std::io::Error::other(format!("복사 실패: {} — {e}. 되돌렸습니다", to.display())));
+                return Err(std::io::Error::other(format!(
+                    "복사 실패: {} — {e}. 되돌렸습니다",
+                    to.display()
+                )));
             }
         };
         let same = n == *size
@@ -217,8 +258,10 @@ pub fn move_folder(
     on_progress: impl Fn(&OffloadProgress) + Sync,
 ) -> Result<Offloaded> {
     let f = folder(db, folder_id)?.ok_or_else(|| bad("없는 폴더입니다"))?;
-    let src_lib = libraries::get(db, f.library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
-    let dst_lib = libraries::get(db, dest_library)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let src_lib =
+        libraries::get(db, f.library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let dst_lib =
+        libraries::get(db, dest_library)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
     if src_lib.id == dst_lib.id {
         return Err(bad("같은 라이브러리입니다"));
     }
@@ -234,7 +277,10 @@ pub fn move_folder(
         return Err(bad(format!("폴더가 없습니다: {}", src_dir.display())));
     }
     if dst_dir.exists() {
-        return Err(bad(format!("대상에 같은 폴더가 이미 있습니다: {}", dst_dir.display())));
+        return Err(bad(format!(
+            "대상에 같은 폴더가 이미 있습니다: {}",
+            dst_dir.display()
+        )));
     }
     let rows = subtree(db, &f)?;
     // 대상 라이브러리에 같은 자리의 폴더 행이 있으면 섞이지 않게 거절한다
@@ -255,7 +301,11 @@ pub fn move_folder(
             return Err(bad(format!("대상 라이브러리에 「{target}」 폴더 행이 이미 있습니다. 그쪽을 먼저 다시 스캔하거나 정리하세요.")));
         }
     }
-    let ids = rows.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>().join(",");
+    let ids = rows
+        .iter()
+        .map(|(id, _)| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     let thumbs: Vec<String> = db.read(|c| {
         let mut st = c.prepare(&format!(
             "SELECT t.rel_path FROM thumbs t JOIN files fi ON fi.id = t.file_id
@@ -266,7 +316,9 @@ pub fn move_folder(
     })?;
     let (files, bytes): (i64, i64) = db.read(|c| {
         c.query_row(
-            &format!("SELECT COUNT(*), COALESCE(SUM(size),0) FROM files WHERE folder_id IN ({ids})"),
+            &format!(
+                "SELECT COUNT(*), COALESCE(SUM(size),0) FROM files WHERE folder_id IN ({ids})"
+            ),
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -279,7 +331,12 @@ pub fn move_folder(
     let mut undeleted = 0usize;
     if src_lib.volume_uuid == dst_lib.volume_uuid {
         std::fs::rename(&src_dir, &dst_dir).map_err(|e| bad(format!("옮기기 실패: {e}")))?;
-        on_progress(&OffloadProgress { done: files as usize, total: files as usize, bytes_done: bytes as u64, bytes_total: bytes as u64 });
+        on_progress(&OffloadProgress {
+            done: files as usize,
+            total: files as usize,
+            bytes_done: bytes as u64,
+            bytes_total: bytes as u64,
+        });
     } else {
         undeleted = copy_tree(&src_dir, &dst_dir, cancel, &on_progress)
             .map_err(|e| bad(e.to_string()))?
@@ -309,7 +366,10 @@ pub fn move_folder(
     super::close_batch(db, batch, files as usize)?;
 
     // 3) 썸네일 — 라이브러리별 캐시 폴더 사이로
-    let (from, to) = (cache::cache_root(cache_base, src_lib.id), cache::cache_root(cache_base, dst_lib.id));
+    let (from, to) = (
+        cache::cache_root(cache_base, src_lib.id),
+        cache::cache_root(cache_base, dst_lib.id),
+    );
     for rel in &thumbs {
         let (a, b) = (from.join(rel), to.join(rel));
         if let Some(p) = b.parent() {
@@ -319,7 +379,12 @@ pub fn move_folder(
             let _ = std::fs::copy(&a, &b).and_then(|_| std::fs::remove_file(&a));
         }
     }
-    Ok(Offloaded { folders: rows.len(), files: files as usize, bytes: bytes as u64, undeleted })
+    Ok(Offloaded {
+        folders: rows.len(),
+        files: files as usize,
+        bytes: bytes as u64,
+        undeleted,
+    })
 }
 
 #[cfg(test)]
@@ -329,7 +394,10 @@ mod tests {
     #[test]
     fn under_library_strips_the_library_prefix() {
         assert_eq!(under_library("", "2015/여행"), Some("2015/여행".into()));
-        assert_eq!(under_library("사진", "사진/2015/여행"), Some("2015/여행".into()));
+        assert_eq!(
+            under_library("사진", "사진/2015/여행"),
+            Some("2015/여행".into())
+        );
         assert_eq!(under_library("사진", "사진"), None);
         assert_eq!(under_library("사진", "다른/2015"), None);
     }
@@ -354,7 +422,11 @@ mod tests {
     fn move_folder_repoints_rows_and_moves_files_and_thumbs() {
         let d = tempfile::tempdir().unwrap();
         let db = Db::open(d.path().join("t.db")).unwrap();
-        let (a, b, cache) = (d.path().join("A"), d.path().join("B"), d.path().join("cache"));
+        let (a, b, cache) = (
+            d.path().join("A"),
+            d.path().join("B"),
+            d.path().join("cache"),
+        );
         std::fs::create_dir_all(a.join("2015/여행")).unwrap();
         std::fs::create_dir_all(&b).unwrap();
         std::fs::write(a.join("2015/x.jpg"), b"x").unwrap();
@@ -411,11 +483,23 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!((lib, rel, parent), (lb.id, cache::rel_path(&lb.rel_path, "2015"), None));
+        assert_eq!(
+            (lib, rel, parent),
+            (lb.id, cache::rel_path(&lb.rel_path, "2015"), None)
+        );
         let (lib2, rel2): (i64, String) = db
-            .read(|c| c.query_row("SELECT library_id, rel_path FROM folders WHERE id = ?1", [fid_trip], |r| Ok((r.get(0)?, r.get(1)?))))
+            .read(|c| {
+                c.query_row(
+                    "SELECT library_id, rel_path FROM folders WHERE id = ?1",
+                    [fid_trip],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
             .unwrap();
-        assert_eq!((lib2, rel2), (lb.id, cache::rel_path(&lb.rel_path, "2015/여행")));
+        assert_eq!(
+            (lib2, rel2),
+            (lb.id, cache::rel_path(&lb.rel_path, "2015/여행"))
+        );
         // 썸네일
         assert!(cache::cache_root(&cache, lb.id).join("ab/2.jpg").exists());
         assert!(!from.join("1.jpg").exists());

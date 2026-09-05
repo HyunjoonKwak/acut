@@ -184,7 +184,10 @@ mod tests {
         // 끝이 파일보다 크면 파일 끝까지
         assert_eq!(parse_range("bytes=900-99999", 1000), Some((900, 999)));
         // 닫힌 구간도 한 조각(CHUNK)까지만 — 나머지는 다음 요청이 가져간다
-        assert_eq!(parse_range("bytes=0-99999999", 400_000_000), Some((0, CHUNK - 1)));
+        assert_eq!(
+            parse_range("bytes=0-99999999", 400_000_000),
+            Some((0, CHUNK - 1))
+        );
     }
 
     #[test]
@@ -193,7 +196,10 @@ mod tests {
         assert_eq!(parse_range("bytes=-500", 1000), Some((500, 999)));
         assert_eq!(parse_range("bytes=-99999", 1000), Some((0, 999)));
         // 꼬리도 한 조각(CHUNK)까지만
-        assert_eq!(parse_range("bytes=-400000000", 400_000_000), Some((400_000_000 - CHUNK, 399_999_999)));
+        assert_eq!(
+            parse_range("bytes=-400000000", 400_000_000),
+            Some((400_000_000 - CHUNK, 399_999_999))
+        );
     }
 
     #[test]

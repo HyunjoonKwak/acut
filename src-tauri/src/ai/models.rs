@@ -78,7 +78,11 @@ pub const SPECS: &[Spec] = &[
 ];
 
 /// 글로 찾기에 필요한 셋 — 한 번에 받는다
-pub const TEXT_BUNDLE: [ModelId; 3] = [ModelId::TextModel, ModelId::TextTokenizer, ModelId::TextDense];
+pub const TEXT_BUNDLE: [ModelId; 3] = [
+    ModelId::TextModel,
+    ModelId::TextTokenizer,
+    ModelId::TextDense,
+];
 
 pub fn text_present(app_data: &Path) -> bool {
     TEXT_BUNDLE.iter().all(|&id| present(app_data, id))
@@ -112,7 +116,10 @@ pub fn path(app_data: &Path, id: ModelId) -> PathBuf {
 pub fn present(app_data: &Path, id: ModelId) -> bool {
     let p = path(app_data, id);
     // 받다 만 조각은 .part로 남으니 이름이 맞으면 완성본이다 — 크기가 절반은 넘어야 한다
-    p.is_file() && std::fs::metadata(&p).map(|m| m.len() > spec(id).bytes / 2).unwrap_or(false)
+    p.is_file()
+        && std::fs::metadata(&p)
+            .map(|m| m.len() > spec(id).bytes / 2)
+            .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -140,7 +147,10 @@ pub fn download(
             .await
             .map_err(|e| super::AiError::Other(e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(super::AiError::Other(format!("받기 실패: HTTP {}", resp.status())));
+            return Err(super::AiError::Other(format!(
+                "받기 실패: HTTP {}",
+                resp.status()
+            )));
         }
         let total = resp.content_length().unwrap_or(s.bytes);
         let mut file = tokio::fs::File::create(&part).await?;
@@ -176,6 +186,9 @@ mod tests {
         let p = path(d.path(), ModelId::ClipVision);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, b"stub").unwrap();
-        assert!(!present(d.path(), ModelId::ClipVision), "너무 작으면 받다 만 것");
+        assert!(
+            !present(d.path(), ModelId::ClipVision),
+            "너무 작으면 받다 만 것"
+        );
     }
 }

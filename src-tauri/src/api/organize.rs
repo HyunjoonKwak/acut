@@ -151,13 +151,13 @@ pub async fn organize_move(
             let mut sources = organize::libraries_of(&db, &ids).map_err(err)?;
             let out =
                 organize::move_to(&db, &ids, &dest, &format!("정리 → {rel_dir}")).map_err(err)?;
-        if !sources.contains(&library_id) {
-            sources.push(library_id);
-        }
-        for lib in sources {
-            if let Err(error) = organize::forget_empty_folders(&db, lib) {
-                log::warn!("정리 뒤 빈 폴더 행 정리 보류: {error}");
+            if !sources.contains(&library_id) {
+                sources.push(library_id);
             }
+            for lib in sources {
+                if let Err(error) = organize::forget_empty_folders(&db, lib) {
+                    log::warn!("정리 뒤 빈 폴더 행 정리 보류: {error}");
+                }
             }
             Ok(OrganizeOutcome {
                 batch_id: out.batch_id,

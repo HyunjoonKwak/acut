@@ -17,7 +17,11 @@ pub struct Tag {
     pub count: i64,
 }
 
-fn read_tags(c: &rusqlite::Connection, sql: &str, p: &[&dyn rusqlite::ToSql]) -> rusqlite::Result<Vec<Tag>> {
+fn read_tags(
+    c: &rusqlite::Connection,
+    sql: &str,
+    p: &[&dyn rusqlite::ToSql],
+) -> rusqlite::Result<Vec<Tag>> {
     let mut st = c.prepare(sql)?;
     let it = st.query_map(p, |r| {
         Ok(Tag {
@@ -148,7 +152,10 @@ mod tests {
         let nfc = add(&db, &[1], "가족").unwrap();
         // 같은 글자를 NFD로 — 자모를 따로 쓴다. 눈에는 똑같다.
         let decomposed = "\u{1100}\u{1161}\u{110C}\u{1169}\u{11A8}";
-        assert_ne!(decomposed, "가족", "테스트 입력이 이미 NFC면 시험이 안 된다");
+        assert_ne!(
+            decomposed, "가족",
+            "테스트 입력이 이미 NFC면 시험이 안 된다"
+        );
         let nfd = add(&db, &[2], decomposed).unwrap();
         assert_eq!(nfc, nfd);
         assert_eq!(list(&db).unwrap().len(), 1);

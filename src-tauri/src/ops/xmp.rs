@@ -30,7 +30,10 @@ pub struct Meta<'a> {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// 사이드카 본문
@@ -38,7 +41,11 @@ pub fn render(m: &Meta) -> String {
     let tags = if m.tags.is_empty() {
         String::new()
     } else {
-        let items: String = m.tags.iter().map(|t| format!("     <rdf:li>{}</rdf:li>\n", esc(t))).collect();
+        let items: String = m
+            .tags
+            .iter()
+            .map(|t| format!("     <rdf:li>{}</rdf:li>\n", esc(t)))
+            .collect();
         format!("    <dc:subject>\n     <rdf:Bag>\n{items}     </rdf:Bag>\n    </dc:subject>\n")
     };
     let flag = match m.culling_flag {
@@ -100,7 +107,11 @@ struct Row {
 }
 
 /// 평점·태그·판정이 있는 사진 전부(또는 한 라이브러리)의 사이드카를 쓴다.
-pub fn export(db: &Db, library_id: Option<i64>, on_progress: impl Fn(usize, usize)) -> Result<XmpResult> {
+pub fn export(
+    db: &Db,
+    library_id: Option<i64>,
+    on_progress: impl Fn(usize, usize),
+) -> Result<XmpResult> {
     let rows: Vec<Row> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.id, fo.volume_uuid, fo.rel_path, fi.name, fi.rating, fi.culling_flag, fi.favorite
@@ -144,7 +155,12 @@ pub fn export(db: &Db, library_id: Option<i64>, on_progress: impl Fn(usize, usiz
             continue;
         };
         let photo = mount.join(&r.vol_rel);
-        let m = Meta { rating: r.rating, culling_flag: r.flag, favorite: r.favorite, tags: &tags };
+        let m = Meta {
+            rating: r.rating,
+            culling_flag: r.flag,
+            favorite: r.favorite,
+            tags: &tags,
+        };
         match write(&photo, &m) {
             Ok(true) => out.written += 1,
             Ok(false) => out.skipped += 1,
@@ -165,7 +181,12 @@ mod tests {
     #[test]
     fn renders_rating_flag_and_tags() {
         let tags = vec!["가족".to_string(), "a<b".to_string()];
-        let s = render(&Meta { rating: 4, culling_flag: 1, favorite: true, tags: &tags });
+        let s = render(&Meta {
+            rating: 4,
+            culling_flag: 1,
+            favorite: true,
+            tags: &tags,
+        });
         assert!(s.contains("xmp:Rating=\"4\""));
         assert!(s.contains("acut:Flag=\"pick\""));
         assert!(s.contains("<rdf:li>가족</rdf:li>"));
@@ -178,7 +199,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let photo = d.path().join("IMG_1.jpg");
         std::fs::write(&photo, b"x").unwrap();
-        let m = Meta { rating: 3, culling_flag: 0, favorite: false, tags: &[] };
+        let m = Meta {
+            rating: 3,
+            culling_flag: 0,
+            favorite: false,
+            tags: &[],
+        };
         assert!(write(&photo, &m).unwrap());
         assert!(d.path().join("IMG_1.jpg.xmp").exists());
         // 남이 만든 사이드카
@@ -186,6 +212,9 @@ mod tests {
         std::fs::write(&other, b"y").unwrap();
         std::fs::write(d.path().join("IMG_2.jpg.xmp"), "<x:xmpmeta/>").unwrap();
         assert!(!write(&other, &m).unwrap());
-        assert_eq!(std::fs::read_to_string(d.path().join("IMG_2.jpg.xmp")).unwrap(), "<x:xmpmeta/>");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("IMG_2.jpg.xmp")).unwrap(),
+            "<x:xmpmeta/>"
+        );
     }
 }

@@ -58,7 +58,9 @@ pub struct Detector {
 
 impl Detector {
     pub fn load(path: &Path, threads: usize) -> Result<Self> {
-        Ok(Detector { session: Mutex::new(session(path, threads)?) })
+        Ok(Detector {
+            session: Mutex::new(session(path, threads)?),
+        })
     }
 
     pub fn detect(&self, img: &RgbImage) -> Result<Vec<Face>> {
@@ -75,7 +77,11 @@ impl Detector {
         let input = ort::value::Tensor::from_array(([1, 3, side, side], data))?;
         let outputs = s.run(ort::inputs!["input" => input])?;
         let grab = |name: &str| -> Result<Vec<f32>> {
-            Ok(outputs[name].try_extract_array::<f32>()?.iter().copied().collect())
+            Ok(outputs[name]
+                .try_extract_array::<f32>()?
+                .iter()
+                .copied()
+                .collect())
         };
         let mut all = Vec::new();
         for stride in STRIDES {
@@ -83,7 +89,15 @@ impl Detector {
             let obj = grab(&format!("obj_{stride}"))?;
             let bbox = grab(&format!("bbox_{stride}"))?;
             let kps = grab(&format!("kps_{stride}"))?;
-            all.extend(decode(stride, side / stride, &cls, &obj, &bbox, &kps, SCORE_MIN));
+            all.extend(decode(
+                stride,
+                side / stride,
+                &cls,
+                &obj,
+                &bbox,
+                &kps,
+                SCORE_MIN,
+            ));
         }
         let mut kept = nms(all, NMS_IOU);
         for f in &mut kept {
@@ -139,7 +153,14 @@ fn decode(
         for (j, p) in pts.iter_mut().enumerate() {
             *p = [(col + k[j * 2]) * s, (row + k[j * 2 + 1]) * s];
         }
-        out.push(Face { x: cx - w / 2.0, y: cy - h / 2.0, w, h, score, kps: pts });
+        out.push(Face {
+            x: cx - w / 2.0,
+            y: cy - h / 2.0,
+            w,
+            h,
+            score,
+            kps: pts,
+        });
     }
     out
 }
@@ -194,7 +215,9 @@ pub fn similarity(from: &[[f32; 2]; 5], to: &[[f32; 2]; 5]) -> [f32; 4] {
     }
     // 가우스 소거
     for c in 0..4 {
-        let pivot = (c..4).max_by(|&i, &j| m[i][c].abs().total_cmp(&m[j][c].abs())).unwrap();
+        let pivot = (c..4)
+            .max_by(|&i, &j| m[i][c].abs().total_cmp(&m[j][c].abs()))
+            .unwrap();
         m.swap(c, pivot);
         v.swap(c, pivot);
         let d = m[c][c];
@@ -277,7 +300,10 @@ impl Recognizer {
     }
 
     pub fn load_with(path: &Path, threads: usize, norm: Norm) -> Result<Self> {
-        Ok(Recognizer { session: Mutex::new(session(path, threads)?), norm })
+        Ok(Recognizer {
+            session: Mutex::new(session(path, threads)?),
+            norm,
+        })
     }
 
     /// 정렬된 112×112 얼굴 → 길이 1 벡터 (128)
@@ -293,17 +319,34 @@ impl Recognizer {
             Norm::RgbCentered => (false, true),
             Norm::BgrCentered => (true, true),
         };
-        let f = |v: u8| if center { (v as f32 - 127.5) / 128.0 } else { v as f32 };
+        let f = |v: u8| {
+            if center {
+                (v as f32 - 127.5) / 128.0
+            } else {
+                v as f32
+            }
+        };
         for (i, p) in aligned.pixels().enumerate() {
-            let (r, g, b) = if swap { (p[2], p[1], p[0]) } else { (p[0], p[1], p[2]) };
+            let (r, g, b) = if swap {
+                (p[2], p[1], p[0])
+            } else {
+                (p[0], p[1], p[2])
+            };
             data[i] = f(r);
             data[n + i] = f(g);
             data[2 * n + i] = f(b);
         }
         let mut s = self.session.lock().unwrap_or_else(|e| e.into_inner());
-        let input = ort::value::Tensor::from_array(([1, 3, ALIGN_SIDE as usize, ALIGN_SIDE as usize], data))?;
+        let input = ort::value::Tensor::from_array((
+            [1, 3, ALIGN_SIDE as usize, ALIGN_SIDE as usize],
+            data,
+        ))?;
         let outputs = s.run(ort::inputs!["data" => input])?;
-        let v: Vec<f32> = outputs[0].try_extract_array::<f32>()?.iter().copied().collect();
+        let v: Vec<f32> = outputs[0]
+            .try_extract_array::<f32>()?
+            .iter()
+            .copied()
+            .collect();
         if v.len() != EMB_DIM {
             return Err(AiError::Other(format!("얼굴 벡터 길이가 {}", v.len())));
         }
@@ -342,12 +385,26 @@ mod tests {
     }
 
     fn face(x: f32, y: f32, w: f32, h: f32, score: f32) -> Face {
-        Face { x, y, w, h, score, kps: [[0.0; 2]; 5] }
+        Face {
+            x,
+            y,
+            w,
+            h,
+            score,
+            kps: [[0.0; 2]; 5],
+        }
     }
 
     #[test]
     fn nms_keeps_the_stronger_of_overlapping_boxes() {
-        let kept = nms(vec![face(0.0, 0.0, 10.0, 10.0, 0.9), face(1.0, 1.0, 10.0, 10.0, 0.95), face(50.0, 50.0, 10.0, 10.0, 0.85)], 0.3);
+        let kept = nms(
+            vec![
+                face(0.0, 0.0, 10.0, 10.0, 0.9),
+                face(1.0, 1.0, 10.0, 10.0, 0.95),
+                face(50.0, 50.0, 10.0, 10.0, 0.85),
+            ],
+            0.3,
+        );
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].score, 0.95);
         assert_eq!(kept[1].score, 0.85);
@@ -384,7 +441,10 @@ mod tests {
         let out = align(&img, &REF);
         let (x, y) = (60u32, 40u32);
         let (a, b) = (img.get_pixel(x, y).0, out.get_pixel(x, y).0);
-        assert!((a[0] as i32 - b[0] as i32).abs() <= 1 && (a[1] as i32 - b[1] as i32).abs() <= 1, "{a:?} {b:?}");
+        assert!(
+            (a[0] as i32 - b[0] as i32).abs() <= 1 && (a[1] as i32 - b[1] as i32).abs() <= 1,
+            "{a:?} {b:?}"
+        );
     }
 
     /// 실제 썸네일 몇 장에서 얼굴을 찾아 정렬된 얼굴을 파일로 남긴다 (눈으로 확인용).
@@ -392,9 +452,11 @@ mod tests {
     #[test]
     #[ignore = "모델과 썸네일 필요"]
     fn real_faces_from_thumbnails() {
-        let (Ok(dir), Ok(thumbs), Ok(out)) =
-            (std::env::var("ACUT_FACE_DIR"), std::env::var("ACUT_THUMBS"), std::env::var("ACUT_OUT"))
-        else {
+        let (Ok(dir), Ok(thumbs), Ok(out)) = (
+            std::env::var("ACUT_FACE_DIR"),
+            std::env::var("ACUT_THUMBS"),
+            std::env::var("ACUT_OUT"),
+        ) else {
             return;
         };
         let dir = std::path::PathBuf::from(dir);
@@ -405,7 +467,13 @@ mod tests {
             let img = image::open(p).unwrap().to_rgb8();
             let t = std::time::Instant::now();
             let faces = det.detect(&img).unwrap();
-            eprintln!("\n{p}: {}×{} 얼굴 {}개 {:.0}ms", img.width(), img.height(), faces.len(), t.elapsed().as_secs_f64() * 1000.0);
+            eprintln!(
+                "\n{p}: {}×{} 얼굴 {}개 {:.0}ms",
+                img.width(),
+                img.height(),
+                faces.len(),
+                t.elapsed().as_secs_f64() * 1000.0
+            );
             for (i, f) in faces.iter().enumerate() {
                 if f.w < 24.0 {
                     continue;
@@ -413,14 +481,24 @@ mod tests {
                 let aligned = align(&img, &f.kps);
                 let path = format!("{out}/{n}_{i}.png");
                 aligned.save(&path).unwrap();
-                eprintln!("  #{i} score {:.2} {}×{} at ({:.0},{:.0}) → {path}", f.score, f.w as i32, f.h as i32, f.x, f.y);
+                eprintln!(
+                    "  #{i} score {:.2} {}×{} at ({:.0},{:.0}) → {path}",
+                    f.score, f.w as i32, f.h as i32, f.x, f.y
+                );
                 crops.push((format!("{n}_{i}"), aligned));
             }
         }
         for norm in [Norm::Rgb, Norm::Bgr, Norm::RgbCentered, Norm::BgrCentered] {
             let rec = Recognizer::load_with(&dir.join("sface.onnx"), 4, norm).unwrap();
             let embs: Vec<Vec<f32>> = crops.iter().map(|(_, c)| rec.embed(c).unwrap()).collect();
-            eprint!("\n[{norm:?}] 코사인 행렬 (행/열 = {})\n      ", crops.iter().map(|c| c.0.as_str()).collect::<Vec<_>>().join(" "));
+            eprint!(
+                "\n[{norm:?}] 코사인 행렬 (행/열 = {})\n      ",
+                crops
+                    .iter()
+                    .map(|c| c.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
             for i in 0..embs.len() {
                 eprint!("\n  {:>4} ", crops[i].0);
                 for j in 0..embs.len() {

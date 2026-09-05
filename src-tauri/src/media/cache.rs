@@ -115,8 +115,12 @@ pub fn migrate_from_legacy(legacy: &Path, dest: &Path) -> (usize, usize) {
     };
     let (mut moved, mut failed) = (0, 0);
     for shard in shards.flatten() {
-        let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
-        let Some(shard_name) = shard.file_name().to_str().map(str::to_string) else { continue };
+        let Ok(files) = std::fs::read_dir(shard.path()) else {
+            continue;
+        };
+        let Some(shard_name) = shard.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
         let out_dir = dest.join(&shard_name);
         if std::fs::create_dir_all(&out_dir).is_err() {
             failed += 1;
@@ -166,7 +170,9 @@ pub fn purge_sidecars(root: &Path) -> (usize, u64) {
         return (0, 0);
     };
     for shard in shards.flatten() {
-        let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
+        let Ok(files) = std::fs::read_dir(shard.path()) else {
+            continue;
+        };
         for f in files.flatten() {
             if !f.file_name().to_string_lossy().starts_with("._") {
                 continue;
@@ -191,7 +197,9 @@ pub fn cache_stats(root: &Path) -> (u64, usize) {
         return (0, 0);
     };
     for shard in shards.flatten() {
-        let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
+        let Ok(files) = std::fs::read_dir(shard.path()) else {
+            continue;
+        };
         for f in files.flatten() {
             if f.file_name().to_string_lossy().starts_with("._") {
                 continue;
@@ -288,8 +296,14 @@ mod tests {
         let dest = new.path().join("thumbs").join("1");
         let (moved, failed) = migrate_from_legacy(&legacy, &dest);
         assert_eq!((moved, failed), (1, 0));
-        assert!(dest.join("ab").join("abcd.jpg").is_file(), "썸네일은 살아 온다");
-        assert!(!dest.join("ab").join("._abcd.jpg").exists(), "사이드카는 안 옮긴다");
+        assert!(
+            dest.join("ab").join("abcd.jpg").is_file(),
+            "썸네일은 살아 온다"
+        );
+        assert!(
+            !dest.join("ab").join("._abcd.jpg").exists(),
+            "사이드카는 안 옮긴다"
+        );
         assert!(!legacy.exists(), "옛 폴더는 치운다");
 
         // 옛 폴더가 없으면 아무 일도 없다
@@ -308,7 +322,10 @@ mod tests {
 
         let (n, bytes) = purge_sidecars(&root);
         assert_eq!((n, bytes), (1, 16384));
-        assert!(root.join("ab").join("abcd.jpg").is_file(), "진짜 캐시는 남는다");
+        assert!(
+            root.join("ab").join("abcd.jpg").is_file(),
+            "진짜 캐시는 남는다"
+        );
         assert!(!root.join("ab").join("._abcd.jpg").exists());
 
         // 두 번 돌려도 안전하다
@@ -373,7 +390,11 @@ mod audit {
                 .unwrap();
             let rows = st
                 .query_map([id], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
                 })
                 .unwrap();
             for row in rows {
@@ -383,7 +404,9 @@ mod audit {
 
             let (mut have, mut orphan) = (0usize, 0usize);
             for shard in std::fs::read_dir(&root).unwrap().flatten() {
-                let Ok(files) = std::fs::read_dir(shard.path()) else { continue };
+                let Ok(files) = std::fs::read_dir(shard.path()) else {
+                    continue;
+                };
                 for f in files.flatten() {
                     have += 1;
                     let n = f.file_name().to_string_lossy().into_owned();
@@ -392,7 +415,10 @@ mod audit {
                     }
                 }
             }
-            println!("라이브러리 {id}: 파일 {} · 캐시 {have} · 고아 {orphan}", want.len());
+            println!(
+                "라이브러리 {id}: 파일 {} · 캐시 {have} · 고아 {orphan}",
+                want.len()
+            );
         }
     }
 }

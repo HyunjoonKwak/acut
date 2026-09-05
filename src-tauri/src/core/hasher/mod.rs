@@ -43,7 +43,9 @@ pub fn full_hash(path: &Path) -> Option<String> {
 // Resizes image to 8x8 grayscale, compares each pixel to the mean
 pub fn compute_phash(path: &Path) -> Option<Vec<u8>> {
     let img = image::open(path).ok()?;
-    let gray = img.resize_exact(8, 8, image::imageops::FilterType::Lanczos3).to_luma8();
+    let gray = img
+        .resize_exact(8, 8, image::imageops::FilterType::Lanczos3)
+        .to_luma8();
 
     let pixels: Vec<u8> = gray.pixels().map(|p| p.0[0]).collect();
     let mean: f64 = pixels.iter().map(|&p| p as f64).sum::<f64>() / pixels.len() as f64;

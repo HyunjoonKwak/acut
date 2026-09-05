@@ -258,7 +258,18 @@ pub fn scan(
     }
     let mut info: HashMap<i64, Info> = cands
         .iter()
-        .map(|c| (c.id, Info { size: c.size, area: c.area, taken_at: c.taken_at, full: c.full.clone(), flag: c.flag }))
+        .map(|c| {
+            (
+                c.id,
+                Info {
+                    size: c.size,
+                    area: c.area,
+                    taken_at: c.taken_at,
+                    full: c.full.clone(),
+                    flag: c.flag,
+                },
+            )
+        })
         .collect();
     // 전체 해시를 방금 읽은 것은 cands.full 에 없다 — 그룹 사유 판정에 쓰이므로 채운다
     for (h, ids) in &final_groups {
@@ -461,9 +472,8 @@ fn write_groups(db: &Db, comps: &[Vec<i64>], info: &HashMap<i64, Info>) -> Resul
             "INSERT INTO groups(kind, reason, size_bytes, state, created_at)
              VALUES(0, ?1, ?2, ?3, strftime('%s','now'))",
         )?;
-        let mut ins_m = tx.prepare(
-            "INSERT INTO group_members(group_id, file_id, is_best) VALUES(?1,?2,?3)",
-        )?;
+        let mut ins_m =
+            tx.prepare("INSERT INTO group_members(group_id, file_id, is_best) VALUES(?1,?2,?3)")?;
         for ids in comps {
             // 가장 이른 촬영일을 기본 유지본으로 제안한다.
             // 원본이 사본보다 먼저 찍혔을 가능성이 높다.
@@ -477,7 +487,9 @@ fn write_groups(db: &Db, comps: &[Vec<i64>], info: &HashMap<i64, Info>) -> Resul
             let mut flags: Vec<i32> = Vec::with_capacity(ids.len());
             for id in ids {
                 let i = info.get(id);
-                let (area, t, flag) = i.map(|c| (c.area, c.taken_at, c.flag)).unwrap_or((i32::MAX, i64::MAX, 0));
+                let (area, t, flag) =
+                    i.map(|c| (c.area, c.taken_at, c.flag))
+                        .unwrap_or((i32::MAX, i64::MAX, 0));
                 total += i.map(|c| c.size).unwrap_or(0);
                 fulls.push(i.and_then(|c| c.full.as_deref()));
                 flags.push(flag);
@@ -485,7 +497,12 @@ fn write_groups(db: &Db, comps: &[Vec<i64>], info: &HashMap<i64, Info>) -> Resul
                 // 남김이 대표가 아니면 ★와 표시가 어긋나 보이고(실측 2,161무리), 확정이
                 // 앞선 결정을 뒤집는다 (2026-08-31 동영상 쌍 지적)
                 // 같은 자리·같은 시각이면 id 로 — 돌릴 때마다 대표가 바뀌지 않게
-                let key = (if flag == 1 { 0 } else { 1 }, if area == 1 || area == 2 { 0 } else { 1 }, t, *id);
+                let key = (
+                    if flag == 1 { 0 } else { 1 },
+                    if area == 1 || area == 2 { 0 } else { 1 },
+                    t,
+                    *id,
+                );
                 if key < best_key {
                     best_key = key;
                     best = *id;
@@ -493,11 +510,16 @@ fn write_groups(db: &Db, comps: &[Vec<i64>], info: &HashMap<i64, Info>) -> Resul
             }
             // 앞선 표시로 이미 결정된 무리(남김 하나 + 나머지 전부 제외)는 닫아서 만든다 —
             // «미결»로 두면 ✕ 붙은 쌍이 또 나와 «둘 다 제외인가»가 된다
-            let decided = flags.iter().all(|f| *f != 0) && flags.iter().filter(|f| **f == 1).count() == 1;
+            let decided =
+                flags.iter().all(|f| *f != 0) && flags.iter().filter(|f| **f == 1).count() == 1;
             let state = if decided { 1 } else { 0 };
             // 바이트까지 다 같으면 «완전 중복», 그림만 같은 것이 섞였으면 «메타데이터만 다름»
             let all_same_bytes = fulls[0].is_some() && fulls.iter().all(|f| *f == fulls[0]);
-            let reason = if all_same_bytes { "완전 중복" } else { "메타데이터만 다름" };
+            let reason = if all_same_bytes {
+                "완전 중복"
+            } else {
+                "메타데이터만 다름"
+            };
             // 한 장만 남기므로 나머지 크기만큼 확보된다
             let gain = total - info.get(&best).map(|c| c.size).unwrap_or(0);
             reclaimable += gain;
@@ -531,7 +553,11 @@ mod tests {
         // T7 쪽: 머리 없는 원본
         std::fs::write(dir.path().join("t7/IMG_1.jpg"), jpeg(&[], &scan)).unwrap();
         // 이름·크기(픽셀)는 같지만 다른 그림
-        std::fs::write(dir.path().join("other/IMG_1.jpg"), jpeg(&[], &[0x12, 0x34, 0xFF, 0x00, 0x00])).unwrap();
+        std::fs::write(
+            dir.path().join("other/IMG_1.jpg"),
+            jpeg(&[], &[0x12, 0x34, 0xFF, 0x00, 0x00]),
+        )
+        .unwrap();
         // 같은 그림이지만 크기 차가 상한을 넘는다 — 재지 않는다
         let fat = seg(0xFE, &vec![b'x'; TWIN_SLACK as usize + 10]);
         std::fs::write(dir.path().join("fat/IMG_1.jpg"), jpeg(&[fat], &scan)).unwrap();
@@ -539,7 +565,8 @@ mod tests {
         let db = Db::open(dir.path().join("t.db")).unwrap();
         scan_test(&db, dir.path(), 1, |_| {}).unwrap();
         // 시험판 JPEG 은 실제 그림이 아니라 스캐너가 픽셀 크기를 못 읽는다 — 같은 크기로 채운다
-        db.write(|c| c.execute("UPDATE files SET width=16, height=16", [])).unwrap();
+        db.write(|c| c.execute("UPDATE files SET width=16, height=16", []))
+            .unwrap();
         (dir, db)
     }
 
@@ -561,7 +588,13 @@ mod tests {
         assert_eq!(n, 2, "mine 과 t7 만 — 다른 그림·상한 밖 사본은 빠진다");
         // 그림 해시가 남아 다음엔 다시 읽지 않는다 (상한 밖 사본은 재지 않았다)
         let hashed: i64 = db
-            .read(|c| c.query_row("SELECT COUNT(*) FROM files WHERE image_hash IS NOT NULL", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM files WHERE image_hash IS NOT NULL",
+                    [],
+                    |r| r.get(0),
+                )
+            })
             .unwrap();
         assert_eq!(hashed, 3);
         // 확보 용량은 대표를 뺀 나머지 크기
@@ -592,9 +625,14 @@ mod tests {
         let (d, db) = twin_setup();
         // t7 원본과 바이트까지 같은 사본 하나 더 — 세 장이 한 그룹, 사유는 «메타데이터만 다름»
         std::fs::create_dir_all(d.path().join("t7b")).unwrap();
-        std::fs::copy(d.path().join("t7/IMG_1.jpg"), d.path().join("t7b/IMG_1.jpg")).unwrap();
+        std::fs::copy(
+            d.path().join("t7/IMG_1.jpg"),
+            d.path().join("t7b/IMG_1.jpg"),
+        )
+        .unwrap();
         scan_test(&db, d.path(), 1, |_| {}).unwrap();
-        db.write(|c| c.execute("UPDATE files SET width=16, height=16", [])).unwrap();
+        db.write(|c| c.execute("UPDATE files SET width=16, height=16", []))
+            .unwrap();
         let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         assert_eq!(p.groups, 1);
         let (reason, n): (String, i64) = db
@@ -611,7 +649,10 @@ mod tests {
 
     #[test]
     fn merge_groups_joins_through_shared_members() {
-        let got = merge_groups(vec![vec![1, 2], vec![5, 6]].into_iter(), vec![vec![2, 3], vec![9, 10]].into_iter());
+        let got = merge_groups(
+            vec![vec![1, 2], vec![5, 6]].into_iter(),
+            vec![vec![2, 3], vec![9, 10]].into_iter(),
+        );
         assert_eq!(got, vec![vec![1, 2, 3], vec![5, 6], vec![9, 10]]);
     }
 
@@ -624,7 +665,11 @@ mod tests {
         std::fs::create_dir_all(&b).unwrap();
 
         // 같은 내용 3개 (경로·이름은 다르다)
-        for (d, n) in [(&a, "20200101_120000.jpg"), (&b, "20200101_120001.jpg"), (&a, "copy.jpg")] {
+        for (d, n) in [
+            (&a, "20200101_120000.jpg"),
+            (&b, "20200101_120001.jpg"),
+            (&a, "copy.jpg"),
+        ] {
             std::fs::write(d.join(n), b"SAME CONTENT ".repeat(100)).unwrap();
         }
         // 크기는 같지만 내용이 다른 것 — 그룹에 들어가면 안 된다
@@ -640,8 +685,7 @@ mod tests {
     #[test]
     fn groups_only_byte_identical_files() {
         let (_d, db) = setup();
-        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {})
-            .unwrap();
+        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         assert_eq!(p.groups, 1, "같은 내용 3개가 한 그룹");
 
         let members: i64 = db
@@ -677,8 +721,14 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(state, 1, "남김 하나 + 제외 둘 = 이미 결정 — 미결로 다시 묻지 않는다");
-        assert_eq!(best_name, "20200101_120001.jpg", "남김 표시가 대표를 이긴다");
+        assert_eq!(
+            state, 1,
+            "남김 하나 + 제외 둘 = 이미 결정 — 미결로 다시 묻지 않는다"
+        );
+        assert_eq!(
+            best_name, "20200101_120001.jpg",
+            "남김 표시가 대표를 이긴다"
+        );
     }
 
     /// 표시가 일부만 있으면 미결로 남되, 남김이 대표가 된다
@@ -686,7 +736,10 @@ mod tests {
     fn a_partial_mark_keeps_the_group_open_with_the_kept_one_as_best() {
         let (_d, db) = setup();
         db.write(|c| {
-            c.execute("UPDATE files SET culling_flag = 1 WHERE name = 'copy.jpg'", [])
+            c.execute(
+                "UPDATE files SET culling_flag = 1 WHERE name = 'copy.jpg'",
+                [],
+            )
         })
         .unwrap();
         scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
@@ -726,11 +779,12 @@ mod tests {
     #[test]
     fn reclaimable_counts_all_but_one() {
         let (_d, db) = setup();
-        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {})
-            .unwrap();
+        let p = scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         let one: i64 = db
             .read(|c| {
-                c.query_row("SELECT size FROM files WHERE name='copy.jpg'", [], |r| r.get(0))
+                c.query_row("SELECT size FROM files WHERE name='copy.jpg'", [], |r| {
+                    r.get(0)
+                })
             })
             .unwrap();
         assert_eq!(p.reclaimable, one * 2, "3개 중 2개분만 확보된다");
@@ -741,9 +795,7 @@ mod tests {
         let (_d, db) = setup();
         scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         let bests: i64 = db
-            .read(|c| {
-                c.query_row("SELECT SUM(is_best) FROM group_members", [], |r| r.get(0))
-            })
+            .read(|c| c.query_row("SELECT SUM(is_best) FROM group_members", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(bests, 1, "그룹마다 유지 후보는 하나");
     }
@@ -768,7 +820,10 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(best_name, "20200101_120001.jpg", "내사진(b)의 사본이 남는다");
+        assert_eq!(
+            best_name, "20200101_120001.jpg",
+            "내사진(b)의 사본이 남는다"
+        );
     }
 
     #[test]
@@ -777,20 +832,27 @@ mod tests {
         scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         let hashed: i64 = db
             .read(|c| {
-                c.query_row("SELECT COUNT(*) FROM files WHERE full_hash IS NOT NULL", [], |r| {
-                    r.get(0)
-                })
+                c.query_row(
+                    "SELECT COUNT(*) FROM files WHERE full_hash IS NOT NULL",
+                    [],
+                    |r| r.get(0),
+                )
             })
             .unwrap();
         assert!(hashed >= 3, "다음 스캔에서 다시 읽지 않도록 저장한다");
         let quick: i64 = db
             .read(|c| {
-                c.query_row("SELECT COUNT(*) FROM files WHERE quick_hash IS NOT NULL", [], |r| {
-                    r.get(0)
-                })
+                c.query_row(
+                    "SELECT COUNT(*) FROM files WHERE quick_hash IS NOT NULL",
+                    [],
+                    |r| r.get(0),
+                )
             })
             .unwrap();
-        assert!(quick >= hashed, "빠른 해시도 남긴다 — 전체 해시 대상은 빠른 해시를 거쳤다");
+        assert!(
+            quick >= hashed,
+            "빠른 해시도 남긴다 — 전체 해시 대상은 빠른 해시를 거쳤다"
+        );
     }
 
     #[test]
@@ -798,12 +860,21 @@ mod tests {
         let (_d, db) = setup();
         let phases = Mutex::new(Vec::new());
         scan(&db, Arc::new(AtomicBool::new(false)), |p| {
-            phases.lock().unwrap().push((p.phase, p.full_total, p.full_done));
+            phases
+                .lock()
+                .unwrap()
+                .push((p.phase, p.full_total, p.full_done));
         })
         .unwrap();
         let ph = phases.into_inner().unwrap();
-        assert!(ph.iter().any(|x| x.0 == "full" && x.1 >= 3), "전체 해시 단계를 알린다: {ph:?}");
-        assert!(ph.iter().any(|x| x.0 == "full" && x.2 == x.1 && x.1 > 0), "끝까지 센다: {ph:?}");
+        assert!(
+            ph.iter().any(|x| x.0 == "full" && x.1 >= 3),
+            "전체 해시 단계를 알린다: {ph:?}"
+        );
+        assert!(
+            ph.iter().any(|x| x.0 == "full" && x.2 == x.1 && x.1 > 0),
+            "끝까지 센다: {ph:?}"
+        );
     }
 
     #[test]
@@ -821,9 +892,7 @@ mod tests {
     #[test]
     fn cancellation_stops_early() {
         let (_d, db) = setup();
-        let p = scan(&db, Arc::new(AtomicBool::new(true)), |_| {})
-            .unwrap();
+        let p = scan(&db, Arc::new(AtomicBool::new(true)), |_| {}).unwrap();
         assert_eq!(p.groups, 0);
     }
 }
-

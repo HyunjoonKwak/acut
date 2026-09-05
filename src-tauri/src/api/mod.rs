@@ -6,22 +6,22 @@
 //! 6만 장 그리드에서는 문자열 복사 비용이 그대로 렉이 된다. 프론트는 받은 경로를
 //! `convertFileSrc`로 바꿔 `<img src>`에 넣으면 된다 — 웹뷰가 파일을 직접 읽는다.
 
-pub mod geo;
-pub mod cull;
 pub mod backup;
 pub mod capture_date;
+pub mod cull;
 pub mod folder;
+pub mod geo;
 pub mod job;
 pub mod nas;
 pub mod organize;
 pub mod p1;
 pub mod photo_protocol;
-pub mod thumb_protocol;
-pub mod update;
 pub mod smart;
 pub mod tags;
-pub mod trash;
+pub mod thumb_protocol;
 pub mod transfer;
+pub mod trash;
+pub mod update;
 pub mod video_protocol;
 
 use crate::db::conn::Db;
@@ -31,9 +31,9 @@ use crate::db::tree;
 use crate::media::cache;
 use crate::scan;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -148,16 +148,10 @@ pub(crate) fn start_pending_thumbs(app: &AppHandle, library_id: i64) -> Result<(
     let handle = app.clone();
     std::thread::spawn(move || {
         let _guard = guard;
-        let result = scan::thumbs::generate(
-            &db,
-            library_id,
-            &mount,
-            &cache_root,
-            cancel,
-            |progress| {
+        let result =
+            scan::thumbs::generate(&db, library_id, &mount, &cache_root, cancel, |progress| {
                 let _ = handle.emit("thumb-progress", progress);
-            },
-        );
+            });
         let _ = handle.emit("thumb-done", result.is_ok());
     });
     Ok(())
@@ -177,7 +171,11 @@ pub async fn libraries_list(state: State<'_, AppState>) -> Result<Vec<LibRow>, S
 
 /// 폴더를 라이브러리로 등록한다. 스캔은 하지 않는다 (`scan_start`가 한다).
 #[tauri::command]
-pub async fn library_add(state: State<'_, AppState>, path: String, area: i32) -> Result<LibRow, String> {
+pub async fn library_add(
+    state: State<'_, AppState>,
+    path: String,
+    area: i32,
+) -> Result<LibRow, String> {
     let dir = PathBuf::from(&path);
     if !dir.is_dir() {
         return Err(format!("폴더가 아닙니다: {path}"));
@@ -190,7 +188,11 @@ pub async fn library_add(state: State<'_, AppState>, path: String, area: i32) ->
 /// 등록을 지운다. **원본 사진과 디스크의 캐시 파일은 건드리지 않는다.**
 /// 라이브러리의 영역(역할)을 바꾼다 — 0 작업대 · 1 내사진 · 2 공용 · 3 기타
 #[tauri::command]
-pub async fn library_set_area(state: State<'_, AppState>, id: i64, area: i32) -> Result<(), String> {
+pub async fn library_set_area(
+    state: State<'_, AppState>,
+    id: i64,
+    area: i32,
+) -> Result<(), String> {
     if !(0..=3).contains(&area) {
         return Err(format!("모르는 영역: {area}"));
     }
@@ -221,7 +223,9 @@ pub async fn cache_migrate(app: AppHandle) -> Result<(usize, usize), String> {
     let mut moved = 0;
     let mut failed = 0;
     for l in libs {
-        let Some(dir) = l.dir.as_deref() else { continue };
+        let Some(dir) = l.dir.as_deref() else {
+            continue;
+        };
         let legacy = cache::legacy_root(dir);
         if !legacy.is_dir() {
             continue;
@@ -251,8 +255,12 @@ pub async fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     // 이미 도는 중이면 새로 시작하지 않는다 — 두 벌이 같은 캐시에 쓴다.
     // 폴더 감시가 잠깐 쥔 것이면 기다렸다 잡는다 — 조용한 감시 탓에 «이미 스캔 중»이
     // 아무것도 안 보이는데 뜨던 문제 (2026-08-31)
-    let Some(guard) = job::try_start_wait(&state.running, "스캔", std::time::Duration::from_secs(20)) else {
-        return Err("다른 작업이 아직 도는 중입니다 — 툴바의 작업 표시가 사라진 뒤 다시 눌러 주세요".into());
+    let Some(guard) =
+        job::try_start_wait(&state.running, "스캔", std::time::Duration::from_secs(20))
+    else {
+        return Err(
+            "다른 작업이 아직 도는 중입니다 — 툴바의 작업 표시가 사라진 뒤 다시 눌러 주세요".into(),
+        );
     };
     cancel.store(false, Ordering::Relaxed);
 
@@ -282,7 +290,6 @@ pub async fn scan_start(app: AppHandle, library_id: i64) -> Result<(), String> {
                     },
                 );
                 let _ = app.emit("thumb-done", tp.ok());
-
             }
             Err(e) => {
                 let _ = app.emit("scan-error", e.to_string());
@@ -386,7 +393,10 @@ pub struct FolderHit {
 /// Finder 로 고른 절대경로 → 등록된 라이브러리 안의 폴더 행. 밖이면 None.
 /// exFAT 은 목록을 NFD 로 주니 NFC 로 맞춰 견준다.
 #[tauri::command]
-pub async fn folder_by_path(state: State<'_, AppState>, path: String) -> Result<Option<FolderHit>, String> {
+pub async fn folder_by_path(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Option<FolderHit>, String> {
     use unicode_normalization::UnicodeNormalization;
     let nfc = |s: &str| s.nfc().collect::<String>();
     let want = nfc(path.trim_end_matches('/'));
@@ -395,19 +405,26 @@ pub async fn folder_by_path(state: State<'_, AppState>, path: String) -> Result<
     let mut best: Option<(&crate::db::libraries::Library, String)> = None;
     for l in &libs {
         let Some(dir) = &l.dir else { continue };
-        let root = nfc(&dir.to_string_lossy()).trim_end_matches('/').to_string();
+        let root = nfc(&dir.to_string_lossy())
+            .trim_end_matches('/')
+            .to_string();
         let sub = if want == root {
             Some(String::new())
         } else {
             want.strip_prefix(&format!("{root}/")).map(str::to_string)
         };
         if let Some(sub) = sub {
-            if best.as_ref().is_none_or(|(b, _)| b.dir.as_ref().map_or(0, |d| d.as_os_str().len()) < root.len()) {
+            if best
+                .as_ref()
+                .is_none_or(|(b, _)| b.dir.as_ref().map_or(0, |d| d.as_os_str().len()) < root.len())
+            {
                 best = Some((l, sub));
             }
         }
     }
-    let Some((lib, sub)) = best else { return Ok(None) };
+    let Some((lib, sub)) = best else {
+        return Ok(None);
+    };
     let vol_rel = crate::media::cache::rel_path(&lib.rel_path, &sub);
     let esc = crate::db::query::escape_like(&vol_rel);
     let (id, n): (Option<i64>, i64) = state
@@ -457,8 +474,15 @@ pub async fn folders_list(
     // 4,476줄이 한꺼번에 쏟아지지 않는 건 접혀 있기 때문이다. 프론트는
     // 펼친 마디의 자식만 그린다.
     let mut out = Vec::new();
-    for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
-        let nodes = tree::build(leaves_of(state.inner(), l.id, &l.rel_path)?, &l.rel_path, l.id);
+    for l in libs
+        .iter()
+        .filter(|l| library_id.is_none_or(|id| l.id == id))
+    {
+        let nodes = tree::build(
+            leaves_of(state.inner(), l.id, &l.rel_path)?,
+            &l.rel_path,
+            l.id,
+        );
         if library_id.is_some() {
             out.extend(nodes);
         } else {
@@ -469,7 +493,11 @@ pub async fn folders_list(
 }
 
 /// 한 라이브러리의 "사진이 든 폴더"들. 중간 마디는 트리가 만들어 낸다.
-fn leaves_of(state: &AppState, library_id: i64, library_rel: &str) -> Result<Vec<tree::Leaf>, String> {
+fn leaves_of(
+    state: &AppState,
+    library_id: i64,
+    library_rel: &str,
+) -> Result<Vec<tree::Leaf>, String> {
     // rel_path는 **볼륨** 기준이라 라이브러리 루트만큼 앞이 길다. 그대로 쓰면
     // 들여쓰기가 통째로 밀린다. 여기서 잘라 낸다.
     //
@@ -599,9 +627,15 @@ pub async fn cache_usage(
 /// 사진은 건드리지 않는다. 다음에 볼 때 다시 만들어지므로 되돌릴 것이 없다.
 /// 캐시가 망가졌을 때(빈 그림, 옛 방향)의 마지막 수단이다.
 #[tauri::command]
-pub async fn cache_clear(state: State<'_, AppState>, library_id: Option<i64>) -> Result<(), String> {
+pub async fn cache_clear(
+    state: State<'_, AppState>,
+    library_id: Option<i64>,
+) -> Result<(), String> {
     let libs = crate::db::libraries::list(&state.db).map_err(err)?;
-    for l in libs.iter().filter(|l| library_id.is_none_or(|id| l.id == id)) {
+    for l in libs
+        .iter()
+        .filter(|l| library_id.is_none_or(|id| l.id == id))
+    {
         for root in [
             cache::cache_root(&state.cache_base, l.id),
             cache::preview_root(&state.cache_base, l.id),
@@ -652,8 +686,7 @@ pub async fn reveal_in_finder(state: State<'_, AppState>, id: i64) -> Result<(),
             )
         })
         .map_err(err)?;
-    let mount = crate::db::volumes::find_mount(&uuid)
-        .ok_or("디스크가 연결되어 있지 않습니다")?;
+    let mount = crate::db::volumes::find_mount(&uuid).ok_or("디스크가 연결되어 있지 않습니다")?;
     let path = mount.join(&rel);
     if !path.exists() {
         return Err(format!("파일이 없습니다: {}", path.display()));
@@ -766,7 +799,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(dir.path().join("t.db")).unwrap();
         db.write(|c| {
-            c.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')", [])?;
+            c.execute(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')",
+                [],
+            )?;
             c.execute(
                 "INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1)",
                 [],
@@ -813,11 +849,13 @@ mod tests {
         )).unwrap();
 
         clear_thumb_rows(&db, Some(1)).unwrap();
-        let ids: Vec<i64> = db.read(|c| {
-            let mut st = c.prepare("SELECT file_id FROM thumbs ORDER BY file_id")?;
-            let ids = st.query_map([], |r| r.get(0))?.collect();
-            ids
-        }).unwrap();
+        let ids: Vec<i64> = db
+            .read(|c| {
+                let mut st = c.prepare("SELECT file_id FROM thumbs ORDER BY file_id")?;
+                let ids = st.query_map([], |r| r.get(0))?.collect();
+                ids
+            })
+            .unwrap();
         assert_eq!(ids, vec![2]);
     }
 
@@ -869,7 +907,11 @@ fn source_paths(sources: &[String]) -> Result<Vec<PathBuf>, String> {
         .iter()
         .map(|s| {
             let p = PathBuf::from(s);
-            if p.exists() { Ok(p) } else { Err(format!("없는 경로입니다: {s}")) }
+            if p.exists() {
+                Ok(p)
+            } else {
+                Err(format!("없는 경로입니다: {s}"))
+            }
         })
         .collect()
 }
@@ -880,7 +922,11 @@ fn source_paths(sources: &[String]) -> Result<Vec<PathBuf>, String> {
 /// 몇 장 들이는 데 몇 분이 걸린다. 스캐너는 이미 아는 파일을 건너뛰므로
 /// 새로 들어온 것만 읽는다.
 #[tauri::command]
-pub async fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -> Result<(), String> {
+pub async fn import_run(
+    app: AppHandle,
+    sources: Vec<String>,
+    library_id: i64,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
     let paths = source_paths(&sources)?;
     let lib = crate::db::libraries::get(&state.db, library_id)
@@ -891,7 +937,11 @@ pub async fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -
     let cache_root = state.cache_root(library_id);
     let db = Arc::clone(&state.db);
     let cancel = Arc::clone(&state.cancel);
-    let Some(guard) = job::try_start_wait(&state.running, "가져오기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "가져오기",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤 가져오세요".into());
     };
     cancel.store(false, Ordering::Relaxed);
@@ -912,11 +962,14 @@ pub async fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -
         let (mut rep, dirs) = match r {
             Ok(v) => v,
             Err(e) => {
-                let _ = app.emit("import-done", crate::ops::import::Report {
-                    failed: 1,
-                    first_error: Some(e.to_string()),
-                    ..Default::default()
-                });
+                let _ = app.emit(
+                    "import-done",
+                    crate::ops::import::Report {
+                        failed: 1,
+                        first_error: Some(e.to_string()),
+                        ..Default::default()
+                    },
+                );
                 return;
             }
         };
@@ -942,12 +995,19 @@ pub async fn import_run(app: AppHandle, sources: Vec<String>, library_id: i64) -
 // ── 설정 ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn settings_get(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
+pub async fn settings_get(
+    state: State<'_, AppState>,
+    key: String,
+) -> Result<Option<String>, String> {
     crate::db::settings::get(&state.db, &key).map_err(err)
 }
 
 #[tauri::command]
-pub async fn settings_set(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+pub async fn settings_set(
+    state: State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
     crate::db::settings::set(&state.db, &key, &value).map_err(err)
 }
 
@@ -968,7 +1028,9 @@ pub async fn db_info(state: State<'_, AppState>) -> Result<serde_json::Value, St
     let p = state.db.path().to_path_buf();
     let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
     // WAL이 아직 안 합쳐진 만큼도 센다 — 켜 둔 동안은 여기에 쌓인다
-    let wal = std::fs::metadata(p.with_extension("db-wal")).map(|m| m.len()).unwrap_or(0);
+    let wal = std::fs::metadata(p.with_extension("db-wal"))
+        .map(|m| m.len())
+        .unwrap_or(0);
     Ok(serde_json::json!({ "path": p.to_string_lossy(), "bytes": bytes + wal }))
 }
 
@@ -983,14 +1045,19 @@ pub async fn db_backup(state: State<'_, AppState>) -> Result<crate::db::backup::
 }
 
 #[tauri::command]
-pub async fn db_backups(state: State<'_, AppState>) -> Result<Vec<crate::db::backup::Backup>, String> {
+pub async fn db_backups(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::db::backup::Backup>, String> {
     crate::db::backup::list(&backup_dir(&state)).map_err(err)
 }
 
 /// 사본으로 되돌린다. 먼저 지금 상태를 한 벌 떠 두고, 되돌린 뒤 프론트가
 /// 화면을 다시 읽는다 (설정까지 바뀌므로 통째로 새로고침).
 #[tauri::command]
-pub async fn db_restore(state: State<'_, AppState>, path: String) -> Result<crate::db::backup::Backup, String> {
+pub async fn db_restore(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<crate::db::backup::Backup, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -1038,7 +1105,10 @@ pub async fn open_in_default_app(state: State<'_, AppState>, id: i64) -> Result<
     if !path.exists() {
         return Err(format!("파일이 없습니다: {}", path.display()));
     }
-    std::process::Command::new("open").arg(&path).spawn().map_err(err)?;
+    std::process::Command::new("open")
+        .arg(&path)
+        .spawn()
+        .map_err(err)?;
     Ok(())
 }
 
@@ -1051,19 +1121,30 @@ pub async fn file_comment(state: State<'_, AppState>, id: i64, text: String) -> 
     let v: Option<String> = if t.is_empty() { None } else { Some(t) };
     state
         .db
-        .write(|c| c.execute("UPDATE files SET comment = ?2 WHERE id = ?1", rusqlite::params![id, v]))
+        .write(|c| {
+            c.execute(
+                "UPDATE files SET comment = ?2 WHERE id = ?1",
+                rusqlite::params![id, v],
+            )
+        })
         .map_err(err)?;
     Ok(())
 }
 
 /// 이름을 바꾼다. 같은 이름이 있으면 거절한다. 새 이름을 돌려준다.
 #[tauri::command]
-pub async fn file_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<String, String> {
+pub async fn file_rename(
+    state: State<'_, AppState>,
+    id: i64,
+    name: String,
+) -> Result<String, String> {
     let db = Arc::clone(&state.db);
     let running = Arc::clone(&state.running);
     tauri::async_runtime::spawn_blocking(move || {
         // 스캔·정리가 같은 파일을 옮기는 사이에 끼어들지 않게 — 다른 파일 작업과 같은 잠금
-        let Some(_guard) = job::try_start_wait(&running, "이름 바꾸기", std::time::Duration::from_secs(20)) else {
+        let Some(_guard) =
+            job::try_start_wait(&running, "이름 바꾸기", std::time::Duration::from_secs(20))
+        else {
             return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
         };
         crate::ops::rename::rename(&db, id, &name).map_err(err)
@@ -1103,7 +1184,11 @@ pub async fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String
         );
     }
     let libs = crate::db::libraries::list(&state.db).map_err(err)?;
-    let want: Vec<i64> = libs.iter().filter(|l| l.dir.is_some()).map(|l| l.id).collect();
+    let want: Vec<i64> = libs
+        .iter()
+        .filter(|l| l.dir.is_some())
+        .map(|l| l.id)
+        .collect();
     for id in w.watching() {
         if !want.contains(&id) {
             w.stop(id);
@@ -1121,7 +1206,10 @@ pub async fn watch_set(app: AppHandle, enabled: bool) -> Result<Vec<i64>, String
 
 /// 주어진 id들의 행 — 준 순서대로. 목록에 없는 사진 한 줄이 필요할 때.
 #[tauri::command]
-pub async fn files_by_ids(state: State<'_, AppState>, ids: Vec<i64>) -> Result<Vec<query::FileRow>, String> {
+pub async fn files_by_ids(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+) -> Result<Vec<query::FileRow>, String> {
     query::by_ids(&state.db, &ids).map_err(err)
 }
 
@@ -1154,7 +1242,8 @@ pub struct AiStatus {
 pub async fn ai_status(state: State<'_, AppState>) -> Result<AiStatus, String> {
     use crate::ai::models::{self, ModelId};
     let (embedded, total) = crate::ai::embed::counts(&state.db).map_err(err)?;
-    let (faces_done, faces_total, faces, persons) = crate::ai::people::counts(&state.db).map_err(err)?;
+    let (faces_done, faces_total, faces, persons) =
+        crate::ai::people::counts(&state.db).map_err(err)?;
     Ok(AiStatus {
         model_present: models::present(&state.cache_base, ModelId::ClipVision),
         model_bytes: models::spec(ModelId::ClipVision).bytes,
@@ -1196,7 +1285,14 @@ pub async fn ai_model_download(app: AppHandle, which: String) -> Result<(), Stri
                 continue;
             }
             let got = models::download(&base, id, |p| {
-                let _ = handle.emit("ai-download", DownloadProgress { id, got: before + p.got, total });
+                let _ = handle.emit(
+                    "ai-download",
+                    DownloadProgress {
+                        id,
+                        got: before + p.got,
+                        total,
+                    },
+                );
             });
             match got {
                 Ok(_) => before += models::spec(id).bytes,
@@ -1224,7 +1320,11 @@ pub async fn ai_embed_start(app: AppHandle) -> Result<(), String> {
     if !models::present(&state.cache_base, ModelId::ClipVision) {
         return Err("모델이 없습니다 — 설정 › AI에서 받으세요".into());
     }
-    let Some(guard) = job::try_start_wait(&state.running, "AI 벡터", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "AI 벡터",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1266,7 +1366,9 @@ pub struct SimilarRow {
 fn ai_index(state: &AppState) -> Result<Arc<crate::ai::similar::Index>, String> {
     let mut slot = state.ai_index.lock().unwrap_or_else(|e| e.into_inner());
     if slot.is_none() {
-        *slot = Some(Arc::new(crate::ai::similar::Index::load(&state.db).map_err(err)?));
+        *slot = Some(Arc::new(
+            crate::ai::similar::Index::load(&state.db).map_err(err)?,
+        ));
     }
     let index = Arc::clone(slot.as_ref().unwrap());
     if index.is_empty() {
@@ -1282,7 +1384,10 @@ fn similar_rows(state: &AppState, hits: Vec<(i64, f32)>) -> Result<Vec<SimilarRo
     let score: HashMap<i64, f32> = hits.into_iter().collect();
     let mut out: Vec<SimilarRow> = rows
         .into_iter()
-        .map(|file| SimilarRow { score: score.get(&file.id).copied().unwrap_or(0.0), file })
+        .map(|file| SimilarRow {
+            score: score.get(&file.id).copied().unwrap_or(0.0),
+            file,
+        })
         .collect();
     out.sort_by(|a, b| b.score.total_cmp(&a.score));
     Ok(out)
@@ -1290,22 +1395,35 @@ fn similar_rows(state: &AppState, hits: Vec<(i64, f32)>) -> Result<Vec<SimilarRo
 
 /// 이 사진과 비슷한 것들 — 가까운 순.
 #[tauri::command]
-pub async fn ai_similar(state: State<'_, AppState>, id: i64, limit: usize) -> Result<Vec<SimilarRow>, String> {
+pub async fn ai_similar(
+    state: State<'_, AppState>,
+    id: i64,
+    limit: usize,
+) -> Result<Vec<SimilarRow>, String> {
     let index = ai_index(&state)?;
     similar_rows(&state, index.similar(id, limit.clamp(1, 200)))
 }
 
 /// 폴더 한 갈래의 크기 — 옮기기 전에 보여 준다
 #[tauri::command]
-pub async fn folder_size(state: State<'_, AppState>, folder_id: i64) -> Result<crate::ops::offload::FolderSize, String> {
+pub async fn folder_size(
+    state: State<'_, AppState>,
+    folder_id: i64,
+) -> Result<crate::ops::offload::FolderSize, String> {
     crate::ops::offload::folder_size(&state.db, folder_id).map_err(err)
 }
 
 /// 폴더 한 갈래를 다른 라이브러리(디스크)로. 진행은 `offload-progress`, 끝나면 `offload-done`.
 #[tauri::command]
-pub async fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64) -> Result<(), String> {
+pub async fn folder_offload(
+    app: AppHandle,
+    folder_id: i64,
+    dest_library_id: i64,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start_wait(&state.running, "옮기기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) =
+        job::try_start_wait(&state.running, "옮기기", std::time::Duration::from_secs(20))
+    else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1315,9 +1433,16 @@ pub async fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64
     std::thread::spawn(move || {
         let _guard = guard;
         let handle = app.clone();
-        let r = crate::ops::offload::move_folder(&db, &base, folder_id, dest_library_id, &cancel, |p| {
-            let _ = handle.emit("offload-progress", p);
-        });
+        let r = crate::ops::offload::move_folder(
+            &db,
+            &base,
+            folder_id,
+            dest_library_id,
+            &cancel,
+            |p| {
+                let _ = handle.emit("offload-progress", p);
+            },
+        );
         app.state::<AppState>().forget_dirs();
         match r {
             Ok(o) => {
@@ -1333,9 +1458,18 @@ pub async fn folder_offload(app: AppHandle, folder_id: i64, dest_library_id: i64
 
 /// 폴더 합치기 — `src_rel` 나무를 같은 라이브러리의 `dst_rel` 안으로. 진행 `merge-progress`, 끝 `merge-done`.
 #[tauri::command]
-pub async fn folder_merge(app: AppHandle, library_id: i64, src_rel: String, dst_rel: String) -> Result<(), String> {
+pub async fn folder_merge(
+    app: AppHandle,
+    library_id: i64,
+    src_rel: String,
+    dst_rel: String,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start_wait(&state.running, "폴더 합치기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "폴더 합치기",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1362,7 +1496,10 @@ pub async fn folder_merge(app: AppHandle, library_id: i64, src_rel: String, dst_
 
 /// 사진 없는 폴더(껍데기) 목록
 #[tauri::command]
-pub async fn husk_list(state: State<'_, AppState>, library_id: i64) -> Result<Vec<crate::ops::husk::Husk>, String> {
+pub async fn husk_list(
+    state: State<'_, AppState>,
+    library_id: i64,
+) -> Result<Vec<crate::ops::husk::Husk>, String> {
     let db = Arc::clone(&state.db);
     tauri::async_runtime::spawn_blocking(move || crate::ops::husk::list(&db, library_id))
         .await
@@ -1372,9 +1509,17 @@ pub async fn husk_list(state: State<'_, AppState>, library_id: i64) -> Result<Ve
 
 /// 고른 껍데기 폴더들을 라이브러리 휴지통(_폴더)으로. (옮긴 수, 첫 실패)
 #[tauri::command]
-pub async fn husk_trash(app: AppHandle, library_id: i64, rels: Vec<String>) -> Result<(usize, Option<String>), String> {
+pub async fn husk_trash(
+    app: AppHandle,
+    library_id: i64,
+    rels: Vec<String>,
+) -> Result<(usize, Option<String>), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start_wait(&state.running, "폴더 정리", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "폴더 정리",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1391,19 +1536,34 @@ pub async fn husk_trash(app: AppHandle, library_id: i64, rels: Vec<String>) -> R
 
 /// 합치고 남은 것(사진 아닌 파일) 세기
 #[tauri::command]
-pub async fn folder_leftovers(state: State<'_, AppState>, library_id: i64, rel: String) -> Result<crate::ops::merge::Leftovers, String> {
+pub async fn folder_leftovers(
+    state: State<'_, AppState>,
+    library_id: i64,
+    rel: String,
+) -> Result<crate::ops::merge::Leftovers, String> {
     let db = Arc::clone(&state.db);
-    tauri::async_runtime::spawn_blocking(move || crate::ops::merge::leftovers(&db, library_id, &rel))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(err)
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ops::merge::leftovers(&db, library_id, &rel)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(err)
 }
 
 /// 남은 파일도 같은 자리로 옮기고 빈 폴더를 지운다
 #[tauri::command]
-pub async fn folder_merge_rest(app: AppHandle, library_id: i64, src_rel: String, dst_rel: String) -> Result<crate::ops::trash::Outcome, String> {
+pub async fn folder_merge_rest(
+    app: AppHandle,
+    library_id: i64,
+    src_rel: String,
+    dst_rel: String,
+) -> Result<crate::ops::trash::Outcome, String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start_wait(&state.running, "폴더 합치기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "폴더 합치기",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1442,7 +1602,9 @@ pub struct StartupInfo {
 /// 못 받으면 웹뷰를 다시 불러온다 (lib.rs watchdog).
 #[tauri::command]
 pub async fn heartbeat(state: State<'_, AppState>) -> Result<(), String> {
-    state.last_beat.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
+    state
+        .last_beat
+        .store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
     Ok(())
 }
 
@@ -1455,7 +1617,10 @@ pub async fn frontend_log(app: AppHandle, level: String, msg: String) -> Result<
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("webview.log");
     // 상한 — 오류가 반복되는 세션에서 로그가 끝없이 자라지 않게. 4MB 를 넘으면 한 벌 물린다
-    if std::fs::metadata(&path).map(|m| m.len() > 4 * 1024 * 1024).unwrap_or(false) {
+    if std::fs::metadata(&path)
+        .map(|m| m.len() > 4 * 1024 * 1024)
+        .unwrap_or(false)
+    {
         let _ = std::fs::rename(&path, dir.join("webview.log.1"));
     }
     let mut f = std::fs::OpenOptions::new()
@@ -1481,14 +1646,21 @@ pub(crate) fn ms_since_page(now_ms: u64, page_started_ms: u64) -> u64 {
 /// 성능 목표 «앱 시작 1초»를 눈대중이 아니라 숫자로 본다.
 /// 최초 시작만 `startup.last` 에 남고, 웹뷰 재로드는 `startup.reload_last` 로 따로 남는다.
 #[tauri::command]
-pub async fn startup_report(state: State<'_, AppState>, marks: serde_json::Value) -> Result<StartupInfo, String> {
+pub async fn startup_report(
+    state: State<'_, AppState>,
+    marks: serde_json::Value,
+) -> Result<StartupInfo, String> {
     let now_ms = crate::started().elapsed().as_millis() as u64;
     let page_started = crate::PAGE_MS[0].load(Ordering::Relaxed);
     let reload = STARTUP_REPORTED.swap(true, Ordering::AcqRel);
     let info = StartupInfo {
         db_ms: state.db_ready_ms,
         // 재로드면 프로세스 기준이 아니라 이 웹뷰 세션 기준으로 잰다
-        first_grid_ms: if reload { ms_since_page(now_ms, page_started) } else { now_ms },
+        first_grid_ms: if reload {
+            ms_since_page(now_ms, page_started)
+        } else {
+            now_ms
+        },
         at: chrono::Utc::now().timestamp(),
         marks,
         page_started_ms: page_started,
@@ -1502,11 +1674,31 @@ pub async fn startup_report(state: State<'_, AppState>, marks: serde_json::Value
         ),
     };
     if reload {
-        log::info!("웹뷰 다시 불러옴 — 페이지 기준 그리드 {}ms · {}", info.first_grid_ms, info.marks);
-        crate::db::settings::set(&state.db, "startup.reload_last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
+        log::info!(
+            "웹뷰 다시 불러옴 — 페이지 기준 그리드 {}ms · {}",
+            info.first_grid_ms,
+            info.marks
+        );
+        crate::db::settings::set(
+            &state.db,
+            "startup.reload_last",
+            &serde_json::to_string(&info).unwrap(),
+        )
+        .map_err(err)?;
     } else {
-        log::info!("시작 — DB {}ms · 첫 화면 {}ms · 네이티브 {} · 웹뷰 {}", info.db_ms, info.first_grid_ms, info.native, info.marks);
-        crate::db::settings::set(&state.db, "startup.last", &serde_json::to_string(&info).unwrap()).map_err(err)?;
+        log::info!(
+            "시작 — DB {}ms · 첫 화면 {}ms · 네이티브 {} · 웹뷰 {}",
+            info.db_ms,
+            info.first_grid_ms,
+            info.native,
+            info.marks
+        );
+        crate::db::settings::set(
+            &state.db,
+            "startup.last",
+            &serde_json::to_string(&info).unwrap(),
+        )
+        .map_err(err)?;
     }
     Ok(info)
 }
@@ -1522,7 +1714,11 @@ pub struct VideoDatesDone {
 #[tauri::command]
 pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start_wait(&state.running, "영상 촬영일", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "영상 촬영일",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1557,16 +1753,27 @@ pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<()
                 break;
             }
             checked += 1;
-            let Some(Some(mount)) = mounts.get(&vol) else { continue };
+            let Some(Some(mount)) = mounts.get(&vol) else {
+                continue;
+            };
             let rel = rel.trim_start_matches('/').to_string();
             let path = mount.join(&rel);
             let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
             // 단서(컨테이너·파일명·폴더명·파일 시각) 가운데 가장 이른 그럴듯한 것
             let embedded = crate::media::mp4date::creation_time(&path);
             let md = std::fs::metadata(&path).ok();
-            let unix = |t: Option<std::time::SystemTime>| t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
+            let unix = |t: Option<std::time::SystemTime>| {
+                t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+            };
             let now = chrono::Utc::now().timestamp();
-            let folder = rel.trim_end_matches(&name).trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
+            let folder = rel
+                .trim_end_matches(&name)
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .to_string();
             let (t, s) = crate::media::taken_at::resolve_video(
                 embedded,
                 &name,
@@ -1578,13 +1785,19 @@ pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<()
             let src = s as i32;
             if t != taken_at {
                 let _ = db.write(|c| {
-                    c.execute("UPDATE files SET taken_at = ?2, taken_at_source = ?3 WHERE id = ?1", rusqlite::params![id, t, src])
+                    c.execute(
+                        "UPDATE files SET taken_at = ?2, taken_at_source = ?3 WHERE id = ?1",
+                        rusqlite::params![id, t, src],
+                    )
                 });
                 fixed += 1;
             }
             if last.elapsed().as_millis() >= 200 {
                 last = std::time::Instant::now();
-                let _ = handle.emit("video-dates-progress", serde_json::json!({ "done": checked, "total": total }));
+                let _ = handle.emit(
+                    "video-dates-progress",
+                    serde_json::json!({ "done": checked, "total": total }),
+                );
             }
         }
         let _ = app.emit("video-dates-done", VideoDatesDone { checked, fixed });
@@ -1594,7 +1807,10 @@ pub fn video_dates_refresh(app: AppHandle, library_id: Option<i64>) -> Result<()
 
 /// 지도 전체 조건의 장수와 경계 — 마커 제한과 무관한 자동 맞춤 기준.
 #[tauri::command]
-pub async fn map_overview(state: State<'_, AppState>, filter: Filter) -> Result<query::MapOverview, String> {
+pub async fn map_overview(
+    state: State<'_, AppState>,
+    filter: Filter,
+) -> Result<query::MapOverview, String> {
     query::map_overview(&state.db, &filter).map_err(err)
 }
 
@@ -1619,7 +1835,11 @@ pub async fn ai_faces_start(app: AppHandle) -> Result<(), String> {
     if !models::face_present(&state.cache_base) {
         return Err("얼굴 모델이 없습니다 — 설정 › AI에서 받으세요".into());
     }
-    let Some(guard) = job::try_start_wait(&state.running, "얼굴 찾기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "얼굴 찾기",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -1636,7 +1856,14 @@ pub async fn ai_faces_start(app: AppHandle) -> Result<(), String> {
         .and_then(|p| crate::ai::people::cluster(&db).map(|c| (p, c)));
         match r {
             Ok((p, c)) => {
-                let _ = app.emit("faces-done", FacesDone { done: p.done, faces: p.faces, persons: c.persons });
+                let _ = app.emit(
+                    "faces-done",
+                    FacesDone {
+                        done: p.done,
+                        faces: p.faces,
+                        persons: c.persons,
+                    },
+                );
             }
             Err(e) => {
                 let _ = app.emit("ai-error", e.to_string());
@@ -1685,11 +1912,20 @@ pub async fn people_list(state: State<'_, AppState>) -> Result<Vec<PersonRow>, S
             )?;
             let it = st.query_map([], |r| {
                 let cover: Option<String> = r.get(3)?;
-                let (thumb, bbox) = match cover.and_then(|c| c.split_once('|').map(|(a, b)| (a.to_string(), b.to_string()))) {
+                let (thumb, bbox) = match cover.and_then(|c| {
+                    c.split_once('|')
+                        .map(|(a, b)| (a.to_string(), b.to_string()))
+                }) {
                     Some((t, b)) => (Some(t), serde_json::from_str(&b).ok()),
                     None => (None, None),
                 };
-                Ok(PersonRow { id: r.get(0)?, name: r.get(1)?, count: r.get(2)?, cover_thumb: thumb, cover_bbox: bbox })
+                Ok(PersonRow {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    count: r.get(2)?,
+                    cover_thumb: thumb,
+                    cover_bbox: bbox,
+                })
             })?;
             it.collect::<rusqlite::Result<Vec<_>>>()
         })
@@ -1697,7 +1933,11 @@ pub async fn people_list(state: State<'_, AppState>) -> Result<Vec<PersonRow>, S
 }
 
 #[tauri::command]
-pub async fn person_rename(state: State<'_, AppState>, id: i64, name: String) -> Result<(), String> {
+pub async fn person_rename(
+    state: State<'_, AppState>,
+    id: i64,
+    name: String,
+) -> Result<(), String> {
     let name = name.trim().to_string();
     state
         .db
@@ -1720,7 +1960,10 @@ pub async fn person_merge(state: State<'_, AppState>, into: i64, from: i64) -> R
     state
         .db
         .transaction(|tx| {
-            tx.execute("UPDATE faces SET person_id = ?1 WHERE person_id = ?2", [into, from])?;
+            tx.execute(
+                "UPDATE faces SET person_id = ?1 WHERE person_id = ?2",
+                [into, from],
+            )?;
             tx.execute("DELETE FROM persons WHERE id = ?1", [from])?;
             Ok(())
         })
@@ -1729,7 +1972,11 @@ pub async fn person_merge(state: State<'_, AppState>, into: i64, from: i64) -> R
 
 /// 글로 찾기 — «바닷가에서 뛰는 강아지» 같은 글에 가까운 사진들.
 #[tauri::command]
-pub async fn ai_text_search(state: State<'_, AppState>, query: String, limit: usize) -> Result<Vec<SimilarRow>, String> {
+pub async fn ai_text_search(
+    state: State<'_, AppState>,
+    query: String,
+    limit: usize,
+) -> Result<Vec<SimilarRow>, String> {
     let q = query.trim();
     if q.is_empty() {
         return Ok(Vec::new());
@@ -1737,7 +1984,9 @@ pub async fn ai_text_search(state: State<'_, AppState>, query: String, limit: us
     let text = {
         let mut slot = state.ai_text.lock().unwrap_or_else(|e| e.into_inner());
         if slot.is_none() {
-            *slot = Some(Arc::new(crate::ai::text::Text::load(&state.cache_base).map_err(err)?));
+            *slot = Some(Arc::new(
+                crate::ai::text::Text::load(&state.cache_base).map_err(err)?,
+            ));
         }
         Arc::clone(slot.as_ref().unwrap())
     };

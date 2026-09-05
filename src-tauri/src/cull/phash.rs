@@ -51,7 +51,6 @@
 //!    사본은 다른 자리에 생기거나(다른 폴더·다른 라이브러리) 크기가 달라진다.
 //!    연사는 «같은 순간»(kind 2)이 시계로 판정하는 것이 제 일이다.
 
-
 use crate::db::conn::{Db, Result};
 use crate::media::cache;
 use image::imageops::FilterType;
@@ -98,7 +97,8 @@ static COS: LazyLock<[[f64; N]; LOW]> = LazyLock::new(|| {
     let mut t = [[0f64; N]; LOW];
     for (u, row) in t.iter_mut().enumerate() {
         for (x, c) in row.iter_mut().enumerate() {
-            *c = (std::f64::consts::PI * (2.0 * x as f64 + 1.0) * u as f64 / (2.0 * N as f64)).cos();
+            *c =
+                (std::f64::consts::PI * (2.0 * x as f64 + 1.0) * u as f64 / (2.0 * N as f64)).cos();
         }
     }
     t
@@ -269,12 +269,17 @@ fn jobs(db: &Db, cache_base: &Path) -> Result<Vec<Job>> {
                 AND t.src_mtime = COALESCE(fi.modified_at, 0)
                 AND t.rel_path IS NOT NULL",
         )?;
-        let it = st.query_map([SIG_BYTES as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let it = st.query_map([SIG_BYTES as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
     Ok(rows
         .into_iter()
-        .map(|(id, lib, rel)| Job { id, thumb: cache::cache_root(cache_base, lib).join(rel) })
+        .map(|(id, lib, rel)| Job {
+            id,
+            thumb: cache::cache_root(cache_base, lib).join(rel),
+        })
         .collect())
 }
 
@@ -297,8 +302,10 @@ pub fn fill(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let out: Vec<Signed> =
-            chunk.par_iter().map(|j| (j.id, signature_of(&j.thumb))).collect();
+        let out: Vec<Signed> = chunk
+            .par_iter()
+            .map(|j| (j.id, signature_of(&j.thumb)))
+            .collect();
         db.transaction(|tx| {
             let mut up = tx.prepare("UPDATE files SET phash = ?2, psig = ?3 WHERE id = ?1")?;
             for (id, r) in &out {
@@ -447,7 +454,8 @@ fn cluster_around_seeds(rows: &[Row], mut idxs: Vec<usize>) -> Vec<Vec<usize>> {
                 continue;
             }
             let c = idxs[j];
-            if same_aspect(&rows[seed], &rows[c]) && signatures_alike(&rows[seed].sig, &rows[c].sig) {
+            if same_aspect(&rows[seed], &rows[c]) && signatures_alike(&rows[seed].sig, &rows[c].sig)
+            {
                 used[j] = true;
                 m.push(c);
             }
@@ -477,7 +485,10 @@ pub fn scan(
     cancel: Arc<AtomicBool>,
     on_progress: impl Fn(&PhashProgress) + Sync + Send,
 ) -> Result<PhashProgress> {
-    let progress = Mutex::new(PhashProgress { phase: "fill", ..Default::default() });
+    let progress = Mutex::new(PhashProgress {
+        phase: "fill",
+        ..Default::default()
+    });
     fill(db, cache_base, &cancel, &on_progress, &progress)?;
     if cancel.load(Ordering::Relaxed) {
         return Ok(progress.into_inner().unwrap());
@@ -515,7 +526,10 @@ pub fn scan(
     let mut buckets: HashMap<(u32, u8), Vec<usize>> = HashMap::new();
     for (i, &h) in hashes.iter().enumerate() {
         for band in 0..BANDS {
-            buckets.entry((band, (h >> (8 * band)) as u8)).or_default().push(i);
+            buckets
+                .entry((band, (h >> (8 * band)) as u8))
+                .or_default()
+                .push(i);
         }
     }
     let lists: Vec<&Vec<usize>> = buckets.values().filter(|v| v.len() >= 2).collect();
@@ -630,7 +644,10 @@ pub fn scan(
             reclaimable += saved;
             n_members += m.len();
             let (bw, bh) = (rows[best].width, rows[best].height);
-            let smaller = m.iter().filter(|&&i| rows[i].pixels() < rows[best].pixels()).count();
+            let smaller = m
+                .iter()
+                .filter(|&&i| rows[i].pixels() < rows[best].pixels())
+                .count();
             let reason = if smaller > 0 {
                 format!("{bw}×{bh} · 줄인 사본 {smaller}장")
             } else {
@@ -639,7 +656,12 @@ pub fn scan(
             ins_g.execute(rusqlite::params![KIND, reason, saved])?;
             let gid = tx.last_insert_rowid();
             for &i in m {
-                ins_m.execute(rusqlite::params![gid, rows[i].id, i == best, rows[i].sharpness])?;
+                ins_m.execute(rusqlite::params![
+                    gid,
+                    rows[i].id,
+                    i == best,
+                    rows[i].sharpness
+                ])?;
             }
         }
         Ok(())
@@ -682,7 +704,11 @@ mod tests {
             let fx = x as f32 / w as f32;
             let fy = y as f32 / h as f32;
             let v = ((fx * 6.0).sin() * 90.0 + (fy * 9.0).cos() * 70.0 + 128.0) as u8;
-            let s = if (x * 5 / w) % 2 == (y * 5 / h) % 2 { 40 } else { 0 };
+            let s = if (x * 5 / w) % 2 == (y * 5 / h) % 2 {
+                40
+            } else {
+                0
+            };
             image::Rgb([v.saturating_add(s), v, v.saturating_sub(s)])
         });
         img.save(path).unwrap();
@@ -701,7 +727,10 @@ mod tests {
             "줄인 사본인데 {}비트나 달랐다 ({a:016x} vs {b:016x})",
             hamming(a, b)
         );
-        assert!(signatures_alike(&sa, &sb), "줄인 사본의 색차 안전판이 너무 좁다");
+        assert!(
+            signatures_alike(&sa, &sb),
+            "줄인 사본의 색차 안전판이 너무 좁다"
+        );
     }
 
     #[test]
@@ -728,7 +757,10 @@ mod tests {
         let (_, sa) = signature_of(&a).unwrap();
         let (_, sb) = signature_of(&b).unwrap();
         assert_eq!(mad(&sa[1..1 + LUMA_BYTES], &sb[1..1 + LUMA_BYTES]), 0.0);
-        assert!(!signatures_alike(&sa, &sb), "색차가 큰 편집본을 같은 사진으로 봤다");
+        assert!(
+            !signatures_alike(&sa, &sb),
+            "색차가 큰 편집본을 같은 사진으로 봤다"
+        );
     }
 
     #[test]
@@ -742,7 +774,11 @@ mod tests {
         .save(&b_p)
         .unwrap();
         let (a, b) = (phash_of(&a_p).unwrap(), phash_of(&b_p).unwrap());
-        assert!(hamming(a, b) > DEFAULT_THRESHOLD, "다른 그림인데 {}비트만 달랐다", hamming(a, b));
+        assert!(
+            hamming(a, b) > DEFAULT_THRESHOLD,
+            "다른 그림인데 {}비트만 달랐다",
+            hamming(a, b)
+        );
     }
 
     #[test]
@@ -780,7 +816,10 @@ mod tests {
 
     fn seed(db: &Db, items: &[SeedItem]) {
         db.transaction(|tx| {
-            tx.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')", [])?;
+            tx.execute(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')",
+                [],
+            )?;
             for area in [0, 1, 2] {
                 tx.execute(
                     "INSERT INTO folders(id,volume_uuid,rel_path,name,area)
@@ -794,7 +833,14 @@ mod tests {
                         scanned_at,width,height,phash,psig)
                      VALUES(?1,?2,?3,?4,0,1000,0,0,?5,?6,?7,?8)",
                     rusqlite::params![
-                        id, area, format!("f{id}.jpg"), size, w, h, *hash as i64, sig_of(*pic)
+                        id,
+                        area,
+                        format!("f{id}.jpg"),
+                        size,
+                        w,
+                        h,
+                        *hash as i64,
+                        sig_of(*pic)
                     ],
                 )?;
             }
@@ -805,7 +851,14 @@ mod tests {
 
     fn run(db: &Db) -> PhashProgress {
         let d = tempfile::tempdir().unwrap();
-        scan(db, d.path(), DEFAULT_THRESHOLD, Arc::new(AtomicBool::new(false)), |_| {}).unwrap()
+        scan(
+            db,
+            d.path(),
+            DEFAULT_THRESHOLD,
+            Arc::new(AtomicBool::new(false)),
+            |_| {},
+        )
+        .unwrap()
     }
 
     fn members_of(db: &Db) -> Vec<(i64, bool)> {
@@ -826,20 +879,33 @@ mod tests {
     #[test]
     fn groups_a_shrunk_copy_and_keeps_the_bigger_one() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, H, 500, 400, 300, 0, 1),          // 줄인 사본
-            (2, H ^ 1, 4000, 1600, 1200, 0, 1),   // 원본
-        ]);
+        seed(
+            &db,
+            &[
+                (1, H, 500, 400, 300, 0, 1),        // 줄인 사본
+                (2, H ^ 1, 4000, 1600, 1200, 0, 1), // 원본
+            ],
+        );
         let p = run(&db);
         assert_eq!((p.groups, p.members), (1, 2));
-        assert_eq!(members_of(&db), vec![(1, false), (2, true)], "큰 것이 대표여야 한다");
+        assert_eq!(
+            members_of(&db),
+            vec![(1, false), (2, true)],
+            "큰 것이 대표여야 한다"
+        );
         assert_eq!(p.reclaimable, 500);
     }
 
     #[test]
     fn does_not_group_pictures_that_are_far_apart() {
         let (_d, db) = db();
-        seed(&db, &[(1, 0, 100, 400, 300, 0, 1), (2, u64::MAX, 100, 400, 300, 0, 2)]);
+        seed(
+            &db,
+            &[
+                (1, 0, 100, 400, 300, 0, 1),
+                (2, u64::MAX, 100, 400, 300, 0, 2),
+            ],
+        );
         assert_eq!(run(&db).groups, 0);
     }
 
@@ -847,25 +913,34 @@ mod tests {
     #[test]
     fn splits_a_crop_with_a_different_aspect_ratio() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, H, 500, 400, 300, 0, 1),        // 4:3
-            (2, H ^ 1, 4000, 1600, 1200, 0, 1), // 4:3 — 1과 한 무리
-            (3, H ^ 2, 900, 400, 400, 0, 1),    // 1:1 — 갈라져 나가 혼자 남는다
-        ]);
+        seed(
+            &db,
+            &[
+                (1, H, 500, 400, 300, 0, 1),        // 4:3
+                (2, H ^ 1, 4000, 1600, 1200, 0, 1), // 4:3 — 1과 한 무리
+                (3, H ^ 2, 900, 400, 400, 0, 1),    // 1:1 — 갈라져 나가 혼자 남는다
+            ],
+        );
         let p = run(&db);
         assert_eq!((p.groups, p.members), (1, 2));
-        assert_eq!(members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(
+            members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
     }
 
     /// 완전 중복이 이미 «뺄 것»으로 표시한 사본은 여기서 또 보여 주지 않는다
     #[test]
     fn leaves_out_copies_the_exact_duplicate_pass_already_took() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, H, 500, 400, 300, 0, 1),
-            (2, H, 500, 400, 300, 0, 1),
-            (3, H ^ 1, 4000, 1600, 1200, 0, 1),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, H, 500, 400, 300, 0, 1),
+                (2, H, 500, 400, 300, 0, 1),
+                (3, H ^ 1, 4000, 1600, 1200, 0, 1),
+            ],
+        );
         db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO groups(id,kind,reason,size_bytes,state,created_at)
@@ -873,21 +948,33 @@ mod tests {
                 [],
             )?;
             // 1이 대표, 2는 뺄 것 — 2는 이 갈래에서 빠져야 한다
-            tx.execute("INSERT INTO group_members(group_id,file_id,is_best) VALUES(9,1,1)", [])?;
-            tx.execute("INSERT INTO group_members(group_id,file_id,is_best) VALUES(9,2,0)", [])?;
+            tx.execute(
+                "INSERT INTO group_members(group_id,file_id,is_best) VALUES(9,1,1)",
+                [],
+            )?;
+            tx.execute(
+                "INSERT INTO group_members(group_id,file_id,is_best) VALUES(9,2,0)",
+                [],
+            )?;
             Ok(())
         })
         .unwrap();
         let p = run(&db);
         assert_eq!((p.groups, p.members), (1, 2));
-        assert_eq!(members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(
+            members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
     }
 
     /// 화소 수가 같으면 정리된 자리(내사진·공용)에 있는 것이 대표가 된다
     #[test]
     fn prefers_the_settled_copy_when_the_size_is_the_same() {
         let (_d, db) = db();
-        seed(&db, &[(1, H, 100, 400, 300, 0, 1), (2, H, 100, 400, 300, 2, 1)]);
+        seed(
+            &db,
+            &[(1, H, 100, 400, 300, 0, 1), (2, H, 100, 400, 300, 2, 1)],
+        );
         run(&db);
         assert_eq!(members_of(&db), vec![(1, false), (2, true)]);
     }
@@ -895,7 +982,13 @@ mod tests {
     #[test]
     fn rerunning_replaces_old_groups() {
         let (_d, db) = db();
-        seed(&db, &[(1, H, 500, 400, 300, 0, 1), (2, H ^ 1, 4000, 1600, 1200, 0, 1)]);
+        seed(
+            &db,
+            &[
+                (1, H, 500, 400, 300, 0, 1),
+                (2, H ^ 1, 4000, 1600, 1200, 0, 1),
+            ],
+        );
         run(&db);
         let p = run(&db);
         assert_eq!(p.groups, 1);
@@ -905,12 +998,22 @@ mod tests {
     #[test]
     fn rerunning_with_fewer_than_two_photos_clears_old_groups() {
         let (_d, db) = db();
-        seed(&db, &[(1, H, 500, 400, 300, 0, 1), (2, H ^ 1, 4000, 1600, 1200, 0, 1)]);
+        seed(
+            &db,
+            &[
+                (1, H, 500, 400, 300, 0, 1),
+                (2, H ^ 1, 4000, 1600, 1200, 0, 1),
+            ],
+        );
         assert_eq!(run(&db).groups, 1);
-        db.write(|c| c.execute("UPDATE files SET trashed_at=1 WHERE id=2", [])).unwrap();
+        db.write(|c| c.execute("UPDATE files SET trashed_at=1 WHERE id=2", []))
+            .unwrap();
         let p = run(&db);
         assert_eq!((p.groups, p.members), (0, 0));
-        assert!(members_of(&db).is_empty(), "대상이 한 장뿐인데 이전 그룹이 남았다");
+        assert!(
+            members_of(&db).is_empty(),
+            "대상이 한 장뿐인데 이전 그룹이 남았다"
+        );
     }
 
     #[test]
@@ -923,7 +1026,10 @@ mod tests {
                 [],
             )?;
             tx.execute("UPDATE folders SET library_id=9", [])?;
-            tx.execute("UPDATE files SET psig=?1 WHERE id=1", [vec![42u8; SIG * SIG]])?;
+            tx.execute(
+                "UPDATE files SET psig=?1 WHERE id=1",
+                [vec![42u8; SIG * SIG]],
+            )?;
             tx.execute(
                 "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state)
                  VALUES(1,'old.jpg',500,0,1)",
@@ -945,7 +1051,10 @@ mod tests {
                 [],
             )?;
             tx.execute("UPDATE folders SET library_id=9", [])?;
-            tx.execute("UPDATE files SET phash=NULL, psig=NULL, modified_at=20 WHERE id=1", [])?;
+            tx.execute(
+                "UPDATE files SET phash=NULL, psig=NULL, modified_at=20 WHERE id=1",
+                [],
+            )?;
             tx.execute(
                 "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state)
                  VALUES(1,'stale.jpg',500,10,1)",
@@ -964,7 +1073,13 @@ mod tests {
     #[test]
     fn the_reason_says_what_is_kept_and_how_many_are_smaller() {
         let (_d, db) = db();
-        seed(&db, &[(1, H, 500, 400, 300, 0, 1), (2, H ^ 1, 4000, 1600, 1200, 0, 1)]);
+        seed(
+            &db,
+            &[
+                (1, H, 500, 400, 300, 0, 1),
+                (2, H ^ 1, 4000, 1600, 1200, 0, 1),
+            ],
+        );
         run(&db);
         let reason: String = db
             .read(|c| c.query_row("SELECT reason FROM groups WHERE kind = 4", [], |r| r.get(0)))
@@ -977,7 +1092,9 @@ mod tests {
     fn a_pile_of_identical_hashes_stays_one_group_without_exploding() {
         let (_d, db) = db();
         // 폴더를 갈라 둔다 — 한 폴더에 몰아 두면 연사로 보고 버린다
-        let items: Vec<SeedItem> = (1..=300).map(|i| (i, H, 100, 400, 300, (i % 3) as i32, 1)).collect();
+        let items: Vec<SeedItem> = (1..=300)
+            .map(|i| (i, H, 100, 400, 300, (i % 3) as i32, 1))
+            .collect();
         seed(&db, &items);
         let p = run(&db);
         assert_eq!(p.distinct, 1, "해시가 하나로 뭉쳐야 한다");
@@ -991,11 +1108,14 @@ mod tests {
     fn drops_a_burst_that_sits_in_one_folder_at_one_size() {
         let (_d, db) = db();
         // 해시까지 똑같은 연사 — 1단에서 뭉친 다음 여기서 걸러져야 한다
-        seed(&db, &[
-            (1, H, 3000, 5760, 3840, 0, 1),
-            (2, H, 3100, 5760, 3840, 0, 1),
-            (3, H, 3050, 5760, 3840, 0, 1),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, H, 3000, 5760, 3840, 0, 1),
+                (2, H, 3100, 5760, 3840, 0, 1),
+                (3, H, 3050, 5760, 3840, 0, 1),
+            ],
+        );
         let p = run(&db);
         assert_eq!((p.groups, p.bursts), (0, 1), "연사는 «같은 순간»이 맡는다");
         assert!(members_of(&db).is_empty());
@@ -1005,7 +1125,13 @@ mod tests {
     #[test]
     fn keeps_a_same_size_copy_that_lives_in_another_folder() {
         let (_d, db) = db();
-        seed(&db, &[(1, H, 3000, 5760, 3840, 0, 1), (2, H, 3000, 5760, 3840, 2, 1)]);
+        seed(
+            &db,
+            &[
+                (1, H, 3000, 5760, 3840, 0, 1),
+                (2, H, 3000, 5760, 3840, 2, 1),
+            ],
+        );
         let p = run(&db);
         assert_eq!((p.groups, p.bursts), (1, 0));
         assert_eq!(members_of(&db).len(), 2);
@@ -1017,7 +1143,10 @@ mod tests {
     fn a_matching_hash_over_a_different_picture_is_not_linked() {
         let (_d, db) = db();
         // 폴더도 크기도 갈라 둔다 — 오직 **서명**이 막는 것을 본다
-        seed(&db, &[(1, H, 3000, 5760, 3840, 0, 1), (2, H, 300, 1440, 960, 2, 5)]);
+        seed(
+            &db,
+            &[(1, H, 3000, 5760, 3840, 0, 1), (2, H, 300, 1440, 960, 2, 5)],
+        );
         let p = run(&db);
         assert_eq!((p.groups, p.bursts), (0, 0));
     }
@@ -1026,7 +1155,10 @@ mod tests {
     #[test]
     fn a_photo_without_a_signature_is_left_out() {
         let (_d, db) = db();
-        seed(&db, &[(1, H, 500, 400, 300, 0, 1), (2, H, 4000, 1600, 1200, 0, 1)]);
+        seed(
+            &db,
+            &[(1, H, 500, 400, 300, 0, 1), (2, H, 4000, 1600, 1200, 0, 1)],
+        );
         db.transaction(|tx| {
             tx.execute("UPDATE files SET psig = NULL WHERE id = 2", [])?;
             Ok(())
@@ -1039,7 +1171,13 @@ mod tests {
     #[test]
     fn a_near_hash_at_a_different_size_is_a_resized_copy() {
         let (_d, db) = db();
-        seed(&db, &[(1, H, 300, 1440, 960, 0, 1), (2, H ^ 3, 3000, 5760, 3840, 0, 1)]);
+        seed(
+            &db,
+            &[
+                (1, H, 300, 1440, 960, 0, 1),
+                (2, H ^ 3, 3000, 5760, 3840, 0, 1),
+            ],
+        );
         let p = run(&db);
         assert_eq!(p.groups, 1);
         assert_eq!(members_of(&db), vec![(1, false), (2, true)]);
@@ -1051,7 +1189,14 @@ mod tests {
     fn does_not_chain_through_a_middle_picture() {
         let (_d, db) = db();
         // 서명 40 · 43 · 46 — 이웃끼리는 3(문턱 3.5 안), 양 끝은 6(밖)
-        seed(&db, &[(1, H, 4000, 1600, 1200, 0, 1), (2, H, 500, 800, 600, 0, 1), (3, H, 300, 400, 300, 0, 1)]);
+        seed(
+            &db,
+            &[
+                (1, H, 4000, 1600, 1200, 0, 1),
+                (2, H, 500, 800, 600, 0, 1),
+                (3, H, 300, 400, 300, 0, 1),
+            ],
+        );
         db.transaction(|tx| {
             tx.execute("UPDATE files SET psig = ?1 WHERE id = 2", [flat_sig(43)])?;
             tx.execute("UPDATE files SET psig = ?1 WHERE id = 3", [flat_sig(46)])?;
@@ -1061,7 +1206,10 @@ mod tests {
         let p = run(&db);
         // 씨앗은 가장 큰 1. 2는 닮아 들어오고, 3은 씨앗과 6 이나 떨어져 못 들어온다.
         assert_eq!((p.groups, p.members), (1, 2));
-        assert_eq!(members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(
+            members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
     }
 
     /// 실제 라이브러리 사본으로 — 시간·무리 수·확보 용량을 본다.
@@ -1069,7 +1217,9 @@ mod tests {
     #[test]
     #[ignore = "실제 DB 사본 필요"]
     fn real_library_copy() {
-        let Ok(path) = std::env::var("ACUT_DB_COPY") else { return };
+        let Ok(path) = std::env::var("ACUT_DB_COPY") else {
+            return;
+        };
         let cache = std::env::var("ACUT_CACHE").unwrap_or_default();
         let db = Db::open(path).unwrap();
         let thr: u32 = std::env::var("ACUT_PHASH_THRESHOLD")
@@ -1077,11 +1227,17 @@ mod tests {
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_THRESHOLD);
         let t = std::time::Instant::now();
-        let p = scan(&db, Path::new(&cache), thr, Arc::new(AtomicBool::new(false)), |q| {
-            if q.phase == "fill" && q.fill_done % 20_000 == 0 && q.fill_done > 0 {
-                eprintln!("  해시 {}/{}", q.fill_done, q.fill_total);
-            }
-        })
+        let p = scan(
+            &db,
+            Path::new(&cache),
+            thr,
+            Arc::new(AtomicBool::new(false)),
+            |q| {
+                if q.phase == "fill" && q.fill_done % 20_000 == 0 && q.fill_done > 0 {
+                    eprintln!("  해시 {}/{}", q.fill_done, q.fill_total);
+                }
+            },
+        )
         .unwrap();
         eprintln!(
             "\n[줄인 사본] 문턱 {thr} · 해시 {}장(실패 {}) · 대상 {}장 · 서로 다른 해시 {} · 짝 {} · {}무리 {}장 · 연사로 버림 {}무리 · 확보 {:.1} GB · {:.1}초",

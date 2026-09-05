@@ -137,7 +137,11 @@ pub fn probe(path: impl AsRef<Path>) -> VideoMeta {
             [m.created().ok(), m.modified().ok()]
                 .into_iter()
                 .flatten()
-                .filter_map(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64))
+                .filter_map(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs() as i64)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -217,7 +221,9 @@ mod tests {
                 if seen > 600 {
                     break;
                 }
-                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                let Ok(rd) = std::fs::read_dir(&d) else {
+                    continue;
+                };
                 for e in rd.flatten() {
                     let p = e.path();
                     if p.is_dir() {
@@ -304,11 +310,9 @@ mod real {
         if !db.is_file() {
             return;
         }
-        let conn = rusqlite::Connection::open_with_flags(
-            &db,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
+        let conn =
+            rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
         let paths: Vec<String> = {
             let mut st = conn
                 .prepare(

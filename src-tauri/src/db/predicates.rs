@@ -41,7 +41,9 @@ pub(crate) fn valid_gps_sql(alias: Files) -> String {
 
 /// 같은 판정을 러스트에서. SQL 과 결과가 반드시 같아야 한다.
 pub(crate) fn is_valid_gps(lat: Option<f64>, lon: Option<f64>) -> bool {
-    let (Some(lat), Some(lon)) = (lat, lon) else { return false };
+    let (Some(lat), Some(lon)) = (lat, lon) else {
+        return false;
+    };
     (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) && !(lat == 0.0 && lon == 0.0)
 }
 
@@ -106,13 +108,20 @@ mod tests {
             let by_sql: bool = db
                 .read(|c| {
                     c.query_row(
-                        &format!("SELECT EXISTS(SELECT 1 FROM files fi WHERE fi.id = ?1 AND ({}))", valid_gps_sql(Files::Fi)),
+                        &format!(
+                            "SELECT EXISTS(SELECT 1 FROM files fi WHERE fi.id = ?1 AND ({}))",
+                            valid_gps_sql(Files::Fi)
+                        ),
                         [id],
                         |r| r.get(0),
                     )
                 })
                 .unwrap();
-            assert_eq!(by_sql, is_valid_gps(*lat, *lon), "{lat:?},{lon:?} 에서 SQL 과 러스트가 다르다");
+            assert_eq!(
+                by_sql,
+                is_valid_gps(*lat, *lon),
+                "{lat:?},{lon:?} 에서 SQL 과 러스트가 다르다"
+            );
         }
     }
 
@@ -125,7 +134,14 @@ mod tests {
         assert!(bare.starts_with("gps_lat IS NOT NULL"));
         // 별칭이 없으면 칸 이름 앞에 접두사가 붙지 않는다 (숫자 리터럴의 점은 논외)
         assert!(!bare.contains("fi."));
-        assert_eq!(with.matches("gps_lat").count(), bare.matches("gps_lat").count());
-        assert_eq!(with.matches("fi.").count(), 6, "칸 참조 여섯 곳에 모두 별칭이 붙는다");
+        assert_eq!(
+            with.matches("gps_lat").count(),
+            bare.matches("gps_lat").count()
+        );
+        assert_eq!(
+            with.matches("fi.").count(),
+            6,
+            "칸 참조 여섯 곳에 모두 별칭이 붙는다"
+        );
     }
 }

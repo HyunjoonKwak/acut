@@ -178,7 +178,10 @@ pub fn scan(
 ) -> Result<SceneProgress> {
     let loaded = load(db)?;
     let rows = &loaded.rows;
-    let mut progress = SceneProgress { photos: rows.len(), ..Default::default() };
+    let mut progress = SceneProgress {
+        photos: rows.len(),
+        ..Default::default()
+    };
     on_progress(&progress);
     if cancel.load(Ordering::Relaxed) {
         return Ok(progress);
@@ -250,7 +253,11 @@ pub fn scan(
                     let (ra, rb) = (&rows[a], &rows[b]);
                     settled(ra)
                         .cmp(&settled(rb))
-                        .then(ra.sharpness.unwrap_or(0.0).total_cmp(&rb.sharpness.unwrap_or(0.0)))
+                        .then(
+                            ra.sharpness
+                                .unwrap_or(0.0)
+                                .total_cmp(&rb.sharpness.unwrap_or(0.0)),
+                        )
                         .then(ra.size.cmp(&rb.size))
                 })
                 .unwrap();
@@ -265,7 +272,12 @@ pub fn scan(
             ])?;
             let gid = tx.last_insert_rowid();
             for &i in m {
-                ins_m.execute(rusqlite::params![gid, rows[i].id, i == best, rows[i].sharpness])?;
+                ins_m.execute(rusqlite::params![
+                    gid,
+                    rows[i].id,
+                    i == best,
+                    rows[i].sharpness
+                ])?;
             }
         }
         Ok(())
@@ -297,7 +309,10 @@ mod tests {
 
     fn seed(db: &Db, items: &[SeedItem]) {
         db.transaction(|tx| {
-            tx.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')", [])?;
+            tx.execute(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')",
+                [],
+            )?;
             tx.execute(
                 "INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','f','f',1)",
                 [],
@@ -307,7 +322,14 @@ mod tests {
                     "INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,
                         sharpness,scanned_at,embedding)
                      VALUES(?1,1,?2,?3,0,?4,0,?5,0,?6)",
-                    rusqlite::params![id, format!("f{id}.jpg"), size, taken, sharp, clip::to_blob(v)],
+                    rusqlite::params![
+                        id,
+                        format!("f{id}.jpg"),
+                        size,
+                        taken,
+                        sharp,
+                        clip::to_blob(v)
+                    ],
                 )?;
             }
             Ok(())
@@ -322,7 +344,13 @@ mod tests {
     }
 
     fn run(db: &Db) -> SceneProgress {
-        scan(db, DEFAULT_THRESHOLD, Arc::new(AtomicBool::new(false)), |_| {}).unwrap()
+        scan(
+            db,
+            DEFAULT_THRESHOLD,
+            Arc::new(AtomicBool::new(false)),
+            |_| {},
+        )
+        .unwrap()
     }
 
     fn members_of(db: &Db) -> Vec<(i64, bool)> {
@@ -340,11 +368,14 @@ mod tests {
     #[test]
     fn links_alike_photos_within_the_hour_and_keeps_the_sharpest() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, 1000, 100, Some(0.2), near(1.0)),
-            (2, 1300, 100, Some(0.9), near(0.97)),
-            (3, 1600, 100, None, near(0.0)), // 다른 장면
-        ]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, Some(0.2), near(1.0)),
+                (2, 1300, 100, Some(0.9), near(0.97)),
+                (3, 1600, 100, None, near(0.0)), // 다른 장면
+            ],
+        );
         let p = run(&db);
         assert_eq!((p.groups, p.members), (1, 2));
         assert_eq!(members_of(&db), vec![(1, false), (2, true)]);
@@ -354,14 +385,26 @@ mod tests {
     #[test]
     fn does_not_link_across_hours() {
         let (_d, db) = db();
-        seed(&db, &[(1, 1000, 100, None, near(1.0)), (2, 1000 + WINDOW_SECS + 1, 100, None, near(1.0))]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, None, near(1.0)),
+                (2, 1000 + WINDOW_SECS + 1, 100, None, near(1.0)),
+            ],
+        );
         assert_eq!(run(&db).groups, 0);
     }
 
     #[test]
     fn respects_the_threshold() {
         let (_d, db) = db();
-        seed(&db, &[(1, 1000, 100, None, near(1.0)), (2, 1100, 100, None, near(0.8))]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, None, near(1.0)),
+                (2, 1100, 100, None, near(0.8)),
+            ],
+        );
         assert_eq!(run(&db).groups, 0);
         let p = scan(&db, 0.75, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         assert_eq!(p.groups, 1);
@@ -389,7 +432,13 @@ mod tests {
     #[test]
     fn skips_pairs_another_tab_already_grouped() {
         let (_d, db) = db();
-        seed(&db, &[(1, 1000, 100, None, near(1.0)), (2, 1003, 100, None, near(1.0))]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, None, near(1.0)),
+                (2, 1003, 100, None, near(1.0)),
+            ],
+        );
         burst_group(&db, 9, &[1, 2]);
         assert_eq!(run(&db).groups, 0);
     }
@@ -398,15 +447,21 @@ mod tests {
     #[test]
     fn a_later_alike_shot_pairs_with_one_burst_member_not_all() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, 1000, 100, None, near(1.0)),
-            (2, 1003, 100, None, near(1.0)),
-            (3, 1100, 100, None, near(0.98)),
-        ]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, None, near(1.0)),
+                (2, 1003, 100, None, near(1.0)),
+                (3, 1100, 100, None, near(0.98)),
+            ],
+        );
         burst_group(&db, 9, &[1, 2]);
         let p = run(&db);
         assert_eq!((p.groups, p.members), (1, 2));
-        assert_eq!(members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(
+            members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
     }
 
     /// A~B, B~C라도 A와 C가 안 닮았으면 한 묶음이 아니다 — 씨앗과 직접 닮아야 한다
@@ -417,16 +472,32 @@ mod tests {
         let a = unit(&[1.0, 0.0, 0.0, 0.0]);
         let b = unit(&[0.93, (1.0f32 - 0.93 * 0.93).sqrt(), 0.0, 0.0]);
         let c = unit(&[0.73, 0.68, 0.0, 0.0]);
-        seed(&db, &[(1, 1000, 100, None, a), (2, 1100, 100, None, b), (3, 1200, 100, None, c)]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, None, a),
+                (2, 1100, 100, None, b),
+                (3, 1200, 100, None, c),
+            ],
+        );
         let p = scan(&db, 0.90, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         assert_eq!((p.groups, p.members), (1, 2));
-        assert_eq!(members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(
+            members_of(&db).iter().map(|m| m.0).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
     }
 
     #[test]
     fn rerunning_replaces_old_groups() {
         let (_d, db) = db();
-        seed(&db, &[(1, 1000, 100, None, near(1.0)), (2, 1100, 100, None, near(0.99))]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, None, near(1.0)),
+                (2, 1100, 100, None, near(0.99)),
+            ],
+        );
         run(&db);
         let p = run(&db);
         assert_eq!(p.groups, 1);
@@ -436,19 +507,34 @@ mod tests {
     #[test]
     fn rerunning_with_fewer_than_two_photos_clears_old_groups() {
         let (_d, db) = db();
-        seed(&db, &[(1, 1000, 100, None, near(1.0)), (2, 1100, 100, None, near(0.99))]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, None, near(1.0)),
+                (2, 1100, 100, None, near(0.99)),
+            ],
+        );
         assert_eq!(run(&db).groups, 1);
         db.write(|c| c.execute("UPDATE files SET trashed_at=1 WHERE id=2", []))
             .unwrap();
         let p = run(&db);
         assert_eq!((p.groups, p.members), (0, 0));
-        assert!(members_of(&db).is_empty(), "대상이 한 장뿐인데 이전 그룹이 남았다");
+        assert!(
+            members_of(&db).is_empty(),
+            "대상이 한 장뿐인데 이전 그룹이 남았다"
+        );
     }
 
     #[test]
     fn reason_names_the_weakest_link() {
         let (_d, db) = db();
-        seed(&db, &[(1, 1000, 100, None, near(1.0)), (2, 1100, 100, None, near(0.97))]);
+        seed(
+            &db,
+            &[
+                (1, 1000, 100, None, near(1.0)),
+                (2, 1100, 100, None, near(0.97)),
+            ],
+        );
         run(&db);
         let reason: String = db
             .read(|c| c.query_row("SELECT reason FROM groups WHERE kind = 3", [], |r| r.get(0)))
@@ -461,9 +547,14 @@ mod tests {
     #[test]
     #[ignore = "실제 DB 사본 필요"]
     fn real_library_copy() {
-        let Ok(path) = std::env::var("ACUT_DB_COPY") else { return };
+        let Ok(path) = std::env::var("ACUT_DB_COPY") else {
+            return;
+        };
         let db = Db::open(path).unwrap();
-        let thr: f32 = std::env::var("ACUT_SCENE_THRESHOLD").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_THRESHOLD);
+        let thr: f32 = std::env::var("ACUT_SCENE_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_THRESHOLD);
         // 실제 흐름대로 — «같은 순간»이 먼저 묶고, 그 짝은 여기서 빠진다
         let b = crate::cull::burst::scan(&db, crate::cull::burst::DEFAULT_GAP_SECS).unwrap();
         eprint!("같은 순간 {}그룹 {}장 · ", b.groups, b.photos);
@@ -472,8 +563,12 @@ mod tests {
         eprint!("문턱 {thr} ");
         eprintln!(
             "\n[비슷한 장면] {}장 · 짝 {} · {}그룹 · {}장 · 확보 {:.1} GB · {:.1}초",
-            p.photos, p.compared, p.groups, p.members,
-            p.reclaimable as f64 / 1024f64.powi(3), t.elapsed().as_secs_f64()
+            p.photos,
+            p.compared,
+            p.groups,
+            p.members,
+            p.reclaimable as f64 / 1024f64.powi(3),
+            t.elapsed().as_secs_f64()
         );
         let sizes: Vec<i64> = db
             .read(|c| {

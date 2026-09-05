@@ -163,13 +163,23 @@ mod tests {
         let scan = [0x12, 0x34, 0xFF, 0x00, 0x56];
         let bare = jpeg(&[seg(0xE0, b"JFIF\0")], &scan);
         let with_exif = jpeg(
-            &[seg(0xE0, b"JFIF\0"), seg(0xE1, b"Exif\0\0II*\0date"), seg(0xE1, b"http://ns.adobe.com/xap/1.0/\0<x/>")],
+            &[
+                seg(0xE0, b"JFIF\0"),
+                seg(0xE1, b"Exif\0\0II*\0date"),
+                seg(0xE1, b"http://ns.adobe.com/xap/1.0/\0<x/>"),
+            ],
             &scan,
         );
         let with_comment = jpeg(&[seg(0xFE, b"hello")], &scan);
         assert_ne!(bare, with_exif);
-        assert_eq!(jpeg_codestream_hash(&bare), jpeg_codestream_hash(&with_exif));
-        assert_eq!(jpeg_codestream_hash(&bare), jpeg_codestream_hash(&with_comment));
+        assert_eq!(
+            jpeg_codestream_hash(&bare),
+            jpeg_codestream_hash(&with_exif)
+        );
+        assert_eq!(
+            jpeg_codestream_hash(&bare),
+            jpeg_codestream_hash(&with_comment)
+        );
     }
 
     #[test]
@@ -249,7 +259,11 @@ mod tests {
             quick(&pb).unwrap(),
             "앞뒤가 같으면 빠른 해시는 같다 — 그래서 후보일 뿐이다"
         );
-        assert_ne!(full(&pa).unwrap(), full(&pb).unwrap(), "전체 해시는 구분한다");
+        assert_ne!(
+            full(&pa).unwrap(),
+            full(&pb).unwrap(),
+            "전체 해시는 구분한다"
+        );
     }
 
     #[test]

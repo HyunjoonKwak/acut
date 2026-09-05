@@ -55,9 +55,11 @@ pub fn save(
              ON CONFLICT(name) DO UPDATE SET filter=excluded.filter, sort=excluded.sort",
             rusqlite::params![name, f, s],
         )?;
-        tx.query_row("SELECT id FROM smart_albums WHERE name = ?1", [&name], |r| {
-            r.get(0)
-        })
+        tx.query_row(
+            "SELECT id FROM smart_albums WHERE name = ?1",
+            [&name],
+            |r| r.get(0),
+        )
     })
 }
 
@@ -119,8 +121,13 @@ mod tests {
         let (_d, db) = fresh();
         let a = save(&db, "가족", &json!({}), None).unwrap();
         // 앞뒤 공백을 떼고, 자모를 따로 친 NFD도 같은 이름으로 본다
-        let b = save(&db, "  \u{1100}\u{1161}\u{110C}\u{1169}\u{11A8} ", &json!({}), None)
-            .unwrap();
+        let b = save(
+            &db,
+            "  \u{1100}\u{1161}\u{110C}\u{1169}\u{11A8} ",
+            &json!({}),
+            None,
+        )
+        .unwrap();
         assert_eq!(a, b);
         assert_eq!(list(&db).unwrap().len(), 1);
     }

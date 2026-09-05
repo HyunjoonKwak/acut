@@ -29,8 +29,12 @@ pub struct Husk {
 
 /// 라이브러리 안에서 «사진이 하나도 없는데 파일은 있는» 폴더들 — 위 폴더부터, 그 아래는 안 내려간다
 pub fn list(db: &Db, library_id: i64) -> Result<Vec<Husk>> {
-    let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
-    let dir = lib.dir.clone().ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let lib =
+        libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let dir = lib
+        .dir
+        .clone()
+        .ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
     // 사진이 있는 폴더(볼륨 기준 경로, NFC)
     let live: Vec<String> = db.read(|c| {
         let mut st = c.prepare(
@@ -60,8 +64,17 @@ pub fn list(db: &Db, library_id: i64) -> Result<Vec<Husk>> {
     Ok(out)
 }
 
-fn walk(root: &Path, dir: &Path, lib_rel: &str, live: &HashSet<&str>, has_photos: &HashSet<String>, out: &mut Vec<Husk>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+fn walk(
+    root: &Path,
+    dir: &Path,
+    lib_rel: &str,
+    live: &HashSet<&str>,
+    has_photos: &HashSet<String>,
+    out: &mut Vec<Husk>,
+) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let Ok(ft) = e.file_type() else { continue };
         if !ft.is_dir() {
@@ -72,8 +85,16 @@ fn walk(root: &Path, dir: &Path, lib_rel: &str, live: &HashSet<&str>, has_photos
             continue;
         }
         let p = e.path();
-        let rel_in_lib = crate::scan::nfc(&p.strip_prefix(root).map(|r| r.to_string_lossy().into_owned()).unwrap_or_default());
-        let vol_rel = if lib_rel.is_empty() { rel_in_lib.clone() } else { format!("{lib_rel}/{rel_in_lib}") };
+        let rel_in_lib = crate::scan::nfc(
+            &p.strip_prefix(root)
+                .map(|r| r.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        );
+        let vol_rel = if lib_rel.is_empty() {
+            rel_in_lib.clone()
+        } else {
+            format!("{lib_rel}/{rel_in_lib}")
+        };
         if has_photos.contains(&vol_rel) || live.contains(vol_rel.as_str()) {
             walk(root, &p, lib_rel, live, has_photos, out);
             continue;
@@ -82,7 +103,11 @@ fn walk(root: &Path, dir: &Path, lib_rel: &str, live: &HashSet<&str>, has_photos
         let mut files = 0usize;
         let mut bytes = 0u64;
         let mut kinds: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        for f in walkdir::WalkDir::new(&p).follow_links(false).into_iter().filter_map(|x| x.ok()) {
+        for f in walkdir::WalkDir::new(&p)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|x| x.ok())
+        {
             if !f.file_type().is_file() {
                 continue;
             }
@@ -92,7 +117,10 @@ fn walk(root: &Path, dir: &Path, lib_rel: &str, live: &HashSet<&str>, has_photos
             }
             files += 1;
             bytes += f.metadata().map(|m| m.len()).unwrap_or(0);
-            let ext = n.rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase()).unwrap_or_else(|| "(없음)".into());
+            let ext = n
+                .rsplit_once('.')
+                .map(|(_, x)| x.to_ascii_lowercase())
+                .unwrap_or_else(|| "(없음)".into());
             *kinds.entry(ext).or_default() += 1;
         }
         if files == 0 {
@@ -101,14 +129,23 @@ fn walk(root: &Path, dir: &Path, lib_rel: &str, live: &HashSet<&str>, has_photos
         let mut k: Vec<(String, usize)> = kinds.into_iter().collect();
         k.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         k.truncate(4);
-        out.push(Husk { rel: rel_in_lib, files, bytes, kinds: k });
+        out.push(Husk {
+            rel: rel_in_lib,
+            files,
+            bytes,
+            kinds: k,
+        });
     }
 }
 
 /// 고른 껍데기 폴더들을 라이브러리 휴지통의 `_폴더/` 아래로 통째로 옮긴다. 옮긴 수를 돌려준다
 pub fn to_trash(db: &Db, library_id: i64, rels: &[String]) -> Result<(usize, Option<String>)> {
-    let lib = libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
-    let dir = lib.dir.clone().ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
+    let lib =
+        libraries::get(db, library_id)?.ok_or_else(|| bad("등록되지 않은 라이브러리입니다"))?;
+    let dir = lib
+        .dir
+        .clone()
+        .ok_or_else(|| bad("디스크가 연결되어 있지 않습니다"))?;
     let bin = trash_root(&dir).join("_폴더");
     let mut moved = 0;
     let mut first_err: Option<String> = None;
@@ -149,7 +186,14 @@ mod tests {
     fn husks_are_folders_with_files_but_no_photos_and_go_to_the_folder_bin() {
         let dir = tempfile::tempdir().unwrap();
         // 2003/여행: 사진 있음 · 2003/메모: txt 만 · 2004: 하위에 zip 만
-        for (d, files) in [("2003/여행", vec![("a.jpg", "photo")]), ("2003/메모", vec![("IMG_1.TXT", "note"), ("IMG_2.TXT", "note")]), ("2004/x", vec![("old.zip", "zip")])] {
+        for (d, files) in [
+            ("2003/여행", vec![("a.jpg", "photo")]),
+            (
+                "2003/메모",
+                vec![("IMG_1.TXT", "note"), ("IMG_2.TXT", "note")],
+            ),
+            ("2004/x", vec![("old.zip", "zip")]),
+        ] {
             let p = dir.path().join(d);
             std::fs::create_dir_all(&p).unwrap();
             for (n, body) in files {
@@ -159,19 +203,36 @@ mod tests {
         std::fs::write(dir.path().join("2004/.DS_Store"), b"").unwrap();
         let db = Db::open(dir.path().join("t.db")).unwrap();
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
-        let lib: i64 = db.read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0))).unwrap();
+        let lib: i64 = db
+            .read(|c| c.query_row("SELECT id FROM libraries", [], |r| r.get(0)))
+            .unwrap();
         let h = list(&db, lib).unwrap();
         let rels: Vec<&str> = h.iter().map(|x| x.rel.as_str()).collect();
-        assert_eq!(rels, ["2003/메모", "2004"], "위 폴더부터, 사진 있는 2003/여행은 아니다: {h:?}");
+        assert_eq!(
+            rels,
+            ["2003/메모", "2004"],
+            "위 폴더부터, 사진 있는 2003/여행은 아니다: {h:?}"
+        );
         assert_eq!(h[0].files, 2);
         assert_eq!(h[0].kinds[0], ("txt".to_string(), 2));
         let (n, err) = to_trash(&db, lib, &["2003/메모".into(), "2004".into()]).unwrap();
         assert_eq!((n, err), (2, None));
         assert!(!dir.path().join("2003/메모").exists());
         assert!(!dir.path().join("2004").exists());
-        assert!(dir.path().join(".acut/휴지통/_폴더/2003/메모/IMG_1.TXT").is_file(), "통째로 휴지통 _폴더 아래로");
-        assert!(dir.path().join("2003/여행/a.jpg").is_file(), "사진 폴더는 그대로");
+        assert!(
+            dir.path()
+                .join(".acut/휴지통/_폴더/2003/메모/IMG_1.TXT")
+                .is_file(),
+            "통째로 휴지통 _폴더 아래로"
+        );
+        assert!(
+            dir.path().join("2003/여행/a.jpg").is_file(),
+            "사진 폴더는 그대로"
+        );
         assert!(list(&db, lib).unwrap().is_empty());
-        assert!(to_trash(&db, lib, &["../etc".into()]).unwrap().1.is_some(), "밖으로 새는 경로는 거절");
+        assert!(
+            to_trash(&db, lib, &["../etc".into()]).unwrap().1.is_some(),
+            "밖으로 새는 경로는 거절"
+        );
     }
 }

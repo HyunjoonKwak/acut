@@ -38,11 +38,19 @@ pub struct City {
 impl City {
     /// 보여 줄 이름 — 한글이 있으면 한글
     pub fn label(&self) -> &'static str {
-        if self.name_ko.is_empty() { self.name } else { self.name_ko }
+        if self.name_ko.is_empty() {
+            self.name
+        } else {
+            self.name_ko
+        }
     }
     /// 시군구로 쓸 이름 — 한국은 시군구, 그 밖은 도시 이름
     pub fn district(&self) -> &'static str {
-        if self.admin2_name.is_empty() { self.label() } else { self.admin2_name }
+        if self.admin2_name.is_empty() {
+            self.label()
+        } else {
+            self.admin2_name
+        }
     }
 }
 
@@ -68,7 +76,17 @@ fn cities() -> &'static [City] {
                 if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
                     return None;
                 }
-                Some(City { lat, lon, name, name_ko, cc, admin1_code, admin1_name, admin2_name, population })
+                Some(City {
+                    lat,
+                    lon,
+                    name,
+                    name_ko,
+                    cc,
+                    admin1_code,
+                    admin1_name,
+                    admin2_name,
+                    population,
+                })
             })
             .collect();
         out.sort_by(|a, b| a.lat.total_cmp(&b.lat));
@@ -82,7 +100,11 @@ pub fn dataset_version() -> &'static str {
     V.get_or_init(|| {
         serde_json::from_str::<serde_json::Value>(MANIFEST)
             .ok()
-            .and_then(|m| m.get("dataset_version").and_then(|v| v.as_str()).map(str::to_string))
+            .and_then(|m| {
+                m.get("dataset_version")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
             .unwrap_or_else(|| "unknown".into())
     })
 }
@@ -105,7 +127,10 @@ pub fn country_name(cc: &str) -> Option<&'static str> {
         out.sort_by_key(|(cc, _)| *cc);
         out
     });
-    table.binary_search_by_key(&cc, |(c, _)| *c).ok().map(|i| table[i].1)
+    table
+        .binary_search_by_key(&cc, |(c, _)| *c)
+        .ok()
+        .map(|i| table[i].1)
 }
 
 /// 두 점 사이 거리(km) — 하버사인
@@ -127,7 +152,12 @@ pub struct Near {
 ///
 /// 위도로 먼저 창을 잘라 34,127행 전부를 재지 않는다. 경도는 자르지 않는다 —
 /// 극지방에서 창이 지구를 한 바퀴 돌아 오히려 느려지고, 남은 후보가 이미 적다.
-pub fn nearest_where(lat: f64, lon: f64, max_km: f64, keep: impl Fn(&City) -> bool) -> Option<Near> {
+pub fn nearest_where(
+    lat: f64,
+    lon: f64,
+    max_km: f64,
+    keep: impl Fn(&City) -> bool,
+) -> Option<Near> {
     let all = cities();
     // 위도 1도는 어디서나 약 111km 다
     let pad = max_km / 110.0;
@@ -175,18 +205,26 @@ mod tests {
         let want = serde_json::from_str::<serde_json::Value>(MANIFEST).unwrap();
         let want = want["sha256"].as_str().unwrap();
         let got = format!("{:x}", Sha256::digest(CITIES.as_bytes()));
-        assert_eq!(got, want, "cities.tsv 가 MANIFEST 와 다릅니다 — build-geodata.mjs 를 다시 돌리세요");
+        assert_eq!(
+            got, want,
+            "cities.tsv 가 MANIFEST 와 다릅니다 — build-geodata.mjs 를 다시 돌리세요"
+        );
         assert_eq!(cities().len(), want_count(), "행 수가 MANIFEST 와 다릅니다");
     }
 
     fn want_count() -> usize {
-        serde_json::from_str::<serde_json::Value>(MANIFEST).unwrap()["record_count"].as_u64().unwrap() as usize
+        serde_json::from_str::<serde_json::Value>(MANIFEST).unwrap()["record_count"]
+            .as_u64()
+            .unwrap() as usize
     }
 
     #[test]
     fn every_row_parses_into_a_city() {
         // filter_map 이 조용히 버린 행이 없어야 한다
-        let raw = CITIES.lines().filter(|l| !l.is_empty() && !l.starts_with('#')).count();
+        let raw = CITIES
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .count();
         assert_eq!(cities().len(), raw);
     }
 
@@ -216,9 +254,15 @@ mod tests {
     /// 도시 이름이 동까지 내려가는 곳에서도 시군구는 시군구여야 한다
     #[test]
     fn a_district_is_never_a_neighbourhood() {
-        let jeju = nearest_where(33.4689, 126.5275, 2.0, |c| c.name == "Ara-dong").unwrap().city;
+        let jeju = nearest_where(33.4689, 126.5275, 2.0, |c| c.name == "Ara-dong")
+            .unwrap()
+            .city;
         assert_eq!(jeju.label(), "Ara-dong", "도시 이름 자체는 원본 그대로다");
-        assert_eq!(jeju.district(), "제주시", "시군구는 동이 아니라 시여야 한다");
+        assert_eq!(
+            jeju.district(),
+            "제주시",
+            "시군구는 동이 아니라 시여야 한다"
+        );
     }
 
     /// 강화도는 GeoNames 상 인천이다 — 경계 데이터가 틀린 곳을 바로잡는 근거가 된다
@@ -263,7 +307,10 @@ mod tests {
     fn a_tie_goes_to_the_bigger_city() {
         // 같은 좌표에 두 도시가 있을 때 인구가 많은 쪽이 이긴다 (자료 순서에 흔들리지 않게)
         let n = nearest(37.5665, 126.9780, 30.0).unwrap();
-        let all_within = cities().iter().filter(|c| distance_km(37.5665, 126.9780, c.lat, c.lon) <= n.km).count();
+        let all_within = cities()
+            .iter()
+            .filter(|c| distance_km(37.5665, 126.9780, c.lat, c.lon) <= n.km)
+            .count();
         assert!(all_within >= 1);
     }
 }

@@ -41,7 +41,11 @@ mod real {
         let t = std::time::Instant::now();
         let j = super::junk::scan(&db).unwrap();
         println!("\n═══ 잡동사니 ═══  {:.2}초", t.elapsed().as_secs_f64());
-        println!("  {}장 · {:.1} GB", j.found, j.bytes as f64 / 1024.0f64.powi(3));
+        println!(
+            "  {}장 · {:.1} GB",
+            j.found,
+            j.bytes as f64 / 1024.0f64.powi(3)
+        );
         for (r, n) in &j.by_reason {
             println!("    {r:<16} {n:>6}");
         }
@@ -50,17 +54,28 @@ mod real {
         let t = std::time::Instant::now();
         let b = super::burst::scan(&db, super::burst::DEFAULT_GAP_SECS).unwrap();
         println!("\n═══ 같은 순간 ═══  {:.2}초", t.elapsed().as_secs_f64());
-        println!("  {}그룹 · {}장 · 확보 {:.1} GB",
-                 b.groups, b.photos, b.reclaimable as f64 / 1024.0f64.powi(3));
+        println!(
+            "  {}그룹 · {}장 · 확보 {:.1} GB",
+            b.groups,
+            b.photos,
+            b.reclaimable as f64 / 1024.0f64.powi(3)
+        );
 
         // ── 완전 중복 (해시를 읽는다) ──────────────────────────────
         let t = std::time::Instant::now();
         let d = super::dedup::scan(&db, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         println!("\n═══ 완전 중복 ═══  {:.1}초", t.elapsed().as_secs_f64());
-        println!("  후보 {} · {}그룹 · 확보 {:.1} GB",
-                 d.candidates, d.groups, d.reclaimable as f64 / 1024.0f64.powi(3));
+        println!(
+            "  후보 {} · {}그룹 · 확보 {:.1} GB",
+            d.candidates,
+            d.groups,
+            d.reclaimable as f64 / 1024.0f64.powi(3)
+        );
 
         let total = j.bytes + b.reclaimable + d.reclaimable;
-        println!("\n  ── 합계 확보 가능 {:.1} GB ──\n", total as f64 / 1024.0f64.powi(3));
+        println!(
+            "\n  ── 합계 확보 가능 {:.1} GB ──\n",
+            total as f64 / 1024.0f64.powi(3)
+        );
     }
 }

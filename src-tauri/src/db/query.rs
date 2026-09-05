@@ -87,7 +87,10 @@ pub struct Sort {
 
 impl Default for Sort {
     fn default() -> Self {
-        Self { by: SortBy::TakenAt, desc: true }
+        Self {
+            by: SortBy::TakenAt,
+            desc: true,
+        }
     }
 }
 
@@ -226,7 +229,9 @@ pub fn parse_bbox(s: &str) -> Option<[f64; 4]> {
 }
 
 pub(crate) fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 /// WHERE 절이 `folders`를 실제로 보는가.
@@ -340,7 +345,9 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         }
     }
     if let Some(t) = f.tag_id {
-        w.push("EXISTS (SELECT 1 FROM file_tags ft WHERE ft.file_id = fi.id AND ft.tag_id = ?)".into());
+        w.push(
+            "EXISTS (SELECT 1 FROM file_tags ft WHERE ft.file_id = fi.id AND ft.tag_id = ?)".into(),
+        );
         p.push(Box::new(t));
     }
     if let Some(pl) = f.place.as_ref() {
@@ -364,7 +371,9 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         w.push("fi.favorite = 1".into());
     }
     if f.no_thumb {
-        w.push("NOT EXISTS (SELECT 1 FROM thumbs t WHERE t.file_id = fi.id AND t.state = 1)".into());
+        w.push(
+            "NOT EXISTS (SELECT 1 FROM thumbs t WHERE t.file_id = fi.id AND t.state = 1)".into(),
+        );
     }
     if let Some(b) = f.bbox.as_deref().and_then(parse_bbox) {
         w.push(format!(
@@ -384,10 +393,17 @@ fn build_where(f: &Filter, cursor: Option<Cursor>) -> (String, Vec<Box<dyn rusql
         });
     }
     if let Some(pid) = f.person_id {
-        w.push("EXISTS (SELECT 1 FROM faces fa WHERE fa.file_id = fi.id AND fa.person_id = ?)".into());
+        w.push(
+            "EXISTS (SELECT 1 FROM faces fa WHERE fa.file_id = fi.id AND fa.person_id = ?)".into(),
+        );
         p.push(Box::new(pid));
     }
-    if let Some(q) = f.name_like.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(q) = f
+        .name_like
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         w.push("fi.name LIKE ? ESCAPE '\\'".into());
         p.push(Box::new(format!("%{}%", escape_like(q))));
     }
@@ -487,7 +503,11 @@ fn group_expr(g: GroupBy) -> String {
 
 /// 마지막 행에서 다음 커서를 만든다. 정렬 기준에 따라 어느 값을 담을지 갈린다.
 fn cursor_of(r: &FileRow, by: SortBy) -> Cursor {
-    let mut c = Cursor { num: None, text: None, id: r.id };
+    let mut c = Cursor {
+        num: None,
+        text: None,
+        id: r.id,
+    };
     match by {
         SortBy::Name => c.text = Some(r.name.clone()),
         SortBy::TakenAt => c.num = Some(r.taken_at),
@@ -586,9 +606,17 @@ pub fn cursor_at(db: &Db, f: &Filter, index: i64) -> Result<Option<Cursor>> {
         let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
         c.query_row(&sql, refs.as_slice(), |r| {
             Ok(if text {
-                Cursor { num: None, text: Some(r.get(0)?), id: r.get(1)? }
+                Cursor {
+                    num: None,
+                    text: Some(r.get(0)?),
+                    id: r.get(1)?,
+                }
             } else {
-                Cursor { num: Some(r.get(0)?), text: None, id: r.get(1)? }
+                Cursor {
+                    num: Some(r.get(0)?),
+                    text: None,
+                    id: r.get(1)?,
+                }
             })
         })
         .optional()
@@ -791,7 +819,11 @@ pub fn facets(db: &Db, f: &Filter, kind: FacetKind) -> Result<Vec<Facet>> {
                     }
                 }
             };
-            Facet { value, label, count }
+            Facet {
+                value,
+                label,
+                count,
+            }
         })
         .collect())
 }
@@ -853,7 +885,11 @@ pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
     let gps = valid_gps_sql();
     // clamp 는 NaN 을 그대로 통과시킨다 — 그 값이 SQL 글월에 박히면 «그런 칸이
     // 없다»는 오류로 지도가 통째로 빈다. 숫자가 아니면 기본 칸으로 돌린다.
-    let p = if precision.is_finite() { precision.clamp(0.0001, 10.0) } else { 0.1 };
+    let p = if precision.is_finite() {
+        precision.clamp(0.0001, 10.0)
+    } else {
+        0.1
+    };
     let (where_sql, params) = build_where(f, None);
     let join = if needs_folder_join(f) {
         "JOIN folders fo ON fo.id = fi.folder_id"
@@ -890,7 +926,14 @@ pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
         let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
         let mut st = c.prepare(&sql)?;
         let it = st.query_map(refs.as_slice(), |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
@@ -907,9 +950,12 @@ pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
               WHERE fi.id IN ({marks})"
         );
         db.read(|c| {
-            let refs: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|i| i as &dyn rusqlite::ToSql).collect();
+            let refs: Vec<&dyn rusqlite::ToSql> =
+                ids.iter().map(|i| i as &dyn rusqlite::ToSql).collect();
             let mut st = c.prepare(&sql)?;
-            let it = st.query_map(refs.as_slice(), |r| Ok((r.get::<_, i64>(0)?, (r.get(1)?, r.get(2)?))))?;
+            let it = st.query_map(refs.as_slice(), |r| {
+                Ok((r.get::<_, i64>(0)?, (r.get(1)?, r.get(2)?)))
+            })?;
             it.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()
         })?
     };
@@ -920,7 +966,15 @@ pub fn map_cells(db: &Db, f: &Filter, precision: f64) -> Result<Vec<MapCell>> {
                 Some((l, t)) => (Some(*l), Some(t.clone())),
                 None => (None, None),
             };
-            MapCell { lat, lon, n, library_id, thumb, place, places }
+            MapCell {
+                lat,
+                lon,
+                n,
+                library_id,
+                thumb,
+                place,
+                places,
+            }
         })
         .collect())
 }
@@ -932,9 +986,7 @@ pub fn summary(db: &Db, f: &Filter) -> Result<(i64, i64)> {
     } else {
         ""
     };
-    let sql = format!(
-        "SELECT COUNT(*), COALESCE(SUM(fi.size),0) FROM files fi {join} {where_sql}"
-    );
+    let sql = format!("SELECT COUNT(*), COALESCE(SUM(fi.size),0) FROM files fi {join} {where_sql}");
     db.read(|c| {
         let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
         c.query_row(&sql, refs.as_slice(), |r| Ok((r.get(0)?, r.get(1)?)))
@@ -949,7 +1001,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = Db::open(dir.path().join("t.db")).unwrap();
         db.transaction(|tx| {
-            tx.execute("INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')", [])?;
+            tx.execute(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library')",
+                [],
+            )?;
             tx.execute(
                 "INSERT INTO folders(id,volume_uuid,rel_path,name,area) VALUES(1,'V','a','a',1)",
                 [],
@@ -964,7 +1019,13 @@ mod tests {
             )?;
             // 같은 taken_at을 여럿 두어 동점 처리를 시험한다
             for i in 1..=50 {
-                let folder = if i <= 30 { 1 } else if i <= 40 { 2 } else { 3 };
+                let folder = if i <= 30 {
+                    1
+                } else if i <= 40 {
+                    2
+                } else {
+                    3
+                };
                 let taken = 1_000_000 + (i / 5) * 100; // 5개씩 같은 시각
                 tx.execute(
                     "INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,
@@ -977,8 +1038,8 @@ mod tests {
                         i * 100,
                         if i % 10 == 0 { 1 } else { 0 }, // 10개마다 영상
                         taken,
-                        i % 6,                            // 평점 0~5
-                        if i % 7 == 0 { 2 } else { 0 },   // 7개마다 제외
+                        i % 6,                          // 평점 0~5
+                        if i % 7 == 0 { 2 } else { 0 }, // 7개마다 제외
                         i % 11 == 0,
                     ],
                 )?;
@@ -1001,10 +1062,7 @@ mod tests {
         for index in [0usize, 1, 7, 23, 49] {
             let c = cursor_at(&db, &f, index as i64).unwrap();
             let got = page(&db, &f, c, 3, GroupBy::None).unwrap().rows;
-            assert_eq!(
-                got[0].id, all[index].id,
-                "{index}번째에서 시작해야 한다"
-            );
+            assert_eq!(got[0].id, all[index].id, "{index}번째에서 시작해야 한다");
         }
     }
 
@@ -1012,7 +1070,10 @@ mod tests {
     fn cursor_at_respects_the_filter() {
         let (_d, db) = seeded();
         // 영상만 — 10개마다 하나라 5장이다
-        let f = Filter { kind: Some(1), ..Default::default() };
+        let f = Filter {
+            kind: Some(1),
+            ..Default::default()
+        };
         let all = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         assert_eq!(all.len(), 5);
         let c = cursor_at(&db, &f, 3).unwrap();
@@ -1025,7 +1086,10 @@ mod tests {
     #[test]
     fn cursor_at_keeps_the_join_for_area() {
         let (_d, db) = seeded();
-        let f = Filter { area: Some(2), ..Default::default() };
+        let f = Filter {
+            area: Some(2),
+            ..Default::default()
+        };
         let all = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         assert_eq!(all.len(), 10, "폴더 3(area=2)에 41~50번 10장");
         let c = cursor_at(&db, &f, 4).unwrap();
@@ -1038,8 +1102,14 @@ mod tests {
     fn cursor_at_edges() {
         let (_d, db) = seeded();
         let f = Filter::default();
-        assert!(cursor_at(&db, &f, 0).unwrap().is_none(), "맨 앞은 커서가 없다");
-        assert!(cursor_at(&db, &f, -5).unwrap().is_none(), "음수도 맨 앞으로");
+        assert!(
+            cursor_at(&db, &f, 0).unwrap().is_none(),
+            "맨 앞은 커서가 없다"
+        );
+        assert!(
+            cursor_at(&db, &f, -5).unwrap().is_none(),
+            "음수도 맨 앞으로"
+        );
         // 끝을 넘어가면 행이 없다 — 빈 페이지가 되지 손잡이가 깨지면 안 된다
         assert!(cursor_at(&db, &f, 9999).unwrap().is_none());
     }
@@ -1050,22 +1120,39 @@ mod tests {
     #[test]
     fn trashed_files_disappear_from_the_default_view() {
         let (_d, db) = seeded();
-        let all = page(&db, &Filter::default(), None, 500, GroupBy::None).unwrap().rows.len();
-        db.write(|c| {
-            c.execute("UPDATE files SET trashed_at=1 WHERE id IN (1,2,3)", [])
-        })
-        .unwrap();
+        let all = page(&db, &Filter::default(), None, 500, GroupBy::None)
+            .unwrap()
+            .rows
+            .len();
+        db.write(|c| c.execute("UPDATE files SET trashed_at=1 WHERE id IN (1,2,3)", []))
+            .unwrap();
 
-        assert_eq!(page(&db, &Filter::default(), None, 500, GroupBy::None).unwrap().rows.len(), all - 3);
+        assert_eq!(
+            page(&db, &Filter::default(), None, 500, GroupBy::None)
+                .unwrap()
+                .rows
+                .len(),
+            all - 3
+        );
         assert_eq!(summary(&db, &Filter::default()).unwrap().0, all as i64 - 3);
         assert_eq!(
-            timeline(&db, &Filter::default()).unwrap().iter().map(|b| b.count).sum::<i64>(),
+            timeline(&db, &Filter::default())
+                .unwrap()
+                .iter()
+                .map(|b| b.count)
+                .sum::<i64>(),
             all as i64 - 3
         );
 
         // 휴지통 보기에서는 그것만 나온다
-        let t = Filter { trashed: true, ..Default::default() };
-        assert_eq!(page(&db, &t, None, 500, GroupBy::None).unwrap().rows.len(), 3);
+        let t = Filter {
+            trashed: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            page(&db, &t, None, 500, GroupBy::None).unwrap().rows.len(),
+            3
+        );
     }
 
     /// 정렬 기준을 바꿔도 페이지가 끊기거나 겹치지 않아야 한다.
@@ -1083,10 +1170,17 @@ mod tests {
             SortBy::Duration,
         ] {
             for desc in [true, false] {
-                let f = Filter { sort: Sort { by, desc }, ..Default::default() };
+                let f = Filter {
+                    sort: Sort { by, desc },
+                    ..Default::default()
+                };
                 // 한 번에 다 읽은 것과 7장씩 넘겨 읽은 것이 같아야 한다
-                let all: Vec<i64> =
-                    page(&db, &f, None, 500, GroupBy::None).unwrap().rows.iter().map(|r| r.id).collect();
+                let all: Vec<i64> = page(&db, &f, None, 500, GroupBy::None)
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .map(|r| r.id)
+                    .collect();
                 let mut paged = Vec::new();
                 let mut cur = None;
                 loop {
@@ -1112,7 +1206,10 @@ mod tests {
         let f = Filter::default();
 
         let none = page(&db, &f, None, 5, GroupBy::None).unwrap().rows;
-        assert!(none.iter().all(|r| r.group.is_none()), "안 묶으면 비어 있다");
+        assert!(
+            none.iter().all(|r| r.group.is_none()),
+            "안 묶으면 비어 있다"
+        );
 
         for g in [
             GroupBy::Folder,
@@ -1173,11 +1270,32 @@ mod tests {
     #[test]
     fn ascending_and_descending_are_mirror_images() {
         let (_d, db) = seeded();
-        let asc = Filter { sort: Sort { by: SortBy::Size, desc: false }, ..Default::default() };
-        let desc = Filter { sort: Sort { by: SortBy::Size, desc: true }, ..Default::default() };
-        let a: Vec<i64> = page(&db, &asc, None, 500, GroupBy::None).unwrap().rows.iter().map(|r| r.id).collect();
-        let mut d: Vec<i64> =
-            page(&db, &desc, None, 500, GroupBy::None).unwrap().rows.iter().map(|r| r.id).collect();
+        let asc = Filter {
+            sort: Sort {
+                by: SortBy::Size,
+                desc: false,
+            },
+            ..Default::default()
+        };
+        let desc = Filter {
+            sort: Sort {
+                by: SortBy::Size,
+                desc: true,
+            },
+            ..Default::default()
+        };
+        let a: Vec<i64> = page(&db, &asc, None, 500, GroupBy::None)
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        let mut d: Vec<i64> = page(&db, &desc, None, 500, GroupBy::None)
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| r.id)
+            .collect();
         d.reverse();
         assert_eq!(a, d);
     }
@@ -1186,7 +1304,13 @@ mod tests {
     #[test]
     fn cursor_at_follows_the_current_sort() {
         let (_d, db) = seeded();
-        let f = Filter { sort: Sort { by: SortBy::Name, desc: false }, ..Default::default() };
+        let f = Filter {
+            sort: Sort {
+                by: SortBy::Name,
+                desc: false,
+            },
+            ..Default::default()
+        };
         let all = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         for i in [0usize, 5, 30, 49] {
             let c = cursor_at(&db, &f, i as i64).unwrap();
@@ -1199,16 +1323,37 @@ mod tests {
     fn folder_path_selects_the_subtree() {
         let (_d, db) = seeded();
         // 폴더 1 = 'a', 폴더 2 = 'a/b', 폴더 3 = 'z'
-        let f = Filter { folder_path: Some("a".into()), ..Default::default() };
+        let f = Filter {
+            folder_path: Some("a".into()),
+            ..Default::default()
+        };
         let n = page(&db, &f, None, 500, GroupBy::None).unwrap().rows.len();
         assert_eq!(n, 40, "a(30) + a/b(10)");
 
-        let only_b = Filter { folder_path: Some("a/b".into()), ..Default::default() };
-        assert_eq!(page(&db, &only_b, None, 500, GroupBy::None).unwrap().rows.len(), 10);
+        let only_b = Filter {
+            folder_path: Some("a/b".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            page(&db, &only_b, None, 500, GroupBy::None)
+                .unwrap()
+                .rows
+                .len(),
+            10
+        );
 
         // 이름이 겹치는 형제를 잡아먹으면 안 된다
-        let none = Filter { folder_path: Some("a/bb".into()), ..Default::default() };
-        assert_eq!(page(&db, &none, None, 500, GroupBy::None).unwrap().rows.len(), 0);
+        let none = Filter {
+            folder_path: Some("a/bb".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            page(&db, &none, None, 500, GroupBy::None)
+                .unwrap()
+                .rows
+                .len(),
+            0
+        );
     }
 
     /// LIKE의 `_`는 아무 글자나 매치한다. 실제 라이브러리에 `#0_사진백업…`
@@ -1231,7 +1376,10 @@ mod tests {
         })
         .unwrap();
 
-        let f = Filter { folder_path: Some("p_q".into()), ..Default::default() };
+        let f = Filter {
+            folder_path: Some("p_q".into()),
+            ..Default::default()
+        };
         let rows = page(&db, &f, None, 500, GroupBy::None).unwrap().rows;
         assert_eq!(rows.len(), 1, "pXq까지 잡히면 안 된다");
         assert_eq!(rows[0].name, "a.jpg");
@@ -1291,7 +1439,10 @@ mod tests {
     fn folder_filter_includes_subfolders() {
         let (_d, db) = seeded();
         // 폴더 1(a)에는 30장, 하위 폴더 2(a/b)에 10장 → 40장
-        let f = Filter { folder_id: Some(1), ..Default::default() };
+        let f = Filter {
+            folder_id: Some(1),
+            ..Default::default()
+        };
         let (n, _) = summary(&db, &f).unwrap();
         assert_eq!(n, 40, "하위 폴더를 포함해야 한다");
     }
@@ -1299,8 +1450,14 @@ mod tests {
     #[test]
     fn area_filter_separates_regions() {
         let (_d, db) = seeded();
-        let mine = Filter { area: Some(1), ..Default::default() };
-        let shared = Filter { area: Some(2), ..Default::default() };
+        let mine = Filter {
+            area: Some(1),
+            ..Default::default()
+        };
+        let shared = Filter {
+            area: Some(2),
+            ..Default::default()
+        };
         assert_eq!(summary(&db, &mine).unwrap().0, 40);
         assert_eq!(summary(&db, &shared).unwrap().0, 10);
     }
@@ -1308,13 +1465,19 @@ mod tests {
     #[test]
     fn rating_and_culling_filters() {
         let (_d, db) = seeded();
-        let high = Filter { min_rating: Some(4), ..Default::default() };
+        let high = Filter {
+            min_rating: Some(4),
+            ..Default::default()
+        };
         let (n, _) = summary(&db, &high).unwrap();
         assert!(n > 0 && n < 50);
         for r in page(&db, &high, None, 100, GroupBy::None).unwrap().rows {
             assert!(r.rating >= 4);
         }
-        let rejected = Filter { culling_flag: Some(2), ..Default::default() };
+        let rejected = Filter {
+            culling_flag: Some(2),
+            ..Default::default()
+        };
         for r in page(&db, &rejected, None, 100, GroupBy::None).unwrap().rows {
             assert_eq!(r.culling_flag, 2);
         }
@@ -1324,14 +1487,23 @@ mod tests {
     fn name_search_escapes_wildcards() {
         let (_d, db) = seeded();
         // "IMG_0001"의 밑줄이 와일드카드로 동작하면 안 된다
-        let f = Filter { name_like: Some("IMG_0001".into()), ..Default::default() };
+        let f = Filter {
+            name_like: Some("IMG_0001".into()),
+            ..Default::default()
+        };
         let p = page(&db, &f, None, 100, GroupBy::None).unwrap();
         assert_eq!(p.rows.len(), 1, "정확히 하나만");
         assert_eq!(p.rows[0].name, "IMG_0001.jpg");
 
         // 밑줄이 와일드카드였다면 "IMGX0001"도 걸렸을 것이다
-        let f2 = Filter { name_like: Some("IMG".into()), ..Default::default() };
-        assert_eq!(page(&db, &f2, None, 100, GroupBy::None).unwrap().rows.len(), 50);
+        let f2 = Filter {
+            name_like: Some("IMG".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            page(&db, &f2, None, 100, GroupBy::None).unwrap().rows.len(),
+            50
+        );
     }
 
     #[test]
@@ -1387,8 +1559,18 @@ mod tests {
         assert_eq!(b.iter().map(|x| x.count).sum::<i64>(), 50);
         // top으로 그 지점부터 읽을 수 있어야 한다
         let first = &b[0];
-        let p = page(&db, &Filter::default(), Some(Cursor { num: Some(first.top + 1), text: None, id: i64::MAX }), 5, GroupBy::None)
-            .unwrap();
+        let p = page(
+            &db,
+            &Filter::default(),
+            Some(Cursor {
+                num: Some(first.top + 1),
+                text: None,
+                id: i64::MAX,
+            }),
+            5,
+            GroupBy::None,
+        )
+        .unwrap();
         assert!(!p.rows.is_empty(), "점프 지점부터 읽힌다");
     }
 
@@ -1397,7 +1579,13 @@ mod tests {
     #[test]
     fn timeline_parses_year_and_month_as_numbers() {
         let (_d, db) = seeded();
-        for f in [Filter::default(), Filter { area: Some(1), ..Default::default() }] {
+        for f in [
+            Filter::default(),
+            Filter {
+                area: Some(1),
+                ..Default::default()
+            },
+        ] {
             let b = timeline(&db, &f).unwrap();
             assert!(!b.is_empty());
             for x in &b {
@@ -1418,9 +1606,16 @@ mod tests {
             all.iter().map(|x| x.count).sum::<i64>(),
             summary(&db, &Filter::default()).unwrap().0
         );
-        let area = Filter { area: Some(2), ..Default::default() };
+        let area = Filter {
+            area: Some(2),
+            ..Default::default()
+        };
         assert_eq!(
-            timeline(&db, &area).unwrap().iter().map(|x| x.count).sum::<i64>(),
+            timeline(&db, &area)
+                .unwrap()
+                .iter()
+                .map(|x| x.count)
+                .sum::<i64>(),
             summary(&db, &area).unwrap().0
         );
     }
@@ -1434,7 +1629,10 @@ mod tests {
         assert_eq!(all.iter().map(|f| f.count).sum::<i64>(), 50);
 
         // 영상만 걸어 두면 갈래도 영상만 남는다
-        let only_video = Filter { kind: Some(1), ..Default::default() };
+        let only_video = Filter {
+            kind: Some(1),
+            ..Default::default()
+        };
         let v = facets(&db, &only_video, FacetKind::Kind).unwrap();
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].label, "영상");
@@ -1474,7 +1672,10 @@ mod tests {
         })
         .unwrap();
 
-        let f = |t: i64| Filter { tag_id: Some(t), ..Default::default() };
+        let f = |t: i64| Filter {
+            tag_id: Some(t),
+            ..Default::default()
+        };
         assert_eq!(summary(&db, &f(1)).unwrap().0, 5);
         assert_eq!(summary(&db, &f(2)).unwrap().0, 3);
 
@@ -1529,7 +1730,10 @@ mod tests {
         for f in &fs {
             let n = summary(
                 &db,
-                &Filter { place: Some(f.value.clone()), ..Default::default() },
+                &Filter {
+                    place: Some(f.value.clone()),
+                    ..Default::default()
+                },
             )
             .unwrap()
             .0;
@@ -1543,10 +1747,19 @@ mod tests {
     fn place_grid_handles_negative_coordinates() {
         let (_d, db) = seeded();
         db.write(|c| {
-            c.execute("UPDATE files SET gps_lat=-33.87, gps_lon=-70.65 WHERE id=1", [])?;
-            c.execute("UPDATE files SET gps_lat=-33.83, gps_lon=-70.61 WHERE id=2", [])?;
+            c.execute(
+                "UPDATE files SET gps_lat=-33.87, gps_lon=-70.65 WHERE id=1",
+                [],
+            )?;
+            c.execute(
+                "UPDATE files SET gps_lat=-33.83, gps_lon=-70.61 WHERE id=2",
+                [],
+            )?;
             c.execute("UPDATE files SET gps_lat=0.05, gps_lon=0.05 WHERE id=3", [])?;
-            c.execute("UPDATE files SET gps_lat=-0.05, gps_lon=-0.05 WHERE id=4", [])
+            c.execute(
+                "UPDATE files SET gps_lat=-0.05, gps_lon=-0.05 WHERE id=4",
+                [],
+            )
         })
         .unwrap();
 
@@ -1568,7 +1781,10 @@ mod tests {
         for f in &fs {
             let n = summary(
                 &db,
-                &Filter { place: Some(f.value.clone()), ..Default::default() },
+                &Filter {
+                    place: Some(f.value.clone()),
+                    ..Default::default()
+                },
             )
             .unwrap()
             .0;
@@ -1583,7 +1799,10 @@ mod tests {
     fn zero_zero_is_missing_and_exact_grid_boundaries_round_trip() {
         let (_d, db) = seeded();
         db.write(|c| {
-            c.execute("UPDATE files SET gps_lat=0.0, gps_lon=0.0 WHERE id IN (1,2)", [])?;
+            c.execute(
+                "UPDATE files SET gps_lat=0.0, gps_lon=0.0 WHERE id IN (1,2)",
+                [],
+            )?;
             c.execute("UPDATE files SET gps_lat=0.05, gps_lon=0.05 WHERE id=3", [])
         })
         .unwrap();
@@ -1597,15 +1816,24 @@ mod tests {
         assert_eq!(origin_cell.count, 1);
         let round_trip = summary(
             &db,
-            &Filter { place: Some(origin_cell.value.clone()), ..Default::default() },
+            &Filter {
+                place: Some(origin_cell.value.clone()),
+                ..Default::default()
+            },
         )
         .unwrap()
         .0;
         assert_eq!(round_trip, 1);
         assert_eq!(
-            summary(&db, &Filter { place: Some(String::new()), ..Default::default() })
-                .unwrap()
-                .0,
+            summary(
+                &db,
+                &Filter {
+                    place: Some(String::new()),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .0,
             none.count
         );
     }
@@ -1613,7 +1841,10 @@ mod tests {
     /// 상태바의 «썸네일 없음 N장»과 그걸 눌렀을 때 뜨는 장수가 같아야 한다
     #[test]
     fn bbox_parses_four_numbers_in_order() {
-        assert_eq!(parse_bbox("37.4,126.8,37.6,127.1"), Some([37.4, 126.8, 37.6, 127.1]));
+        assert_eq!(
+            parse_bbox("37.4,126.8,37.6,127.1"),
+            Some([37.4, 126.8, 37.6, 127.1])
+        );
         assert_eq!(parse_bbox("37.6,126.8,37.4,127.1"), None); // 남이 북보다 크다
         assert_eq!(parse_bbox("1,2,3"), None);
         assert_eq!(parse_bbox("0,x,1,2,3"), None);
@@ -1627,8 +1858,14 @@ mod tests {
         let (_d, db) = seeded();
         db.transaction(|tx| {
             // 서울 둘, 부산 하나
-            tx.execute("UPDATE files SET gps_lat = 37.55, gps_lon = 126.98 WHERE id IN (1, 2)", [])?;
-            tx.execute("UPDATE files SET gps_lat = 35.18, gps_lon = 129.08 WHERE id = 3", [])?;
+            tx.execute(
+                "UPDATE files SET gps_lat = 37.55, gps_lon = 126.98 WHERE id IN (1, 2)",
+                [],
+            )?;
+            tx.execute(
+                "UPDATE files SET gps_lat = 35.18, gps_lon = 129.08 WHERE id = 3",
+                [],
+            )?;
             Ok(())
         })
         .unwrap();
@@ -1636,7 +1873,10 @@ mod tests {
         assert_eq!(cells.len(), 2);
         assert_eq!(cells[0].n, 2);
         assert!((cells[0].lat - 37.55).abs() < 1e-6);
-        let seoul = Filter { bbox: Some("37,126,38,128".into()), ..Default::default() };
+        let seoul = Filter {
+            bbox: Some("37,126,38,128".into()),
+            ..Default::default()
+        };
         assert_eq!(summary(&db, &seoul).unwrap().0, 2);
         assert_eq!(map_cells(&db, &seoul, 0.1).unwrap().len(), 1);
     }
@@ -1661,7 +1901,11 @@ mod tests {
 
         let wide = map_cells(&db, &Filter::default(), 1.0).unwrap();
         assert_eq!(wide.len(), 1, "1도 칸이면 넷이 한 자리에 모인다");
-        assert_eq!(wide[0].place.as_deref(), Some("수원시"), "한 장짜리 옆 동네가 이기면 안 된다");
+        assert_eq!(
+            wide[0].place.as_deref(),
+            Some("수원시"),
+            "한 장짜리 옆 동네가 이기면 안 된다"
+        );
         assert_eq!(wide[0].places, 2, "섞인 곳이 둘이라고 알려 준다");
 
         // 줌을 당기면 각자 제 이름을 가진다
@@ -1669,7 +1913,10 @@ mod tests {
         assert_eq!(close.len(), 2);
         let mut names: Vec<_> = close.iter().map(|c| (c.place.clone(), c.places)).collect();
         names.sort();
-        assert_eq!(names, vec![(Some("수원시".into()), 1), (Some("용인시".into()), 1)]);
+        assert_eq!(
+            names,
+            vec![(Some("수원시".into()), 1), (Some("용인시".into()), 1)]
+        );
     }
 
     /// 칸 크기가 숫자가 아니면 지도가 통째로 비었다 — 기본 칸으로 돌린다
@@ -1677,7 +1924,10 @@ mod tests {
     fn a_nonsense_cell_size_falls_back_instead_of_breaking_the_map() {
         let (_d, db) = seeded();
         db.transaction(|tx| {
-            tx.execute("UPDATE files SET gps_lat=37.28, gps_lon=127.01 WHERE id IN (1,2)", [])?;
+            tx.execute(
+                "UPDATE files SET gps_lat=37.28, gps_lon=127.01 WHERE id IN (1,2)",
+                [],
+            )?;
             Ok(())
         })
         .unwrap();
@@ -1693,7 +1943,10 @@ mod tests {
     fn a_map_cell_without_a_name_still_counts_its_photos() {
         let (_d, db) = seeded();
         db.transaction(|tx| {
-            tx.execute("UPDATE files SET gps_lat=37.28, gps_lon=127.01 WHERE id IN (1,2)", [])?;
+            tx.execute(
+                "UPDATE files SET gps_lat=37.28, gps_lon=127.01 WHERE id IN (1,2)",
+                [],
+            )?;
             Ok(())
         })
         .unwrap();
@@ -1701,16 +1954,28 @@ mod tests {
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].n, 2);
         assert_eq!(cells[0].place, None);
-        assert_eq!(cells[0].places, 0, "이름이 없는 것은 «한 곳»이 아니라 «없음»이다");
+        assert_eq!(
+            cells[0].places, 0,
+            "이름이 없는 것은 «한 곳»이 아니라 «없음»이다"
+        );
     }
 
     #[test]
     fn map_overview_excludes_missing_sentinels_and_keeps_global_bounds() {
         let (_d, db) = seeded();
         db.transaction(|tx| {
-            tx.execute("UPDATE files SET gps_lat=0.0, gps_lon=0.0 WHERE id IN (1,2)", [])?;
-            tx.execute("UPDATE files SET gps_lat=37.55, gps_lon=126.98 WHERE id=3", [])?;
-            tx.execute("UPDATE files SET gps_lat=35.18, gps_lon=129.08 WHERE id=4", [])?;
+            tx.execute(
+                "UPDATE files SET gps_lat=0.0, gps_lon=0.0 WHERE id IN (1,2)",
+                [],
+            )?;
+            tx.execute(
+                "UPDATE files SET gps_lat=37.55, gps_lon=126.98 WHERE id=3",
+                [],
+            )?;
+            tx.execute(
+                "UPDATE files SET gps_lat=35.18, gps_lon=129.08 WHERE id=4",
+                [],
+            )?;
             Ok(())
         })
         .unwrap();
@@ -1737,7 +2002,15 @@ mod tests {
             )
         })
         .unwrap();
-        let n = summary(&db, &Filter { no_thumb: true, ..Default::default() }).unwrap().0;
+        let n = summary(
+            &db,
+            &Filter {
+                no_thumb: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
         assert_eq!(n, 10, "40장은 됐고 41은 실패, 42~50은 아직 — 열 장");
     }
 
@@ -1750,9 +2023,15 @@ mod tests {
         let fs = facets(&db, &Filter::default(), FacetKind::Day).unwrap();
         assert!(fs.iter().all(|f| f.label.ends_with('일')), "{fs:?}");
         for f in &fs {
-            let n = summary(&db, &Filter { day: Some(f.value.clone()), ..Default::default() })
-                .unwrap()
-                .0;
+            let n = summary(
+                &db,
+                &Filter {
+                    day: Some(f.value.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0;
             assert_eq!(n, f.count, "{} 되돌리기", f.value);
         }
         // 최근이 위
@@ -1764,13 +2043,20 @@ mod tests {
     #[test]
     fn lens_facet_and_filter_round_trip() {
         let (_d, db) = seeded();
-        db.write(|c| c.execute("UPDATE files SET lens='FE 24-70' WHERE id <= 3", [])).unwrap();
+        db.write(|c| c.execute("UPDATE files SET lens='FE 24-70' WHERE id <= 3", []))
+            .unwrap();
         let fs = facets(&db, &Filter::default(), FacetKind::Lens).unwrap();
         assert!(fs.iter().any(|f| f.label == "(렌즈 정보 없음)"), "{fs:?}");
         for f in &fs {
-            let n = summary(&db, &Filter { lens: Some(f.value.clone()), ..Default::default() })
-                .unwrap()
-                .0;
+            let n = summary(
+                &db,
+                &Filter {
+                    lens: Some(f.value.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0;
             assert_eq!(n, f.count, "{} 되돌리기", f.label);
         }
     }

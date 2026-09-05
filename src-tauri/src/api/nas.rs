@@ -39,7 +39,11 @@ pub async fn nas_config_set(state: State<'_, AppState>, config: Config) -> Resul
         photos: config.photos.trim().trim_end_matches('/').to_string(),
         shared: config.shared.trim().trim_end_matches('/').to_string(),
         exclude: config.exclude.trim().to_string(),
-        rsync_port: if config.rsync_port == 0 { 22 } else { config.rsync_port },
+        rsync_port: if config.rsync_port == 0 {
+            22
+        } else {
+            config.rsync_port
+        },
     };
     if c.host.is_empty() || c.zone1.is_empty() {
         return Err("호스트와 1차 구역 경로는 비울 수 없습니다".into());
@@ -88,23 +92,57 @@ pub async fn nas_probe(app: AppHandle) -> Result<Probe, String> {
     let desk = libs.into_iter().find(|l| l.area == 0 && l.online);
     let already = ledger(&state.db)?;
     let cfg2 = cfg.clone();
-    let dest = desk.as_ref().and_then(|l| l.dir.clone()).map(|d| d.join(ZONE1_DIR));
+    let dest = desk
+        .as_ref()
+        .and_then(|l| l.dir.clone())
+        .map(|d| d.join(ZONE1_DIR));
     let r = tauri::async_runtime::spawn_blocking(move || {
         let st = ssh::check(&cfg2);
         if !st.online {
-            return Probe { online: false, hostname: String::new(), library_id: None, new_files: 0, new_bytes: 0, error: st.error };
+            return Probe {
+                online: false,
+                hostname: String::new(),
+                library_id: None,
+                new_files: 0,
+                new_bytes: 0,
+                error: st.error,
+            };
         }
         let Some(dest) = dest else {
-            return Probe { online: true, hostname: st.hostname, library_id: None, new_files: 0, new_bytes: 0, error: None };
+            return Probe {
+                online: true,
+                hostname: st.hostname,
+                library_id: None,
+                new_files: 0,
+                new_bytes: 0,
+                error: None,
+            };
         };
         match ssh::count_new(&cfg2, &dest, &already) {
-            Ok((n, b)) => Probe { online: true, hostname: st.hostname, library_id: None, new_files: n, new_bytes: b, error: None },
-            Err(e) => Probe { online: true, hostname: st.hostname, library_id: None, new_files: 0, new_bytes: 0, error: Some(e.to_string()) },
+            Ok((n, b)) => Probe {
+                online: true,
+                hostname: st.hostname,
+                library_id: None,
+                new_files: n,
+                new_bytes: b,
+                error: None,
+            },
+            Err(e) => Probe {
+                online: true,
+                hostname: st.hostname,
+                library_id: None,
+                new_files: 0,
+                new_bytes: 0,
+                error: Some(e.to_string()),
+            },
         }
     })
     .await
     .map_err(|e| e.to_string())?;
-    Ok(Probe { library_id: desk.map(|l| l.id), ..r })
+    Ok(Probe {
+        library_id: desk.map(|l| l.id),
+        ..r
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,12 +157,18 @@ pub struct PullDone {
 pub async fn nas_pull_start(app: AppHandle, library_id: i64) -> Result<(), String> {
     let state = app.state::<AppState>();
     let cfg = load(&state)?;
-    let lib = libraries::get(&state.db, library_id).map_err(err)?.ok_or("등록되지 않은 라이브러리입니다")?;
+    let lib = libraries::get(&state.db, library_id)
+        .map_err(err)?
+        .ok_or("등록되지 않은 라이브러리입니다")?;
     if lib.area != 0 {
         return Err("1차 구역은 작업대 라이브러리로만 내려받습니다".into());
     }
     let dir = lib.dir.clone().ok_or("디스크가 연결되어 있지 않습니다")?;
-    let Some(guard) = job::try_start_wait(&state.running, "NAS 내려받기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "NAS 내려받기",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let cancel = Arc::clone(&state.cancel);
@@ -156,7 +200,14 @@ pub async fn nas_pull_start(app: AppHandle, library_id: i64) -> Result<(), Strin
         });
         match r {
             Ok(pulled) => {
-                let _ = app.emit("nas-pull-done", PullDone { library_id, files: pulled.files.len(), cancelled: pulled.cancelled });
+                let _ = app.emit(
+                    "nas-pull-done",
+                    PullDone {
+                        library_id,
+                        files: pulled.files.len(),
+                        cancelled: pulled.cancelled,
+                    },
+                );
             }
             Err(e) => {
                 let _ = app.emit("nas-error", e.to_string());
@@ -181,7 +232,9 @@ pub struct Verified {
 pub async fn nas_verify(app: AppHandle, library_id: i64) -> Result<Verified, String> {
     let state = app.state::<AppState>();
     let cfg = load(&state)?;
-    let lib = libraries::get(&state.db, library_id).map_err(err)?.ok_or("등록되지 않은 라이브러리입니다")?;
+    let lib = libraries::get(&state.db, library_id)
+        .map_err(err)?
+        .ok_or("등록되지 않은 라이브러리입니다")?;
     let remote = match lib.area {
         1 => cfg.photos.clone(),
         2 => cfg.shared.clone(),
@@ -241,12 +294,19 @@ pub async fn nas_verify(app: AppHandle, library_id: i64) -> Result<Verified, Str
         if lib_rel.is_empty() {
             vol_rel.to_string()
         } else {
-            vol_rel.strip_prefix(&lib_rel).map(|s| s.trim_start_matches('/').to_string()).unwrap_or_else(|| vol_rel.to_string())
+            vol_rel
+                .strip_prefix(&lib_rel)
+                .map(|s| s.trim_start_matches('/').to_string())
+                .unwrap_or_else(|| vol_rel.to_string())
         }
     };
     let now = chrono::Utc::now().timestamp();
     let (mut present, mut absent) = (0usize, 0usize);
-    let remote_root = if lib.area == 1 { cfg.photos.clone() } else { cfg.shared.clone() };
+    let remote_root = if lib.area == 1 {
+        cfg.photos.clone()
+    } else {
+        cfg.shared.clone()
+    };
     state
         .db
         .transaction(|tx| {
@@ -270,7 +330,12 @@ pub async fn nas_verify(app: AppHandle, library_id: i64) -> Result<Verified, Str
         .map_err(err)?;
     let mut sample: Vec<String> = missing.iter().take(20).cloned().collect();
     sample.sort();
-    Ok(Verified { library_id, present, missing: absent, sample })
+    Ok(Verified {
+        library_id,
+        present,
+        missing: absent,
+        sample,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -294,8 +359,13 @@ pub struct PurgePlan {
 /// 1차 구역에서 비워도 되는 것 — 우리가 받았고, 작업대에서 사라졌고,
 /// 올라간 것이 확인됐거나(nas_state) 버린 것(휴지통).
 #[tauri::command]
-pub async fn nas_purge_plan(state: State<'_, AppState>, library_id: i64) -> Result<PurgePlan, String> {
-    let lib = libraries::get(&state.db, library_id).map_err(err)?.ok_or("등록되지 않은 라이브러리입니다")?;
+pub async fn nas_purge_plan(
+    state: State<'_, AppState>,
+    library_id: i64,
+) -> Result<PurgePlan, String> {
+    let lib = libraries::get(&state.db, library_id)
+        .map_err(err)?
+        .ok_or("등록되지 않은 라이브러리입니다")?;
     if lib.area != 0 {
         return Err("작업대 라이브러리를 고르세요".into());
     }
@@ -309,11 +379,19 @@ pub async fn nas_purge_plan(state: State<'_, AppState>, library_id: i64) -> Resu
             it.collect::<rusqlite::Result<Vec<_>>>()
         })
         .map_err(err)?;
-    let mut plan = PurgePlan { items: Vec::new(), bytes: 0, pending: 0, unknown: 0 };
+    let mut plan = PurgePlan {
+        items: Vec::new(),
+        bytes: 0,
+        pending: 0,
+        unknown: 0,
+    };
     for (rel, size) in ledger {
         let orig = crate::media::cache::rel_path(&base, &rel);
         // 아직 작업대에 그대로 있나 (디스크 또는 DB)
-        let on_disk = local_root.as_ref().map(|d| d.join(ZONE1_DIR).join(&rel).exists()).unwrap_or(false);
+        let on_disk = local_root
+            .as_ref()
+            .map(|d| d.join(ZONE1_DIR).join(&rel).exists())
+            .unwrap_or(false);
         let (dir, name) = match orig.rsplit_once('/') {
             Some((d, n)) => (d.to_string(), n.to_string()),
             None => (String::new(), orig.clone()),
@@ -346,7 +424,11 @@ pub async fn nas_purge_plan(state: State<'_, AppState>, library_id: i64) -> Resu
             .map_err(err)?;
         if trashed > 0 {
             plan.bytes += size;
-            plan.items.push(PurgeItem { rel, size, why: "버림".into() });
+            plan.items.push(PurgeItem {
+                rel,
+                size,
+                why: "버림".into(),
+            });
             continue;
         }
         // 옮겼나 — 저널의 마지막 기록
@@ -365,16 +447,30 @@ pub async fn nas_purge_plan(state: State<'_, AppState>, library_id: i64) -> Resu
         match moved {
             Some((_, op)) if op == "trash" => {
                 plan.bytes += size;
-                plan.items.push(PurgeItem { rel, size, why: "버림".into() });
+                plan.items.push(PurgeItem {
+                    rel,
+                    size,
+                    why: "버림".into(),
+                });
             }
             Some((Some(fid), op)) if op == "move" => {
                 let up: i64 = state
                     .db
-                    .read(|c| c.query_row("SELECT COUNT(*) FROM nas_state WHERE file_id = ?1", [fid], |r| r.get(0)))
+                    .read(|c| {
+                        c.query_row(
+                            "SELECT COUNT(*) FROM nas_state WHERE file_id = ?1",
+                            [fid],
+                            |r| r.get(0),
+                        )
+                    })
                     .map_err(err)?;
                 if up > 0 {
                     plan.bytes += size;
-                    plan.items.push(PurgeItem { rel, size, why: "올라감".into() });
+                    plan.items.push(PurgeItem {
+                        rel,
+                        size,
+                        why: "올라감".into(),
+                    });
                 } else {
                     plan.unknown += 1;
                 }
@@ -407,7 +503,11 @@ pub async fn nas_purge_run(app: AppHandle, rels: Vec<String>) -> Result<Purged, 
         // 목록은 있었는데 전부 걸러졌다 — «0개 비움»으로 조용히 끝내면 왜 안 됐는지 모른다
         return Err("비울 수 있는 경로가 없습니다 — 이 앱이 받은 것(원장)이고 1차 구역 안의 경로만 비웁니다".into());
     }
-    let Some(guard) = job::try_start_wait(&state.running, "NAS 비우기", std::time::Duration::from_secs(20)) else {
+    let Some(guard) = job::try_start_wait(
+        &state.running,
+        "NAS 비우기",
+        std::time::Duration::from_secs(20),
+    ) else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let ssh::Trashed { moved, error } = tauri::async_runtime::spawn_blocking(move || {
@@ -431,19 +531,30 @@ pub async fn nas_purge_run(app: AppHandle, rels: Vec<String>) -> Result<Purged, 
             Ok(())
         })
         .map_err(err)?;
-    let _ = app.emit("nas-purge-done", Purged { moved: moved.len(), bytes });
+    let _ = app.emit(
+        "nas-purge-done",
+        Purged {
+            moved: moved.len(),
+            bytes,
+        },
+    );
     // 옮긴 것은 원장에서 지웠다 — 그 위에서 일부가 실패했으면 그제야 알린다
     if let Some(e) = error {
         return Err(format!("{}개는 옮겼지만 일부 실패: {e}", moved.len()));
     }
-    Ok(Purged { moved: moved.len(), bytes })
+    Ok(Purged {
+        moved: moved.len(),
+        bytes,
+    })
 }
 
 /// 사이드카 내보내기. 진행은 `xmp-progress`, 끝나면 `xmp-done`.
 #[tauri::command]
 pub async fn xmp_export(app: AppHandle, library_id: Option<i64>) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(guard) = job::try_start_wait(&state.running, "XMP", std::time::Duration::from_secs(20)) else {
+    let Some(guard) =
+        job::try_start_wait(&state.running, "XMP", std::time::Duration::from_secs(20))
+    else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let db = Arc::clone(&state.db);
@@ -451,7 +562,10 @@ pub async fn xmp_export(app: AppHandle, library_id: Option<i64>) -> Result<(), S
         let _guard = guard;
         let handle = app.clone();
         let r = crate::ops::xmp::export(&db, library_id, |done, total| {
-            let _ = handle.emit("xmp-progress", serde_json::json!({ "done": done, "total": total }));
+            let _ = handle.emit(
+                "xmp-progress",
+                serde_json::json!({ "done": done, "total": total }),
+            );
         });
         match r {
             Ok(x) => {

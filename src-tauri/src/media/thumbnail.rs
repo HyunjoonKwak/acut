@@ -197,8 +197,9 @@ pub fn make_with(
     }
     let _source = Owned(source, release_source as fn(_));
     // 소스 생성 성공 != 디코딩 가능. 확장자만 보고 만들어지기 때문이다.
-    if unsafe { ffi::CGImageSourceGetStatus(source) != 0 || ffi::CGImageSourceGetCount(source) == 0 }
-    {
+    if unsafe {
+        ffi::CGImageSourceGetStatus(source) != 0 || ffi::CGImageSourceGetCount(source) == 0
+    } {
         return Err(ThumbError::Unreadable);
     }
 
@@ -362,7 +363,9 @@ mod tests {
                 if seen > 400 {
                     break; // 너무 깊이 뒤지지 않는다
                 }
-                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                let Ok(rd) = std::fs::read_dir(&d) else {
+                    continue;
+                };
                 for e in rd.flatten() {
                     let p = e.path();
                     if p.is_dir() {
@@ -370,10 +373,17 @@ mod tests {
                         continue;
                     }
                     // macOS가 exFAT에 만드는 `._` 사이드카는 그림이 아니다
-                    if p.file_name().map(|n| n.to_string_lossy().starts_with("._")).unwrap_or(false) {
+                    if p.file_name()
+                        .map(|n| n.to_string_lossy().starts_with("._"))
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
-                    if p.extension().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case(ext)).unwrap_or(false) {
+                    if p.extension()
+                        .and_then(|x| x.to_str())
+                        .map(|x| x.eq_ignore_ascii_case(ext))
+                        .unwrap_or(false)
+                    {
                         return Some(p);
                     }
                 }
@@ -510,7 +520,9 @@ mod bench {
                 if out.len() >= limit {
                     return out;
                 }
-                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                let Ok(rd) = std::fs::read_dir(&d) else {
+                    continue;
+                };
                 for e in rd.flatten() {
                     let p = e.path();
                     if p.is_dir() {
@@ -589,22 +601,34 @@ mod bench {
         let ok_par: usize = files
             .par_iter()
             .enumerate()
-            .map(|(i, f)| {
-                make(f, dir.path().join(format!("p{i}.jpg")), 512, 0.8)
-                    .is_ok() as usize
-            })
+            .map(|(i, f)| make(f, dir.path().join(format!("p{i}.jpg")), 512, 0.8).is_ok() as usize)
             .sum();
         let d_par = t.elapsed();
 
         let per = |d: std::time::Duration, n: usize| d.as_secs_f64() * 1000.0 / n as f64;
-        println!("  sips (프로세스 fork)   {:>8.0} ms   {:>6.1} ms/장   성공 {ok_sips}",
-                 d_sips.as_secs_f64() * 1000.0, per(d_sips, files.len()));
-        println!("  ImageIO (인프로세스)   {:>8.0} ms   {:>6.1} ms/장   성공 {ok_io}",
-                 d_io.as_secs_f64() * 1000.0, per(d_io, files.len()));
-        println!("  ImageIO + rayon        {:>8.0} ms   {:>6.1} ms/장   성공 {ok_par}",
-                 d_par.as_secs_f64() * 1000.0, per(d_par, files.len()));
-        println!("\n  단일 스레드 개선  {:.1}배", d_sips.as_secs_f64() / d_io.as_secs_f64());
-        println!("  병렬 포함 개선    {:.1}배", d_sips.as_secs_f64() / d_par.as_secs_f64());
+        println!(
+            "  sips (프로세스 fork)   {:>8.0} ms   {:>6.1} ms/장   성공 {ok_sips}",
+            d_sips.as_secs_f64() * 1000.0,
+            per(d_sips, files.len())
+        );
+        println!(
+            "  ImageIO (인프로세스)   {:>8.0} ms   {:>6.1} ms/장   성공 {ok_io}",
+            d_io.as_secs_f64() * 1000.0,
+            per(d_io, files.len())
+        );
+        println!(
+            "  ImageIO + rayon        {:>8.0} ms   {:>6.1} ms/장   성공 {ok_par}",
+            d_par.as_secs_f64() * 1000.0,
+            per(d_par, files.len())
+        );
+        println!(
+            "\n  단일 스레드 개선  {:.1}배",
+            d_sips.as_secs_f64() / d_io.as_secs_f64()
+        );
+        println!(
+            "  병렬 포함 개선    {:.1}배",
+            d_sips.as_secs_f64() / d_par.as_secs_f64()
+        );
         let est = per(d_par, files.len()) * 65_074.0 / 1000.0;
         println!("\n  → 65,074장 환산: {:.0}초 ({:.1}분)\n", est, est / 60.0);
 

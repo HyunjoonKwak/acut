@@ -34,7 +34,9 @@ pub struct Resolved {
 /// 좌표 하나를 푼다. 나라조차 모르면 None — 그 자리는 온라인이 다시 시도한다.
 pub fn resolve(lat: f64, lon: f64) -> Option<Resolved> {
     let cc = boundary::country(lat, lon)?;
-    let country = offline::country_name(&cc).map(str::to_string).unwrap_or_else(|| cc.clone());
+    let country = offline::country_name(&cc)
+        .map(str::to_string)
+        .unwrap_or_else(|| cc.clone());
 
     if cc == "KR" {
         return Some(korea(lat, lon, country));
@@ -53,7 +55,11 @@ pub fn resolve(lat: f64, lon: f64) -> Option<Resolved> {
         }),
         // 사막·바다 한가운데의 섬 — 나라는 확실하니 그것만 붙인다
         None => Some(Resolved {
-            place: Place { country: Some(country), admin1: None, admin2: None },
+            place: Place {
+                country: Some(country),
+                admin1: None,
+                admin2: None,
+            },
             distance_km: None,
             precision: super::PREC_BOUNDARY,
         }),
@@ -87,7 +93,11 @@ fn korea(lat: f64, lon: f64, country: String) -> Resolved {
         .filter(|d| Some(d) != admin1.as_ref());
 
     Resolved {
-        place: Place { country: Some(country), admin1, admin2 },
+        place: Place {
+            country: Some(country),
+            admin1,
+            admin2,
+        },
         distance_km: district.map(|n| n.km),
         // 도시에서 이름을 빌렸으면 근사, 폴리곤만으로 정했으면 경계
         precision: if district.is_some() || corrected.is_some() {
@@ -100,7 +110,11 @@ fn korea(lat: f64, lon: f64, country: String) -> Resolved {
 
 fn non_empty(s: &str) -> Option<String> {
     let s = s.trim();
-    if s.is_empty() { None } else { Some(s.to_string()) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 /// 이 도시가 그 시도에 속하나 — 시험에서 읽기 좋게 뽑아 둔다
@@ -132,14 +146,20 @@ mod tests {
     fn a_mountain_top_keeps_the_province_the_polygon_says() {
         let r = at(35.3369, 127.7306); // 지리산 천왕봉
         assert_eq!(r.place.admin1.as_deref(), Some("경상남도"));
-        assert_eq!(r.place.admin2, None, "20km 밖 도시의 이름을 빌려 오면 안 된다");
+        assert_eq!(
+            r.place.admin2, None,
+            "20km 밖 도시의 이름을 빌려 오면 안 된다"
+        );
         assert_eq!(r.precision, crate::geo::PREC_BOUNDARY);
     }
 
     /// 내장 폴리곤은 강화도를 경기도라 하지만, 0.2km 앞 도시 표는 인천이라 한다 — 도시가 이긴다
     #[test]
     fn a_very_near_city_corrects_a_stale_polygon() {
-        assert_eq!(boundary::kr_admin1(37.7469, 126.4880).map(|r| r.name.as_str()), Some("경기도"));
+        assert_eq!(
+            boundary::kr_admin1(37.7469, 126.4880).map(|r| r.name.as_str()),
+            Some("경기도")
+        );
         let r = at(37.7469, 126.4880);
         assert_eq!(r.place.admin1.as_deref(), Some("인천광역시"));
         assert_eq!(r.place.admin2.as_deref(), Some("강화군"));
@@ -158,7 +178,11 @@ mod tests {
     fn a_province_never_repeats_itself_as_a_district() {
         let r = at(37.5665, 126.9780); // 서울 한복판
         assert_eq!(r.place.admin1.as_deref(), Some("서울특별시"));
-        assert_ne!(r.place.admin2.as_deref(), Some("서울특별시"), "시도와 같은 이름은 시군구가 아니다");
+        assert_ne!(
+            r.place.admin2.as_deref(),
+            Some("서울특별시"),
+            "시도와 같은 이름은 시군구가 아니다"
+        );
     }
 
     /// **독도는 한국 땅이다** — 오프라인 판정 전체를 통과한 결과로도 그렇다
@@ -167,7 +191,11 @@ mod tests {
         let r = at(37.2411, 131.8694);
         assert_eq!(r.place.country.as_deref(), Some("대한민국"));
         assert_eq!(r.place.admin1.as_deref(), Some("경상북도"));
-        assert_eq!(r.place.name().as_deref(), Some("경상북도"), "울릉도 도시가 20km 밖이라 시도까지만 나온다");
+        assert_eq!(
+            r.place.name().as_deref(),
+            Some("경상북도"),
+            "울릉도 도시가 20km 밖이라 시도까지만 나온다"
+        );
     }
 
     #[test]

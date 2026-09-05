@@ -136,19 +136,35 @@ fn copy_file_chunked(
 ) -> Result<u64, String> {
     let src_file = fs::File::open(source)
         .map_err(|e| format!("Failed to open source {}: {}", source.display(), e))?;
-    let parent = target.parent().ok_or_else(|| format!("Target has no parent: {}", target.display()))?;
-    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("copy");
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("Target has no parent: {}", target.display()))?;
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("copy");
     let (temp_path, dst_file) = (0..100)
         .find_map(|_| {
             let seq = COPY_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-            let path = parent.join(format!(".{name}.acut-copy-{}-{seq}.tmp", std::process::id()));
+            let path = parent.join(format!(
+                ".{name}.acut-copy-{}-{seq}.tmp",
+                std::process::id()
+            ));
             match fs::File::options().write(true).create_new(true).open(&path) {
                 Ok(file) => Some(Ok((path, file))),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
-                Err(e) => Some(Err(format!("Failed to create temporary target {}: {e}", path.display()))),
+                Err(e) => Some(Err(format!(
+                    "Failed to create temporary target {}: {e}",
+                    path.display()
+                ))),
             }
         })
-        .ok_or_else(|| format!("Could not allocate a temporary target beside {}", target.display()))??;
+        .ok_or_else(|| {
+            format!(
+                "Could not allocate a temporary target beside {}",
+                target.display()
+            )
+        })??;
 
     struct RemoveOnDrop(Option<PathBuf>);
     impl Drop for RemoveOnDrop {
@@ -183,7 +199,10 @@ fn copy_file_chunked(
     writer
         .flush()
         .map_err(|e| format!("Flush error on {}: {}", temp_path.display(), e))?;
-    writer.get_ref().sync_all().map_err(|e| format!("Sync error on {}: {}", temp_path.display(), e))?;
+    writer
+        .get_ref()
+        .sync_all()
+        .map_err(|e| format!("Sync error on {}: {}", temp_path.display(), e))?;
 
     // Preserve the original modification time.
     if let Ok(src_meta) = fs::metadata(source) {
@@ -192,13 +211,24 @@ fn copy_file_chunked(
         }
     }
 
-    let source_hash = hasher::xxhash_file(source).ok_or_else(|| format!("Failed to hash source {}", source.display()))?;
-    let copied_hash = hasher::xxhash_file(&temp_path).ok_or_else(|| format!("Failed to hash temporary copy {}", temp_path.display()))?;
+    let source_hash = hasher::xxhash_file(source)
+        .ok_or_else(|| format!("Failed to hash source {}", source.display()))?;
+    let copied_hash = hasher::xxhash_file(&temp_path)
+        .ok_or_else(|| format!("Failed to hash temporary copy {}", temp_path.display()))?;
     if source_hash != copied_hash {
-        return Err(format!("Checksum mismatch while copying {}", source.display()));
+        return Err(format!(
+            "Checksum mismatch while copying {}",
+            source.display()
+        ));
     }
 
-    fs::rename(&temp_path, target).map_err(|e| format!("Failed to atomically replace {} with {}: {e}", target.display(), temp_path.display()))?;
+    fs::rename(&temp_path, target).map_err(|e| {
+        format!(
+            "Failed to atomically replace {} with {}: {e}",
+            target.display(),
+            temp_path.display()
+        )
+    })?;
     cleanup.0.take();
 
     Ok(total_written)
@@ -208,11 +238,10 @@ fn copy_file_chunked(
 fn filetime_set(path: &Path, mtime: std::time::SystemTime) -> Result<(), String> {
     // We use `fs::File::set_modified` which is available on stable Rust >=1.75
     // via the `File::set_modified` method (stabilised in 1.75).
-    let file =
-        fs::File::options()
-            .write(true)
-            .open(path)
-            .map_err(|e| format!("{}", e))?;
+    let file = fs::File::options()
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("{}", e))?;
     file.set_modified(mtime).map_err(|e| format!("{}", e))?;
     Ok(())
 }
@@ -391,10 +420,7 @@ pub fn plan_sync(task: &SyncTask) -> Result<SyncPlan, String> {
 ///
 /// `progress_callback` is invoked periodically with the current
 /// [`SyncProgress`] so that the frontend can display a progress bar.
-pub fn execute_sync(
-    plan: &SyncPlan,
-    progress_callback: impl Fn(SyncProgress),
-) -> SyncResult {
+pub fn execute_sync(plan: &SyncPlan, progress_callback: impl Fn(SyncProgress)) -> SyncResult {
     // Reset cancellation flag at start.
     SYNC_CANCELLED.store(false, Ordering::SeqCst);
 
@@ -614,7 +640,9 @@ mod tests {
         assert_eq!(copied, COPY_CHUNK_SIZE as u64 + 17);
         assert_eq!(fs::read(&target).unwrap(), fs::read(&source).unwrap());
         assert_eq!(
-            fs::read_dir(dir.path()).unwrap().flatten()
+            fs::read_dir(dir.path())
+                .unwrap()
+                .flatten()
                 .filter(|e| e.file_name().to_string_lossy().contains("acut-copy"))
                 .count(),
             0,

@@ -29,7 +29,12 @@ pub async fn trash_pending(
                  WHERE fi.culling_flag = 2 AND fi.trashed_at IS NULL
                    AND (?1 IS NULL OR fo.library_id = ?1)",
                 [library_id],
-                |r| Ok(Pending { files: r.get(0)?, bytes: r.get(1)? }),
+                |r| {
+                    Ok(Pending {
+                        files: r.get(0)?,
+                        bytes: r.get(1)?,
+                    })
+                },
             )
         })
         .map_err(err)
@@ -46,7 +51,9 @@ pub async fn trash_summary(
 
 /// 라이브러리마다 휴지통에 든 것 — 왼쪽 패널이 목록으로 보이고 바로 옮겨 간다
 #[tauri::command]
-pub async fn trash_by_library(state: State<'_, AppState>) -> Result<Vec<trash::LibrarySummary>, String> {
+pub async fn trash_by_library(
+    state: State<'_, AppState>,
+) -> Result<Vec<trash::LibrarySummary>, String> {
     trash::summary_by_library(&state.db).map_err(err)
 }
 
@@ -62,7 +69,9 @@ pub async fn trash_apply(
     tauri::async_runtime::spawn_blocking(move || {
         // 파일 이동과 20초 대기는 WebView의 async executor 밖에서 — organize 커맨드와 같은 규칙.
         // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-        let Some(_guard) = super::job::try_start_wait(&running, "휴지통으로", std::time::Duration::from_secs(20)) else {
+        let Some(_guard) =
+            super::job::try_start_wait(&running, "휴지통으로", std::time::Duration::from_secs(20))
+        else {
             return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
         };
         // 폴더 목록이 오면 그 안의 제외분만 — 비교 화면의 «표시한 것만 치우기»
@@ -114,7 +123,9 @@ pub async fn trash_files(
     let running = std::sync::Arc::clone(&state.running);
     tauri::async_runtime::spawn_blocking(move || {
         // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-        let Some(_guard) = super::job::try_start_wait(&running, "휴지통으로", std::time::Duration::from_secs(20)) else {
+        let Some(_guard) =
+            super::job::try_start_wait(&running, "휴지통으로", std::time::Duration::from_secs(20))
+        else {
             return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
         };
         trash::to_trash(&db, &ids, "고른 사진 휴지통으로").map_err(err)
@@ -134,7 +145,11 @@ pub async fn trash_restore(
     let running = std::sync::Arc::clone(&state.running);
     tauri::async_runtime::spawn_blocking(move || {
         // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-        let Some(_guard) = super::job::try_start_wait(&running, "휴지통 되돌리기", std::time::Duration::from_secs(20)) else {
+        let Some(_guard) = super::job::try_start_wait(
+            &running,
+            "휴지통 되돌리기",
+            std::time::Duration::from_secs(20),
+        ) else {
             return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
         };
         let ids = if ids.is_empty() {
@@ -160,11 +175,19 @@ pub async fn trash_empty(
     let cache_base = state.cache_base.clone();
     tauri::async_runtime::spawn_blocking(move || {
         // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
-        let Some(_guard) = super::job::try_start_wait(&running, "휴지통 비우기", std::time::Duration::from_secs(20)) else {
+        let Some(_guard) = super::job::try_start_wait(
+            &running,
+            "휴지통 비우기",
+            std::time::Duration::from_secs(20),
+        ) else {
             return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
         };
         let all = ids.is_empty();
-        let ids = if all { trashed_ids(&db, library_id)? } else { ids };
+        let ids = if all {
+            trashed_ids(&db, library_id)?
+        } else {
+            ids
+        };
         let out = trash::empty(&db, &cache_base, &ids).map_err(err)?;
         // 휴지통을 통째로 비우면 «사진 없는 폴더 정리»가 넣어 둔 _폴더 도 같이 사라진다
         if all {
@@ -184,14 +207,13 @@ pub async fn trash_empty(
 }
 
 fn trashed_ids(db: &Db, library_id: Option<i64>) -> Result<Vec<i64>, String> {
-    db
-        .read(|c| {
-            let mut st = c.prepare(
-                "SELECT fi.id FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+    db.read(|c| {
+        let mut st = c.prepare(
+            "SELECT fi.id FROM files fi JOIN folders fo ON fo.id = fi.folder_id
                  WHERE fi.trashed_at IS NOT NULL AND (?1 IS NULL OR fo.library_id = ?1)",
-            )?;
-            let it = st.query_map([library_id], |r| r.get(0))?;
-            it.collect::<rusqlite::Result<Vec<_>>>()
-        })
-        .map_err(err)
+        )?;
+        let it = st.query_map([library_id], |r| r.get(0))?;
+        it.collect::<rusqlite::Result<Vec<_>>>()
+    })
+    .map_err(err)
 }

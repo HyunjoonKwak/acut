@@ -6,8 +6,8 @@
 //! 잠들지도 않게 한다: 20분짜리 일을 시켜 놓고 자리를 비웠는데 맥이 자
 //! 버리면 돌아와서 다시 눌러야 한다.
 
-use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::rc::Retained;
+use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -56,7 +56,11 @@ pub fn waiting() -> Arc<AtomicBool> {
 /// 사용자 명령용 — 스위치가 잡혀 있으면 기다렸다가 잡는다. 기다리는 동안 깃발을 올려
 /// 감시가 다음 폴더로 넘어가지 않고 양보하게 한다.
 /// 바로 «다른 작업이 도는 중»으로 튕기면 큰 이동 뒤 감시가 훑는 몇 분 동안 아무것도 못 한다 (실측 2026-08-30)
-pub fn try_start_wait(running: &Arc<AtomicBool>, reason: &str, wait: std::time::Duration) -> Option<JobGuard> {
+pub fn try_start_wait(
+    running: &Arc<AtomicBool>,
+    reason: &str,
+    wait: std::time::Duration,
+) -> Option<JobGuard> {
     let flag = waiting();
     flag.store(true, Ordering::Release);
     let until = std::time::Instant::now() + wait;
@@ -75,12 +79,19 @@ pub fn try_start_wait(running: &Arc<AtomicBool>, reason: &str, wait: std::time::
 
 /// 뒤에서 도는 일(폴더 감시)용 — 잠자기를 막지 않는다. 사용자가 시킨 일은 `UserInitiated`
 /// 로 시스템 잠자기를 미루지만, 감시가 그걸 쓰면 맥이 밤새 못 잔다 (리뷰 H15)
-pub fn try_start_with(running: &Arc<AtomicBool>, reason: &str, background: bool) -> Option<JobGuard> {
+pub fn try_start_with(
+    running: &Arc<AtomicBool>,
+    reason: &str,
+    background: bool,
+) -> Option<JobGuard> {
     if running.swap(true, Ordering::AcqRel) {
         return None;
     }
     emit_holder(Some(reason));
-    Some(JobGuard { running: Arc::clone(running), _activity: Activity::begin(reason, background) })
+    Some(JobGuard {
+        running: Arc::clone(running),
+        _activity: Activity::begin(reason, background),
+    })
 }
 
 struct Activity {
@@ -94,7 +105,11 @@ unsafe impl Send for Activity {}
 impl Activity {
     fn begin(reason: &str, background: bool) -> Self {
         let info = NSProcessInfo::processInfo();
-        let opts = if background { NSActivityOptions::Background } else { NSActivityOptions::UserInitiated };
+        let opts = if background {
+            NSActivityOptions::Background
+        } else {
+            NSActivityOptions::UserInitiated
+        };
         let token = info.beginActivityWithOptions_reason(opts, &NSString::from_str(reason));
         Activity { token }
     }

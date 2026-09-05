@@ -38,20 +38,32 @@ impl Text {
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(4)?
             .commit_from_file(models::path(app_data, ModelId::TextModel))?;
-        let names: Vec<String> = session.inputs().iter().map(|i| i.name().to_string()).collect();
+        let names: Vec<String> = session
+            .inputs()
+            .iter()
+            .map(|i| i.name().to_string())
+            .collect();
         let pick = |what: &str| {
             names
                 .iter()
                 .find(|n| n.contains(what))
                 .cloned()
-                .ok_or_else(|| AiError::Other(format!("텍스트 모델 입력에 {what}가 없습니다: {names:?}")))
+                .ok_or_else(|| {
+                    AiError::Other(format!("텍스트 모델 입력에 {what}가 없습니다: {names:?}"))
+                })
         };
         let ids_name = pick("input_ids")?;
         let mask_name = pick("attention_mask")?;
         let tok = Tokenizer::from_file(models::path(app_data, ModelId::TextTokenizer))
             .map_err(|e| AiError::Other(format!("토크나이저: {e}")))?;
         let dense = load_dense(&models::path(app_data, ModelId::TextDense))?;
-        Ok(Text { session: Mutex::new(session), tok, dense, ids_name, mask_name })
+        Ok(Text {
+            session: Mutex::new(session),
+            tok,
+            dense,
+            ids_name,
+            mask_name,
+        })
     }
 
     /// 글 한 줄 → 길이 1 벡터. 사진 벡터와 내적하면 곧 닮은 정도.
@@ -65,7 +77,10 @@ impl Text {
             return Err(AiError::Other("빈 글".into()));
         }
         let ids: Vec<i64> = enc.get_ids()[..n].iter().map(|&x| x as i64).collect();
-        let mask: Vec<i64> = enc.get_attention_mask()[..n].iter().map(|&x| x as i64).collect();
+        let mask: Vec<i64> = enc.get_attention_mask()[..n]
+            .iter()
+            .map(|&x| x as i64)
+            .collect();
 
         let hidden = {
             let mut s = self.session.lock().unwrap_or_else(|e| e.into_inner());
@@ -77,7 +92,10 @@ impl Text {
             view.iter().copied().collect::<Vec<f32>>()
         };
         if hidden.len() != n * HIDDEN {
-            return Err(AiError::Other(format!("텍스트 모델 출력 크기가 다릅니다: {}", hidden.len())));
+            return Err(AiError::Other(format!(
+                "텍스트 모델 출력 크기가 다릅니다: {}",
+                hidden.len()
+            )));
         }
         Ok(normalize(&project(&self.dense, &pool(&hidden, &mask, n))))
     }
@@ -103,7 +121,13 @@ fn pool(hidden: &[f32], mask: &[i64], n: usize) -> Vec<f32> {
 /// Dense — 768 → 512
 fn project(w: &[f32], x: &[f32]) -> Vec<f32> {
     (0..DIM)
-        .map(|o| w[o * HIDDEN..(o + 1) * HIDDEN].iter().zip(x).map(|(a, b)| a * b).sum())
+        .map(|o| {
+            w[o * HIDDEN..(o + 1) * HIDDEN]
+                .iter()
+                .zip(x)
+                .map(|(a, b)| a * b)
+                .sum()
+        })
         .collect()
 }
 
@@ -132,7 +156,11 @@ fn load_dense(path: &Path) -> Result<Vec<f32>> {
     }
     let off: Vec<usize> = meta["data_offsets"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_u64().map(|x| x as usize))
+                .collect()
+        })
         .unwrap_or_default();
     let data = bytes
         .get(8 + hlen + off[0]..8 + hlen + off[1])
@@ -194,7 +222,8 @@ mod tests {
     #[ignore = "받아 둔 텍스트 모델과 DB 사본 필요"]
     fn real_search_prints_top_hits() {
         let home = std::env::var("HOME").unwrap();
-        let base = std::path::PathBuf::from(&home).join("Library/Application Support/com.acut.media");
+        let base =
+            std::path::PathBuf::from(&home).join("Library/Application Support/com.acut.media");
         let (Ok(copy), Ok(t)) = (std::env::var("ACUT_DB_COPY"), Text::load(&base)) else {
             eprintln!("모델이나 사본 없음 — 건너뜀");
             return;
@@ -205,7 +234,11 @@ mod tests {
         let t0 = std::time::Instant::now();
         let v = t.embed(&q).unwrap();
         let hits = index.similar_to(&v, 5, None);
-        eprintln!("\n«{q}» — {}장 중 {:.0}ms", index.len(), t0.elapsed().as_secs_f64() * 1000.0);
+        eprintln!(
+            "\n«{q}» — {}장 중 {:.0}ms",
+            index.len(),
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
         for (id, score) in hits {
             let (name, thumb): (String, Option<String>) = db
                 .read(|c| {
@@ -228,7 +261,8 @@ mod tests {
     #[ignore = "받아 둔 텍스트 모델 필요"]
     fn real_model_puts_korean_and_english_together() {
         let home = std::env::var("HOME").unwrap();
-        let base = std::path::PathBuf::from(home).join("Library/Application Support/com.acut.media");
+        let base =
+            std::path::PathBuf::from(home).join("Library/Application Support/com.acut.media");
         let Ok(t) = Text::load(&base) else {
             eprintln!("모델 없음 — 건너뜀");
             return;

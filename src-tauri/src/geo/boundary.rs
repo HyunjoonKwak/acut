@@ -82,13 +82,15 @@ fn regions() -> &'static [Region] {
 fn world() -> Option<&'static CountryBoundaries> {
     static CACHE: OnceLock<Option<CountryBoundaries>> = OnceLock::new();
     CACHE
-        .get_or_init(|| match CountryBoundaries::from_reader(BOUNDARIES_ODBL_360X180) {
-            Ok(b) => Some(b),
-            Err(e) => {
-                log::error!("내장된 국가 경계를 읽지 못했습니다: {e}");
-                None
-            }
-        })
+        .get_or_init(
+            || match CountryBoundaries::from_reader(BOUNDARIES_ODBL_360X180) {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    log::error!("내장된 국가 경계를 읽지 못했습니다: {e}");
+                    None
+                }
+            },
+        )
         .as_ref()
 }
 
@@ -101,7 +103,10 @@ pub fn country(lat: f64, lon: f64) -> Option<String> {
     let b = world()?;
     let at = LatLon::new(lat, lon).ok()?;
     // 크레이트는 좁은 것부터 답한다(US-HI, US). 나라는 두 글자짜리다.
-    b.ids(at).into_iter().find(|id| id.len() == 2).map(str::to_string)
+    b.ids(at)
+        .into_iter()
+        .find(|id| id.len() == 2)
+        .map(str::to_string)
 }
 
 /// 독도 정책 구역 안인가
@@ -130,8 +135,19 @@ fn normalize(name: &str) -> String {
         .flat_map(|c| c.to_lowercase())
         .collect();
     for suffix in [
-        "특별자치도", "특별자치시", "특별시", "광역시", "자치도", "자치시",
-        "teukbyeoljachido", "teukbyeolsi", "gwangyeoksi", "do", "si", "도", "시",
+        "특별자치도",
+        "특별자치시",
+        "특별시",
+        "광역시",
+        "자치도",
+        "자치시",
+        "teukbyeoljachido",
+        "teukbyeolsi",
+        "gwangyeoksi",
+        "do",
+        "si",
+        "도",
+        "시",
     ] {
         if let Some(rest) = s.strip_suffix(suffix) {
             if !rest.is_empty() {
@@ -212,14 +228,22 @@ mod tests {
         let m: serde_json::Value =
             serde_json::from_str(include_str!("../../data/boundaries/MANIFEST.json")).unwrap();
         let got = format!("{:x}", Sha256::digest(KR_ADMIN1.as_bytes()));
-        assert_eq!(got, m["sha256"].as_str().unwrap(), "kr_admin1.json 이 MANIFEST 와 다릅니다");
+        assert_eq!(
+            got,
+            m["sha256"].as_str().unwrap(),
+            "kr_admin1.json 이 MANIFEST 와 다릅니다"
+        );
         assert_eq!(regions().len(), 17, "한국 시도는 17개다");
     }
 
     #[test]
     fn every_region_knows_what_it_is_called() {
         for r in regions() {
-            assert!(r.aliases.iter().any(|a| a == &r.name), "{} 의 별칭에 제 이름이 없습니다", r.name);
+            assert!(
+                r.aliases.iter().any(|a| a == &r.name),
+                "{} 의 별칭에 제 이름이 없습니다",
+                r.name
+            );
             assert!(r.aliases.len() >= 2, "{} 에 영문 표기가 없습니다", r.name);
             assert!(r.names_match(&r.name));
         }
@@ -240,8 +264,15 @@ mod tests {
         // 수원 — 경기도
         assert_eq!(admin1_matches(37.2911, 127.0089, "경기도"), Some(true));
         assert_eq!(admin1_matches(37.2911, 127.0089, "Gyeonggi-do"), Some(true));
-        assert_eq!(admin1_matches(37.2911, 127.0089, "경상북도"), Some(false), "다른 도는 어긋난 것이다");
-        assert_eq!(admin1_matches(37.2911, 127.0089, "Gyeongsangbuk-do"), Some(false));
+        assert_eq!(
+            admin1_matches(37.2911, 127.0089, "경상북도"),
+            Some(false),
+            "다른 도는 어긋난 것이다"
+        );
+        assert_eq!(
+            admin1_matches(37.2911, 127.0089, "Gyeongsangbuk-do"),
+            Some(false)
+        );
         // 우리가 모르는 이름에는 다투지 않는다 — 시군구나 옛 이름일 수 있다
         assert_eq!(admin1_matches(37.2911, 127.0089, "수원시"), None);
         assert_eq!(admin1_matches(37.2911, 127.0089, ""), None);
@@ -256,8 +287,17 @@ mod tests {
     fn every_region_has_a_korean_name_and_a_city_table_key() {
         for r in regions() {
             assert!(r.code.starts_with("KR-"), "{}", r.code);
-            assert!(!r.name.is_empty() && r.name.chars().any(|c| ('가'..='힣').contains(&c)), "{}", r.name);
-            assert_eq!(r.geonames_admin1.len(), 2, "{} 의 도시표 열쇠가 이상합니다", r.name);
+            assert!(
+                !r.name.is_empty() && r.name.chars().any(|c| ('가'..='힣').contains(&c)),
+                "{}",
+                r.name
+            );
+            assert_eq!(
+                r.geonames_admin1.len(),
+                2,
+                "{} 의 도시표 열쇠가 이상합니다",
+                r.name
+            );
             assert!(kr_admin1_by_geonames(&r.geonames_admin1).is_some());
         }
     }
@@ -295,7 +335,10 @@ mod tests {
     #[test]
     fn the_policy_wins_even_though_the_polygons_have_no_dokdo() {
         let by_polygon = regions().iter().find(|r| contains(r, DOKDO.0, DOKDO.1));
-        assert!(by_polygon.is_none(), "폴리곤이 독도를 담게 되었습니다 — 정책 우선 순서를 다시 확인하세요");
+        assert!(
+            by_polygon.is_none(),
+            "폴리곤이 독도를 담게 되었습니다 — 정책 우선 순서를 다시 확인하세요"
+        );
         assert_eq!(kr_admin1(DOKDO.0, DOKDO.1).unwrap().code, "KR-47");
     }
 
@@ -312,7 +355,11 @@ mod tests {
             (38.1194, 128.4656, "강원도"),
         ];
         for (lat, lon, want) in cases {
-            assert_eq!(kr_admin1(lat, lon).map(|r| r.name.as_str()), Some(want), "{lat},{lon}");
+            assert_eq!(
+                kr_admin1(lat, lon).map(|r| r.name.as_str()),
+                Some(want),
+                "{lat},{lon}"
+            );
         }
     }
 
@@ -326,6 +373,9 @@ mod tests {
     /// 도시 표가 이것을 바로잡는다(offline::ganghwa_belongs_to_incheon_in_the_city_table).
     #[test]
     fn the_polygons_misplace_incheons_islands() {
-        assert_eq!(kr_admin1(37.7469, 126.4880).map(|r| r.name.as_str()), Some("경기도"));
+        assert_eq!(
+            kr_admin1(37.7469, 126.4880).map(|r| r.name.as_str()),
+            Some("경기도")
+        );
     }
 }

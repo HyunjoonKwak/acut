@@ -24,7 +24,16 @@ pub struct ThumbProgress {
 
 /// 썸네일이 필요한 파일 하나.
 /// DB에 쓸 한 줄: (파일 id, 캐시 상대경로, 원본 크기, 원본 수정시각, 폭, 높이, 상태, 오류)
-type Row = (i64, Option<String>, i64, i64, Option<u32>, Option<u32>, i32, Option<String>);
+type Row = (
+    i64,
+    Option<String>,
+    i64,
+    i64,
+    Option<u32>,
+    Option<u32>,
+    i32,
+    Option<String>,
+);
 
 fn write_rows(db: &Db, rows: &[Row]) -> Result<(), super::ScanError> {
     if rows.is_empty() {
@@ -70,7 +79,6 @@ pub fn generate(
     cancel: Arc<AtomicBool>,
     on_progress: impl Fn(&ThumbProgress) + Sync + Send,
 ) -> Result<ThumbProgress, super::ScanError> {
-
     let root = cache_root.to_path_buf();
 
     // 썸네일이 없거나, 있어도 원본의 크기·수정시각이 달라진 것들.
@@ -214,7 +222,16 @@ pub fn generate(
                         let mut p = progress.lock().unwrap();
                         p.failed += 1;
                         p.done += 1;
-                        (j.file_id, None, j.size, j.mtime, None, None, 2, Some(e.to_string()))
+                        (
+                            j.file_id,
+                            None,
+                            j.size,
+                            j.mtime,
+                            None,
+                            None,
+                            2,
+                            Some(e.to_string()),
+                        )
                     }
                 };
                 tick(false);
@@ -230,7 +247,10 @@ pub fn generate(
     // 8만 장이면 1GB가 넘는다. 우리 캐시 폴더 안만 훑는다.
     let (n, bytes) = cache::purge_sidecars(&root);
     if n > 0 {
-        log::info!("사이드카 {n}개 정리 ({:.0}MB)", bytes as f64 / 1024.0 / 1024.0);
+        log::info!(
+            "사이드카 {n}개 정리 ({:.0}MB)",
+            bytes as f64 / 1024.0 / 1024.0
+        );
     }
 
     let out = progress.lock().unwrap().clone();
@@ -258,11 +278,16 @@ mod tests {
                 if seen > 200 {
                     break;
                 }
-                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                let Ok(rd) = std::fs::read_dir(&d) else {
+                    continue;
+                };
                 for e in rd.flatten() {
                     let p = e.path();
                     // exFAT의 ._ 사이드카는 사진이 아니다
-                    if p.file_name().map(|n| n.to_string_lossy().starts_with("._")).unwrap_or(false) {
+                    if p.file_name()
+                        .map(|n| n.to_string_lossy().starts_with("._"))
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
                     if p.is_dir() {
@@ -299,14 +324,23 @@ mod tests {
     #[test]
     fn generates_and_records_thumbnails() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(_) = seed_real_jpeg(dir.path()) else { return };
+        let Some(_) = seed_real_jpeg(dir.path()) else {
+            return;
+        };
         let cache = cache_dir();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
 
         let vol = crate::db::volumes::describe(dir.path()).unwrap();
-        let p = generate(&db, lib_id(&db), &vol.mount_path, cache.path(), Arc::new(AtomicBool::new(false)), |_| {})
-            .unwrap();
+        let p = generate(
+            &db,
+            lib_id(&db),
+            &vol.mount_path,
+            cache.path(),
+            Arc::new(AtomicBool::new(false)),
+            |_| {},
+        )
+        .unwrap();
         assert_eq!(p.total, 1);
         assert_eq!(p.done, 1);
         assert_eq!(p.failed, 0);
@@ -329,34 +363,70 @@ mod tests {
     #[test]
     fn second_run_has_nothing_to_do() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(_) = seed_real_jpeg(dir.path()) else { return };
+        let Some(_) = seed_real_jpeg(dir.path()) else {
+            return;
+        };
         let cache = cache_dir();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
         let vol = crate::db::volumes::describe(dir.path()).unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
 
-        generate(&db, lib_id(&db), &vol.mount_path, cache.path(), cancel.clone(), |_| {}).unwrap();
-        let again = generate(&db, lib_id(&db), &vol.mount_path, cache.path(), cancel, |_| {}).unwrap();
+        generate(
+            &db,
+            lib_id(&db),
+            &vol.mount_path,
+            cache.path(),
+            cancel.clone(),
+            |_| {},
+        )
+        .unwrap();
+        let again = generate(
+            &db,
+            lib_id(&db),
+            &vol.mount_path,
+            cache.path(),
+            cancel,
+            |_| {},
+        )
+        .unwrap();
         assert_eq!(again.total, 0, "이미 만든 것은 대상이 아니다");
     }
 
     #[test]
     fn changed_source_invalidates_the_thumbnail() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(src) = seed_real_jpeg(dir.path()) else { return };
+        let Some(src) = seed_real_jpeg(dir.path()) else {
+            return;
+        };
         let cache = cache_dir();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
         let vol = crate::db::volumes::describe(dir.path()).unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
 
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
-        generate(&db, lib_id(&db), &vol.mount_path, cache.path(), cancel.clone(), |_| {}).unwrap();
+        generate(
+            &db,
+            lib_id(&db),
+            &vol.mount_path,
+            cache.path(),
+            cancel.clone(),
+            |_| {},
+        )
+        .unwrap();
 
         // 원본을 바꾼다 → 크기가 달라지므로 다시 만들어야 한다
         std::fs::write(&src, b"now it is a broken file").unwrap();
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
-        let after = generate(&db, lib_id(&db), &vol.mount_path, cache.path(), cancel, |_| {}).unwrap();
+        let after = generate(
+            &db,
+            lib_id(&db),
+            &vol.mount_path,
+            cache.path(),
+            cancel,
+            |_| {},
+        )
+        .unwrap();
         assert_eq!(after.total, 1, "원본이 바뀌면 다시 대상이 된다");
         assert_eq!(after.failed, 1, "깨진 파일은 실패로 기록된다");
 
@@ -369,7 +439,9 @@ mod tests {
     #[test]
     fn cancellation_stops_early() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(_) = seed_real_jpeg(dir.path()) else { return };
+        let Some(_) = seed_real_jpeg(dir.path()) else {
+            return;
+        };
         let cache = cache_dir();
         let db = Db::open(dir.path().join("db.sqlite")).unwrap();
         scan_test(&db, dir.path(), 0, |_| {}).unwrap();
@@ -377,7 +449,15 @@ mod tests {
 
         // 시작 전에 이미 취소된 상태
         let cancel = Arc::new(AtomicBool::new(true));
-        let p = generate(&db, lib_id(&db), &vol.mount_path, cache.path(), cancel, |_| {}).unwrap();
+        let p = generate(
+            &db,
+            lib_id(&db),
+            &vol.mount_path,
+            cache.path(),
+            cancel,
+            |_| {},
+        )
+        .unwrap();
         assert_eq!(p.done, 0, "취소되면 아무것도 하지 않는다");
     }
 }

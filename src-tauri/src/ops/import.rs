@@ -76,7 +76,11 @@ pub fn day_dir(day: &str) -> String {
 /// 시간대 규칙을 써야 자정 근처 사진이 다른 날 폴더로 가지 않는다.
 fn to_day(secs: i64) -> String {
     chrono::DateTime::from_timestamp(secs, 0)
-        .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d")
+                .to_string()
+        })
         .unwrap_or_default()
 }
 
@@ -88,7 +92,8 @@ type KnownMap = HashMap<(String, i64), Vec<(String, Option<String>)>>;
 /// 같은 이름·크기의 후보가 있으면 전체 내용 해시까지 비교한다. 카메라는
 /// `IMG_0001` 같은 이름을 되풀이하므로 이름·크기만으로 건너뛰면 사진을 잃는다.
 pub fn look(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Vec<Candidate>> {
-    let mount = libraries::get(db, library_id)?.and_then(|l| crate::db::volumes::find_mount(&l.volume_uuid));
+    let mount = libraries::get(db, library_id)?
+        .and_then(|l| crate::db::volumes::find_mount(&l.volume_uuid));
     let known: KnownMap = db.read(|c| {
         let mut st = c.prepare(
             "SELECT fi.name, fi.size, fo.rel_path, fi.full_hash FROM files fi
@@ -96,7 +101,10 @@ pub fn look(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Vec<Candida
               WHERE fo.library_id = ?1 AND fi.trashed_at IS NULL",
         )?;
         let it = st.query_map([library_id], |r| {
-            Ok(((r.get::<_, String>(0)?, r.get::<_, i64>(1)?), (r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?)))
+            Ok((
+                (r.get::<_, String>(0)?, r.get::<_, i64>(1)?),
+                (r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?),
+            ))
         })?;
         let mut out: KnownMap = HashMap::new();
         for row in it {
@@ -121,7 +129,9 @@ pub fn look(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Vec<Candida
     out.dedup_by(|a, b| a.path == b.path);
 
     for c in &mut out {
-        let Some(matches) = known.get(&(c.name.clone(), c.size as i64)) else { continue };
+        let Some(matches) = known.get(&(c.name.clone(), c.size as i64)) else {
+            continue;
+        };
         let candidate_hash = crate::core::hasher::xxhash_file(&c.path);
         // 저장된 full_hash 는 SHA-256 이다 — xxhash 와 문자열 비교하면 절대 같지 않아
         // 디스크를 못 읽는 사본이 전부 «새 사진»이 된다 (리뷰 2026-08-31). 그때만 후보를
@@ -129,11 +139,15 @@ pub fn look(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Vec<Candida
         let mut candidate_sha: Option<Option<String>> = None;
         c.duplicate = matches.iter().any(|(rel, stored_hash)| {
             if let (Some(m), Some(cand)) = (mount.as_ref(), candidate_hash.as_ref()) {
-                if let Some(known_hash) = crate::core::hasher::xxhash_file(&m.join(rel).join(&c.name)) {
+                if let Some(known_hash) =
+                    crate::core::hasher::xxhash_file(&m.join(rel).join(&c.name))
+                {
                     return *cand == known_hash;
                 }
             }
-            let Some(stored) = stored_hash else { return false };
+            let Some(stored) = stored_hash else {
+                return false;
+            };
             candidate_sha
                 .get_or_insert_with(|| crate::cull::hash::full(&c.path).ok())
                 .as_deref()
@@ -146,7 +160,9 @@ pub fn look(db: &Db, sources: &[PathBuf], library_id: i64) -> Result<Vec<Candida
 }
 
 fn walk(dir: &Path, out: &mut Vec<Candidate>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let name = crate::scan::nfc(&e.file_name().to_string_lossy());
         let Ok(ft) = e.file_type() else { continue };
@@ -245,8 +261,14 @@ pub fn copy_in(
         many => format!("{}곳에서 가져오기", many.len()),
     };
     let batch_id = super::open_batch(db, "import", &label)?;
-    let mut rep = Report { batch_id, ..Default::default() };
-    let mut p = Progress { found: cands.len(), ..Default::default() };
+    let mut rep = Report {
+        batch_id,
+        ..Default::default()
+    };
+    let mut p = Progress {
+        found: cands.len(),
+        ..Default::default()
+    };
     let mut dirs: Vec<PathBuf> = Vec::new();
     on_progress(&p);
 
@@ -353,14 +375,27 @@ mod tests {
 
     #[test]
     fn unix_time_becomes_a_local_looking_day() {
-        assert_eq!(to_day(crate::media::taken_at::civil_to_unix(2024, 8, 27, 0, 0, 0)), "2024-08-27");
-        assert_eq!(to_day(crate::media::taken_at::civil_to_unix(2024, 2, 29, 23, 59, 59)), "2024-02-29");
+        assert_eq!(
+            to_day(crate::media::taken_at::civil_to_unix(2024, 8, 27, 0, 0, 0)),
+            "2024-08-27"
+        );
+        assert_eq!(
+            to_day(crate::media::taken_at::civil_to_unix(
+                2024, 2, 29, 23, 59, 59
+            )),
+            "2024-02-29"
+        );
     }
 
     /// 1970 이전(스캔 못 한 옛 사진)도 하루 앞으로 밀리면 안 된다
     #[test]
     fn dates_before_the_epoch_do_not_slip() {
-        assert_eq!(to_day(crate::media::taken_at::civil_to_unix(1969, 12, 31, 23, 59, 59)), "1969-12-31");
+        assert_eq!(
+            to_day(crate::media::taken_at::civil_to_unix(
+                1969, 12, 31, 23, 59, 59
+            )),
+            "1969-12-31"
+        );
     }
 
     /// 카드에 담긴 여러 날이 날짜별로 갈라져 들어가야 한다. 가져온 날로
@@ -404,7 +439,9 @@ mod tests {
         let existing_dir = library.dir.clone().unwrap().join("2024/2024-08-27");
         std::fs::create_dir_all(&existing_dir).unwrap();
         std::fs::write(existing_dir.join("IMG_1.jpg"), b"abc").unwrap();
-        let rel = format!("{}/2024/2024-08-27", library.rel_path).trim_start_matches('/').to_string();
+        let rel = format!("{}/2024/2024-08-27", library.rel_path)
+            .trim_start_matches('/')
+            .to_string();
 
         db.transaction(|tx| {
             tx.execute(
@@ -447,7 +484,11 @@ mod tests {
         })
         .unwrap();
         let p = preview(&db, std::slice::from_ref(&src), lib).unwrap();
-        assert_eq!((p.files, p.duplicates), (0, 1), "디스크에 없어도 저장된 해시로 같은 사진임을 안다");
+        assert_eq!(
+            (p.files, p.duplicates),
+            (0, 1),
+            "디스크에 없어도 저장된 해시로 같은 사진임을 안다"
+        );
     }
 
     #[test]
@@ -458,7 +499,9 @@ mod tests {
         let existing_dir = library.dir.clone().unwrap().join("2024/2024-08-27");
         std::fs::create_dir_all(&existing_dir).unwrap();
         std::fs::write(existing_dir.join("IMG_1.jpg"), b"old").unwrap();
-        let rel = format!("{}/2024/2024-08-27", library.rel_path).trim_start_matches('/').to_string();
+        let rel = format!("{}/2024/2024-08-27", library.rel_path)
+            .trim_start_matches('/')
+            .to_string();
         db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO folders(id,volume_uuid,library_id,rel_path,name,area)
@@ -470,7 +513,8 @@ mod tests {
                  VALUES(1,'IMG_1.jpg',3,0,0,0,0)",
                 [],
             )
-        }).unwrap();
+        })
+        .unwrap();
 
         let p = preview(&db, std::slice::from_ref(&src), lib).unwrap();
         assert_eq!((p.files, p.duplicates), (1, 0));

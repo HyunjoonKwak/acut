@@ -277,11 +277,16 @@ mod tests {
                 if seen > 400 {
                     break;
                 }
-                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                let Ok(rd) = std::fs::read_dir(&d) else {
+                    continue;
+                };
                 for e in rd.flatten() {
                     let p = e.path();
                     // exFAT의 ._ 사이드카는 사진이 아니다
-                    if p.file_name().map(|n| n.to_string_lossy().starts_with("._")).unwrap_or(false) {
+                    if p.file_name()
+                        .map(|n| n.to_string_lossy().starts_with("._"))
+                        .unwrap_or(false)
+                    {
                         continue;
                     }
                     if p.is_dir() {
@@ -304,7 +309,10 @@ mod tests {
     fn parses_exif_timestamp_format() {
         // EXIF는 날짜 구분자가 콜론이다
         let t = parse_exif_time("2018:07:25 14:31:02").expect("파싱");
-        assert_eq!(t, super::super::taken_at::civil_to_unix(2018, 7, 25, 14, 31, 2));
+        assert_eq!(
+            t,
+            super::super::taken_at::civil_to_unix(2018, 7, 25, 14, 31, 2)
+        );
     }
 
     #[test]
@@ -365,26 +373,37 @@ mod smoke {
     fn dump_real_photos() {
         let roots = ["/Volumes/MAIN SSD/MERGE/사진통합작업", "/Volumes/PHOTO 1"];
         let mut shown = 0;
-        let mut stack: Vec<std::path::PathBuf> =
-            roots.iter().map(std::path::PathBuf::from).filter(|p| p.is_dir()).collect();
+        let mut stack: Vec<std::path::PathBuf> = roots
+            .iter()
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_dir())
+            .collect();
         let mut by_ext: std::collections::HashMap<String, usize> = Default::default();
 
         while let Some(d) = stack.pop() {
             if shown >= 6 {
                 break;
             }
-            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 // exFAT의 ._ 사이드카는 사진이 아니다
-                if p.file_name().map(|n| n.to_string_lossy().starts_with("._")).unwrap_or(false) {
+                if p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with("._"))
+                    .unwrap_or(false)
+                {
                     continue;
                 }
                 if p.is_dir() {
                     stack.push(p);
                     continue;
                 }
-                let Some(ext) = p.extension().and_then(|x| x.to_str()).map(|x| x.to_lowercase())
+                let Some(ext) = p
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .map(|x| x.to_lowercase())
                 else {
                     continue;
                 };
@@ -413,7 +432,9 @@ mod smoke {
                         let md = std::fs::metadata(&p).ok();
                         let mtime = md.as_ref().and_then(|m| {
                             m.modified().ok().and_then(|t| {
-                                t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64)
+                                t.duration_since(std::time::UNIX_EPOCH)
+                                    .ok()
+                                    .map(|d| d.as_secs() as i64)
                             })
                         });
                         let now = std::time::SystemTime::now()

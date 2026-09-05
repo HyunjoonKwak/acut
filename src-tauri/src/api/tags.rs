@@ -20,12 +20,20 @@ pub async fn tags_of(state: State<'_, AppState>, id: i64) -> Result<Vec<Tag>, St
 }
 
 #[tauri::command]
-pub async fn tag_add(state: State<'_, AppState>, ids: Vec<i64>, name: String) -> Result<i64, String> {
+pub async fn tag_add(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    name: String,
+) -> Result<i64, String> {
     tags::add(&state.db, &ids, &name).map_err(err)
 }
 
 #[tauri::command]
-pub async fn tag_remove(state: State<'_, AppState>, ids: Vec<i64>, tag_id: i64) -> Result<(), String> {
+pub async fn tag_remove(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    tag_id: i64,
+) -> Result<(), String> {
     tags::remove(&state.db, &ids, tag_id).map_err(err)
 }
 

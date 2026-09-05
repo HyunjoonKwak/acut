@@ -54,7 +54,9 @@ pub fn classify(name: &str, rel_dir: &str, size: i64, width: Option<i64>) -> Opt
         return Some(Reason::KakaoTalk);
     }
     // 경로에 다운로드 폴더가 들어 있으면
-    if d.split('/').any(|seg| seg == "download" || seg == "downloads" || seg == "다운로드") {
+    if d.split('/')
+        .any(|seg| seg == "download" || seg == "downloads" || seg == "다운로드")
+    {
         return Some(Reason::Downloaded);
     }
     // 작은 파일 — 해상도가 알려져 있고 사진 크기(400px 초과)면 옛 카메라 원본일 수 있어 넘긴다.
@@ -85,7 +87,14 @@ pub fn scan(db: &Db) -> Result<JunkProgress> {
              WHERE fi.trashed_at IS NULL",
         )?;
         let it = st.query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
@@ -95,7 +104,10 @@ pub fn scan(db: &Db) -> Result<JunkProgress> {
     for (id, name, dir, size, width, lib_rel) in rows {
         // 라이브러리 뿌리를 뗀다 — 그 위쪽 폴더 이름은 사용자가 정리한 구조가 아니다
         let in_lib = match lib_rel.as_deref() {
-            Some(l) if !l.is_empty() => dir.strip_prefix(l).map(|s| s.trim_start_matches('/')).unwrap_or(&dir),
+            Some(l) if !l.is_empty() => dir
+                .strip_prefix(l)
+                .map(|s| s.trim_start_matches('/'))
+                .unwrap_or(&dir),
             _ => dir.as_str(),
         };
         if let Some(r) = classify(&name, in_lib, size, width) {
@@ -130,8 +142,10 @@ pub fn scan(db: &Db) -> Result<JunkProgress> {
         Ok(())
     })?;
 
-    let mut list: Vec<(String, usize)> =
-        by_reason.iter().map(|(k, v)| (k.to_string(), v.0)).collect();
+    let mut list: Vec<(String, usize)> = by_reason
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.0))
+        .collect();
     list.sort_by(|a, b| b.1.cmp(&a.1));
 
     Ok(JunkProgress {
@@ -150,21 +164,42 @@ mod tests {
 
     #[test]
     fn catches_screenshots_by_name() {
-        assert_eq!(classify("Screenshot_20260101-120000.png", "", BIG, None), Some(Reason::Screenshot));
-        assert_eq!(classify("Screen Shot 2026.png", "", BIG, None), Some(Reason::Screenshot));
-        assert_eq!(classify("스크린샷 2026-01-01.png", "", BIG, None), Some(Reason::Screenshot));
+        assert_eq!(
+            classify("Screenshot_20260101-120000.png", "", BIG, None),
+            Some(Reason::Screenshot)
+        );
+        assert_eq!(
+            classify("Screen Shot 2026.png", "", BIG, None),
+            Some(Reason::Screenshot)
+        );
+        assert_eq!(
+            classify("스크린샷 2026-01-01.png", "", BIG, None),
+            Some(Reason::Screenshot)
+        );
     }
 
     #[test]
     fn catches_screenshots_by_folder() {
-        assert_eq!(classify("a.jpg", "DCIM/Screenshots", BIG, None), Some(Reason::Screenshot));
+        assert_eq!(
+            classify("a.jpg", "DCIM/Screenshots", BIG, None),
+            Some(Reason::Screenshot)
+        );
     }
 
     #[test]
     fn catches_kakao_and_downloads() {
-        assert_eq!(classify("KakaoTalk_20260101.jpg", "", BIG, None), Some(Reason::KakaoTalk));
-        assert_eq!(classify("a.jpg", "Download", BIG, None), Some(Reason::Downloaded));
-        assert_eq!(classify("a.jpg", "내폰/다운로드/2026", BIG, None), Some(Reason::Downloaded));
+        assert_eq!(
+            classify("KakaoTalk_20260101.jpg", "", BIG, None),
+            Some(Reason::KakaoTalk)
+        );
+        assert_eq!(
+            classify("a.jpg", "Download", BIG, None),
+            Some(Reason::Downloaded)
+        );
+        assert_eq!(
+            classify("a.jpg", "내폰/다운로드/2026", BIG, None),
+            Some(Reason::Downloaded)
+        );
     }
 
     #[test]
@@ -172,14 +207,27 @@ mod tests {
         assert_eq!(classify("a.jpg", "", 1000, None), Some(Reason::TooSmall));
         // 해상도가 사진만 하면 작아도 잡지 않는다 — 옛 카메라 원본
         assert_eq!(classify("a.jpg", "", 1000, Some(640)), None);
-        assert_eq!(classify("a.jpg", "", 1000, Some(120)), Some(Reason::TooSmall));
-        assert_eq!(classify("a.jpg", "", TINY_BYTES - 1, None), Some(Reason::TooSmall));
-        assert_eq!(classify("a.jpg", "", TINY_BYTES, None), None, "경계값은 남긴다");
+        assert_eq!(
+            classify("a.jpg", "", 1000, Some(120)),
+            Some(Reason::TooSmall)
+        );
+        assert_eq!(
+            classify("a.jpg", "", TINY_BYTES - 1, None),
+            Some(Reason::TooSmall)
+        );
+        assert_eq!(
+            classify("a.jpg", "", TINY_BYTES, None),
+            None,
+            "경계값은 남긴다"
+        );
     }
 
     #[test]
     fn leaves_ordinary_photos_alone() {
-        assert_eq!(classify("20260101_120000.jpg", "2026/2026-01-01 여행", BIG, None), None);
+        assert_eq!(
+            classify("20260101_120000.jpg", "2026/2026-01-01 여행", BIG, None),
+            None
+        );
         assert_eq!(classify("DSC_0031.JPG", "2018", BIG, None), None);
         assert_eq!(classify("IMG_0075.CR2", "2018/출사", BIG, None), None);
         // "download"가 폴더명의 일부일 뿐이면 걸리지 않는다
@@ -189,12 +237,22 @@ mod tests {
     #[test]
     fn groups_by_reason() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("Screenshot_20260101-120000.png"), vec![1u8; BIG as usize])
-            .unwrap();
-        std::fs::write(dir.path().join("Screenshot_20260102-120000.png"), vec![2u8; BIG as usize])
-            .unwrap();
+        std::fs::write(
+            dir.path().join("Screenshot_20260101-120000.png"),
+            vec![1u8; BIG as usize],
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Screenshot_20260102-120000.png"),
+            vec![2u8; BIG as usize],
+        )
+        .unwrap();
         std::fs::write(dir.path().join("tiny.jpg"), b"x").unwrap();
-        std::fs::write(dir.path().join("20260101_120000.jpg"), vec![3u8; BIG as usize]).unwrap();
+        std::fs::write(
+            dir.path().join("20260101_120000.jpg"),
+            vec![3u8; BIG as usize],
+        )
+        .unwrap();
 
         let db = crate::db::conn::Db::open(dir.path().join("t.db")).unwrap();
         crate::scan::scan_test(&db, dir.path(), 1, |_| {}).unwrap();

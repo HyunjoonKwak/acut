@@ -76,7 +76,10 @@ pub fn volume_uuid(path: impl AsRef<Path>) -> Result<String> {
         fileattr: 0,
         forkattr: 0,
     };
-    let mut buf = UuidBuf { length: 0, uuid: [0u8; 16] };
+    let mut buf = UuidBuf {
+        length: 0,
+        uuid: [0u8; 16],
+    };
 
     // SAFETY: c는 유효한 NUL 종료 문자열, al/buf는 스택에 있고 크기를 정확히 넘긴다.
     let rc = unsafe {
@@ -146,7 +149,13 @@ pub fn describe(path: impl AsRef<Path>) -> Result<VolumeInfo> {
         .map(|s| s.to_string_lossy().into_owned())
         // 부팅 볼륨은 마운트 지점이 "/" 라 이름이 없다.
         .unwrap_or_else(|| "Macintosh HD".to_string());
-    Ok(VolumeInfo { uuid, name, mount_path, total_bytes, free_bytes })
+    Ok(VolumeInfo {
+        uuid,
+        name,
+        mount_path,
+        total_bytes,
+        free_bytes,
+    })
 }
 
 /// 저장해 둔 UUID의 볼륨이 지금 어디에 붙어 있는지 찾는다.

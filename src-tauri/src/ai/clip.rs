@@ -37,7 +37,12 @@ impl Clip {
         let threads: usize = std::env::var("ACUT_CLIP_THREADS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8));
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+                    .min(8)
+            });
         let static_shapes = std::env::var("ACUT_CLIP_STATIC").is_ok();
         let builder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
@@ -68,7 +73,11 @@ impl Clip {
             .or_else(|| session.outputs().first())
             .map(|o| o.name().to_string())
             .unwrap_or_else(|| "image_embeds".into());
-        Ok(Self { session: Mutex::new(session), input, output })
+        Ok(Self {
+            session: Mutex::new(session),
+            input,
+            output,
+        })
     }
 
     /// 한 장을 모델 입력으로. 짧은 변을 224로 맞추고 가운데를 자른다.
@@ -168,8 +177,9 @@ mod tests {
     #[ignore = "모델 파일이 필요하다 (설정 › AI에서 받은 것)"]
     fn real_model_embeds_512() {
         let home = std::env::var("HOME").unwrap();
-        let model = std::path::PathBuf::from(home)
-            .join("Library/Application Support/com.acut.media/models/clip-vit-b32/vision_model.onnx");
+        let model = std::path::PathBuf::from(home).join(
+            "Library/Application Support/com.acut.media/models/clip-vit-b32/vision_model.onnx",
+        );
         if !model.is_file() {
             eprintln!("모델 없음 — 건너뜀");
             return;

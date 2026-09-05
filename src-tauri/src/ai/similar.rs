@@ -22,7 +22,9 @@ impl Index {
             let it = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
             it.collect::<rusqlite::Result<Vec<_>>>()
         })?;
-        Ok(Self::from_rows(rows.into_iter().map(|(id, b)| (id, from_blob(&b)))))
+        Ok(Self::from_rows(
+            rows.into_iter().map(|(id, b)| (id, from_blob(&b))),
+        ))
     }
 
     pub fn from_rows(rows: impl Iterator<Item = (i64, Vec<f32>)>) -> Self {
@@ -52,7 +54,9 @@ impl Index {
 
     /// 이 사진과 가까운 것 `k`장 — 자기 자신은 뺀다. (id, 닮은 정도 0–1)
     pub fn similar(&self, id: i64, k: usize) -> Vec<(i64, f32)> {
-        let Some(q) = self.vec_of(id) else { return Vec::new() };
+        let Some(q) = self.vec_of(id) else {
+            return Vec::new();
+        };
         self.similar_to(q, k, Some(id))
     }
 

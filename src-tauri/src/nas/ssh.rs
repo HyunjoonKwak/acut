@@ -85,7 +85,12 @@ pub fn rsync_version() -> (String, bool) {
     let bin = rsync_bin();
     match Command::new(&bin).arg("--version").output() {
         Ok(o) => {
-            let first = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
+            let first = String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             let ok = first.starts_with("rsync") && !first.contains("openrsync");
             (format!("{first} — {}", bin.display()), ok)
         }
@@ -103,7 +108,10 @@ pub fn explain(stderr: &str) -> String {
     if t.contains("Could not resolve hostname") {
         return format!("ssh 설정에 그 호스트가 없습니다: {t}");
     }
-    if t.contains("Connection timed out") || t.contains("Connection refused") || t.contains("No route to host") {
+    if t.contains("Connection timed out")
+        || t.contains("Connection refused")
+        || t.contains("No route to host")
+    {
         return format!("NAS에 닿지 않습니다 — 켜져 있고 같은 네트워크인지 보세요: {t}");
     }
     t.to_string()
@@ -111,7 +119,15 @@ pub fn explain(stderr: &str) -> String {
 
 fn ssh_base(cfg: &Config) -> Command {
     let mut c = Command::new("ssh");
-    c.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", &cfg.host]);
+    c.args([
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "LogLevel=ERROR",
+        &cfg.host,
+    ]);
     c
 }
 
@@ -134,9 +150,20 @@ pub fn check(cfg: &Config) -> Status {
             let text = String::from_utf8_lossy(&o.stdout);
             let mut lines = text.lines().map(str::trim);
             let hostname = lines.next().unwrap_or("").to_string();
-            let free_bytes = lines.next().and_then(|s| s.parse::<u64>().ok()).map(|kb| kb * 1024);
+            let free_bytes = lines
+                .next()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|kb| kb * 1024);
             let zone1_files = lines.next().and_then(|s| s.parse().ok());
-            Status { online: true, hostname, free_bytes, zone1_files, error: None, rsync, rsync_ok }
+            Status {
+                online: true,
+                hostname,
+                free_bytes,
+                zone1_files,
+                error: None,
+                rsync,
+                rsync_ok,
+            }
         }
         Ok(o) => Status {
             online: false,
@@ -180,7 +207,14 @@ pub struct Pulled {
 /// 매번 «바뀌었다»고 본다. 재귀·링크·시각만 맞추고 2초 오차는 눈감는다.
 /// `--iconv=utf-8-mac,utf-8`: 맥은 한글 이름을 자모 분리(NFD)로 두고 NAS는 NFC라, 그냥
 /// 견주면 같은 이름이 다른 파일이 된다 (실측: 2,460장 가운데 1,592장이 «NAS에 없음»).
-const COPY_FLAGS: [&str; 6] = ["-rlt", "--no-perms", "--no-owner", "--no-group", "--modify-window=2", "--iconv=utf-8-mac,utf-8"];
+const COPY_FLAGS: [&str; 6] = [
+    "-rlt",
+    "--no-perms",
+    "--no-owner",
+    "--no-group",
+    "--modify-window=2",
+    "--iconv=utf-8-mac,utf-8",
+];
 
 /// 우리 쪽 기록은 전부 NFC — DB의 파일·폴더 이름과 같은 꼴
 fn nfc(s: &str) -> String {
@@ -192,7 +226,10 @@ pub const PARTIAL_DIR: &str = ".rsync-partial";
 
 /// rsync가 쓸 ssh 명령 — rsync용 포트로
 fn rsync_ssh(cfg: &Config) -> String {
-    format!("ssh -p {} -o BatchMode=yes -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new", cfg.rsync_port)
+    format!(
+        "ssh -p {} -o BatchMode=yes -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new",
+        cfg.rsync_port
+    )
 }
 
 /// 사용자가 뭐라 적었든 늘 빼는 것 — macOS가 exFAT에 만드는 `._` 사이드카(실측: 2,460장에
@@ -211,7 +248,12 @@ fn excludes(cfg: &Config) -> Vec<String> {
 
 /// rsync 진행 줄 — `12,345  45%  1.2MB/s  0:00:03 (xfr#12, to-chk=88/200)`
 fn parse_progress(line: &str) -> Option<(u8, usize, usize)> {
-    let pct = line.split_whitespace().find(|w| w.ends_with('%'))?.trim_end_matches('%').parse().ok()?;
+    let pct = line
+        .split_whitespace()
+        .find(|w| w.ends_with('%'))?
+        .trim_end_matches('%')
+        .parse()
+        .ok()?;
     let (done, total) = match line.find("to-chk=") {
         Some(i) => {
             let rest = &line[i + 7..];
@@ -246,7 +288,10 @@ fn exclude_file(already: &[String]) -> std::io::Result<Option<std::path::PathBuf
         return Ok(None);
     }
     let p = std::env::temp_dir().join(format!("acut-nas-exclude-{}.txt", std::process::id()));
-    let body: String = already.iter().map(|r| format!("/{}\n", escape_pattern(r))).collect();
+    let body: String = already
+        .iter()
+        .map(|r| format!("/{}\n", escape_pattern(r)))
+        .collect();
     std::fs::write(&p, body)?;
     Ok(Some(p))
 }
@@ -293,13 +338,18 @@ pub fn count_new(cfg: &Config, dest: &Path, already: &[String]) -> std::io::Resu
     let src = format!("{}:{}/", cfg.host, cfg.zone1.trim_end_matches('/'));
     let excl = exclude_file(already)?;
     let mut cmd = Command::new(rsync_bin());
-    cmd.args(COPY_FLAGS).args(["-n", "--stats", "-e", &rsync_ssh(cfg)]);
+    cmd.args(COPY_FLAGS)
+        .args(["-n", "--stats", "-e", &rsync_ssh(cfg)]);
     cmd.args(excludes(cfg));
     if let Some(p) = &excl {
         cmd.arg(format!("--exclude-from={}", p.display()));
     }
     // 아직 없는 폴더라도 셀 수는 있어야 한다 — 빈 임시 폴더와 견준다
-    let local = if dest.is_dir() { dest.to_path_buf() } else { std::env::temp_dir().join("acut-nas-empty") };
+    let local = if dest.is_dir() {
+        dest.to_path_buf()
+    } else {
+        std::env::temp_dir().join("acut-nas-empty")
+    };
     std::fs::create_dir_all(&local)?;
     cmd.arg(&src).arg(format!("{}/", local.to_string_lossy()));
     let out = cmd.output();
@@ -308,7 +358,10 @@ pub fn count_new(cfg: &Config, dest: &Path, already: &[String]) -> std::io::Resu
     }
     let out = out?;
     if !out.status.success() {
-        return Err(std::io::Error::other(format!("rsync 실패: {}", explain(&String::from_utf8_lossy(&out.stderr)))));
+        return Err(std::io::Error::other(format!(
+            "rsync 실패: {}",
+            explain(&String::from_utf8_lossy(&out.stderr))
+        )));
     }
     Ok(parse_stats(&String::from_utf8_lossy(&out.stdout)))
 }
@@ -421,7 +474,10 @@ pub fn pull(
     }
     let err = err_thread.join().unwrap_or_default();
     if !rsync_acceptable(status.success(), status.code(), out.cancelled) {
-        return Err(std::io::Error::other(format!("rsync 실패 ({status}): {}", explain(&err))));
+        return Err(std::io::Error::other(format!(
+            "rsync 실패 ({status}): {}",
+            explain(&err)
+        )));
     }
     if !status.success() {
         // 23·24 — 옮기는 사이 NAS 쪽이 바뀌었거나 몇 개를 못 읽었다. 받은 건 받은 것이다.
@@ -442,7 +498,9 @@ pub fn rsync_acceptable(success: bool, code: Option<i32>, cancelled: bool) -> bo
 pub fn safe_zone1_rel(rel: &str) -> bool {
     !rel.is_empty()
         && !rel.starts_with('/')
-        && !rel.split('/').any(|s| s.is_empty() || s == "." || s == "..")
+        && !rel
+            .split('/')
+            .any(|s| s.is_empty() || s == "." || s == "..")
 }
 
 /// \r 또는 \n까지 읽는다
@@ -479,7 +537,13 @@ pub fn missing_on_nas(cfg: &Config, local: &Path, remote: &str) -> std::io::Resu
     }
     let out = Command::new(rsync_bin())
         .args(COPY_FLAGS)
-        .args(["-n", "--size-only", "--out-format=%n", "-e", &rsync_ssh(cfg)])
+        .args([
+            "-n",
+            "--size-only",
+            "--out-format=%n",
+            "-e",
+            &rsync_ssh(cfg),
+        ])
         .args(excludes(cfg))
         .arg(format!("{}/", local.to_string_lossy()))
         .arg(format!("{}:{}/", cfg.host, remote.trim_end_matches('/')))
@@ -508,7 +572,10 @@ pub struct Trashed {
 
 pub fn trash_in_zone1(cfg: &Config, rels: &[String]) -> std::io::Result<Trashed> {
     if rels.is_empty() {
-        return Ok(Trashed { moved: Vec::new(), error: None });
+        return Ok(Trashed {
+            moved: Vec::new(),
+            error: None,
+        });
     }
     // 목록은 stdin으로 NUL 구분 — 이름에 무엇이 들어 있어도 된다.
     // 이름은 mv 가 진짜 성공했을 때만 찍는다. `mv -n` 은 목적지에 같은 이름이 있으면
@@ -523,7 +590,12 @@ pub fn trash_in_zone1(cfg: &Config, rels: &[String]) -> std::io::Result<Trashed>
         z = q(&cfg.zone1),
         t = TRASH_DIR
     );
-    let mut child = ssh_base(cfg).arg(script).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let mut child = ssh_base(cfg)
+        .arg(script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
     {
         let mut stdin = child.stdin.take().unwrap();
         for r in rels {
@@ -546,7 +618,11 @@ pub fn trash_in_zone1(cfg: &Config, rels: &[String]) -> std::io::Result<Trashed>
     }
     let error = (!out.status.success()).then(|| {
         let e = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        if e.is_empty() { "일부를 못 옮겼습니다".to_string() } else { e }
+        if e.is_empty() {
+            "일부를 못 옮겼습니다".to_string()
+        } else {
+            e
+        }
     });
     Ok(Trashed { moved, error })
 }
@@ -561,13 +637,17 @@ mod tests {
             parse_progress("     12,345,678  45%   12.34MB/s    0:00:05 (xfr#12, to-chk=88/200)"),
             Some((45, 112, 200))
         );
-        assert_eq!(parse_progress("  1,000  3%  1.0MB/s  0:00:01"), Some((3, 0, 0)));
+        assert_eq!(
+            parse_progress("  1,000  3%  1.0MB/s  0:00:01"),
+            Some((3, 0, 0))
+        );
         assert_eq!(parse_progress("2024/여행/a.jpg"), None);
     }
 
     #[test]
     fn explains_the_synology_rsync_wrapper_refusal() {
-        let m = explain("Permission denied, please try again.\nrsync: connection unexpectedly closed");
+        let m =
+            explain("Permission denied, please try again.\nrsync: connection unexpectedly closed");
         assert!(m.contains("DSM 제어판"));
         assert!(explain("ssh: Could not resolve hostname nasroot").contains("호스트가 없습니다"));
         assert_eq!(explain("  odd  "), "odd");
@@ -577,30 +657,61 @@ mod tests {
     #[test]
     #[ignore = "실제 NAS 필요"]
     fn real_pull_small_folder() {
-        let Ok(dir) = std::env::var("ACUT_NAS_DIR") else { return };
-        let cfg = Config { zone1: dir, ..Default::default() };
+        let Ok(dir) = std::env::var("ACUT_NAS_DIR") else {
+            return;
+        };
+        let cfg = Config {
+            zone1: dir,
+            ..Default::default()
+        };
         // ACUT_PULL_DEST가 있으면 거기에(예: exFAT 볼륨 시험), 없으면 임시 폴더에
         let tmp = tempfile::tempdir().unwrap();
-        let dest_override = std::env::var("ACUT_PULL_DEST").ok().map(std::path::PathBuf::from);
-        let d = dest_override.clone().unwrap_or_else(|| tmp.path().to_path_buf());
+        let dest_override = std::env::var("ACUT_PULL_DEST")
+            .ok()
+            .map(std::path::PathBuf::from);
+        let d = dest_override
+            .clone()
+            .unwrap_or_else(|| tmp.path().to_path_buf());
         struct D(std::path::PathBuf);
-        impl Drop for D { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        impl Drop for D {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
         let _cleanup = dest_override.map(D);
         let d = D2(d);
         struct D2(std::path::PathBuf);
-        impl D2 { fn path(&self) -> &Path { &self.0 } }
+        impl D2 {
+            fn path(&self) -> &Path {
+                &self.0
+            }
+        }
         let cancel = AtomicBool::new(false);
         let last = std::cell::RefCell::new(PullProgress::default());
         let t = std::time::Instant::now();
-        let r = pull(&cfg, d.path(), &[], &cancel, |p| *last.borrow_mut() = p.clone()).unwrap();
+        let r = pull(&cfg, d.path(), &[], &cancel, |p| {
+            *last.borrow_mut() = p.clone()
+        })
+        .unwrap();
         let last = last.into_inner();
-        eprintln!("\n받음 {}개 · 마지막 진행 {}/{} {}% · {:.1}초 · 취소 {}", r.files.len(), last.done, last.total, last.percent, t.elapsed().as_secs_f64(), r.cancelled);
+        eprintln!(
+            "\n받음 {}개 · 마지막 진행 {}/{} {}% · {:.1}초 · 취소 {}",
+            r.files.len(),
+            last.done,
+            last.total,
+            last.percent,
+            t.elapsed().as_secs_f64(),
+            r.cancelled
+        );
         for f in r.files.iter().take(3) {
             eprintln!("  {f}");
         }
         assert!(!r.cancelled);
         let have = present_files(d.path()).len();
-        eprintln!("지금 있는 파일 {have}개 (이번에 옮긴 {}개 + 이미 있던 것)", r.files.len());
+        eprintln!(
+            "지금 있는 파일 {have}개 (이번에 옮긴 {}개 + 이미 있던 것)",
+            r.files.len()
+        );
         assert!(have >= r.files.len());
         // 두 번째는 받을 것이 없다 — 증분
         let r2 = pull(&cfg, d.path(), &[], &cancel, |_| {}).unwrap();
@@ -621,15 +732,24 @@ mod tests {
     fn homebrew_rsync_is_preferred_and_openrsync_is_refused() {
         let (desc, ok) = rsync_version();
         // 이 맥에는 Homebrew rsync가 있다 — 없는 맥이면 openrsync라 false여야 한다
-        assert_eq!(ok, !desc.contains("openrsync") && desc.starts_with("rsync"), "{desc}");
+        assert_eq!(
+            ok,
+            !desc.contains("openrsync") && desc.starts_with("rsync"),
+            "{desc}"
+        );
     }
 
     #[test]
     fn exclude_patterns_are_anchored_and_escaped() {
         assert_eq!(escape_pattern("a/b [1].jpg"), "a/b \\[1\\].jpg");
         assert_eq!(escape_pattern("what?.jpg"), "what\\?.jpg");
-        let p = exclude_file(&["x/y.jpg".into(), "z*.png".into()]).unwrap().unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "/x/y.jpg\n/z\\*.png\n");
+        let p = exclude_file(&["x/y.jpg".into(), "z*.png".into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            "/x/y.jpg\n/z\\*.png\n"
+        );
         let _ = std::fs::remove_file(p);
         assert!(exclude_file(&[]).unwrap().is_none());
     }
@@ -656,17 +776,35 @@ mod tests {
 
     #[test]
     fn names_are_kept_in_nfc() {
-        let nfd = "한글".chars().flat_map(|c| { use unicode_normalization::UnicodeNormalization; c.nfd().collect::<Vec<_>>() }).collect::<String>();
+        let nfd = "한글"
+            .chars()
+            .flat_map(|c| {
+                use unicode_normalization::UnicodeNormalization;
+                c.nfd().collect::<Vec<_>>()
+            })
+            .collect::<String>();
         assert_ne!(nfd, "한글");
         assert_eq!(nfc(&nfd), "한글");
     }
 
     #[test]
     fn excludes_become_rsync_flags() {
-        let cfg = Config { exclude: "@eaDir, #trash,,".into(), ..Default::default() };
+        let cfg = Config {
+            exclude: "@eaDir, #trash,,".into(),
+            ..Default::default()
+        };
         assert_eq!(
             excludes(&cfg),
-            vec!["--exclude", "@eaDir", "--exclude", "#trash", "--exclude", "._*", "--exclude", PARTIAL_DIR]
+            vec![
+                "--exclude",
+                "@eaDir",
+                "--exclude",
+                "#trash",
+                "--exclude",
+                "._*",
+                "--exclude",
+                PARTIAL_DIR
+            ]
         );
     }
 
@@ -695,7 +833,10 @@ mod tests {
         assert!(rsync_acceptable(true, Some(0), false));
         assert!(rsync_acceptable(false, Some(23), false));
         assert!(rsync_acceptable(false, Some(24), false));
-        assert!(rsync_acceptable(false, Some(255), true), "멈춘 것은 실패가 아니다");
+        assert!(
+            rsync_acceptable(false, Some(255), true),
+            "멈춘 것은 실패가 아니다"
+        );
         assert!(!rsync_acceptable(false, Some(255), false), "ssh 실패");
         assert!(!rsync_acceptable(false, Some(11), false), "파일 I/O 오류");
     }

@@ -47,7 +47,9 @@ pub fn rename(db: &Db, id: i64, new_name: &str) -> Result<String> {
     }
     // 대소문자만 다른 이름은 같은 파일이다(exFAT·APFS 기본). 그건 허용한다.
     if to.exists() && !old_name.eq_ignore_ascii_case(&new_name) {
-        return Err(DbError::Invalid(format!("같은 이름의 파일이 이미 있습니다: {new_name}")));
+        return Err(DbError::Invalid(format!(
+            "같은 이름의 파일이 이미 있습니다: {new_name}"
+        )));
     }
 
     let batch = super::open_batch(db, "rename", &format!("{old_name} → {new_name}"))?;
@@ -116,7 +118,11 @@ mod tests {
         let db = Db::open(dir.path().join("t.db")).unwrap();
         crate::scan::scan_test(&db, &lib, 1, |_| {}).unwrap();
         let id: i64 = db
-            .read(|c| c.query_row("SELECT id FROM files WHERE name='IMG_1.jpg'", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row("SELECT id FROM files WHERE name='IMG_1.jpg'", [], |r| {
+                    r.get(0)
+                })
+            })
             .unwrap();
         (dir, db, id)
     }
@@ -129,7 +135,11 @@ mod tests {
         assert!(d.path().join("lib/주원 첫돌.jpg").is_file());
         assert!(!d.path().join("lib/IMG_1.jpg").exists());
         let (name, ext): (String, String) = db
-            .read(|c| c.query_row("SELECT name, ext FROM files WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?))))
+            .read(|c| {
+                c.query_row("SELECT name, ext FROM files WHERE id=?1", [id], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+            })
             .unwrap();
         assert_eq!(name, "주원 첫돌.jpg");
         assert_eq!(ext, "jpg");
@@ -156,7 +166,9 @@ mod tests {
     fn same_name_is_a_no_op() {
         let (_d, db, id) = seeded();
         assert_eq!(rename(&db, id, "IMG_1.jpg").unwrap(), "IMG_1.jpg");
-        let n: i64 = db.read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0))).unwrap();
+        let n: i64 = db
+            .read(|c| c.query_row("SELECT COUNT(*) FROM batches", [], |r| r.get(0)))
+            .unwrap();
         assert_eq!(n, 0, "저널도 안 남긴다");
     }
 
@@ -167,14 +179,21 @@ mod tests {
         let (d, db, id) = seeded();
         std::fs::remove_file(d.path().join("lib/IMG_2.jpg")).unwrap();
         assert!(rename(&db, id, "IMG_2.jpg").is_err());
-        assert!(d.path().join("lib/IMG_1.jpg").is_file(), "파일은 원래 이름으로 돌아온다");
+        assert!(
+            d.path().join("lib/IMG_1.jpg").is_file(),
+            "파일은 원래 이름으로 돌아온다"
+        );
         assert!(!d.path().join("lib/IMG_2.jpg").exists());
         let name: String = db
             .read(|c| c.query_row("SELECT name FROM files WHERE id=?1", [id], |r| r.get(0)))
             .unwrap();
         assert_eq!(name, "IMG_1.jpg");
         let done: i64 = db
-            .read(|c| c.query_row("SELECT COALESCE(MAX(item_count),0) FROM batches", [], |r| r.get(0)))
+            .read(|c| {
+                c.query_row("SELECT COALESCE(MAX(item_count),0) FROM batches", [], |r| {
+                    r.get(0)
+                })
+            })
             .unwrap();
         assert_eq!(done, 0, "실패한 이름 바꾸기는 되돌릴 것이 없다");
     }
@@ -184,11 +203,15 @@ mod tests {
     fn undo_puts_the_old_name_back() {
         let (d, db, id) = seeded();
         rename(&db, id, "새.jpg").unwrap();
-        let batch: i64 = db.read(|c| c.query_row("SELECT MAX(id) FROM batches", [], |r| r.get(0))).unwrap();
+        let batch: i64 = db
+            .read(|c| c.query_row("SELECT MAX(id) FROM batches", [], |r| r.get(0)))
+            .unwrap();
         let out = crate::ops::undo::undo(&db, batch).unwrap();
         assert_eq!(out.failed, 0, "{:?}", out.first_error);
         assert!(d.path().join("lib/IMG_1.jpg").is_file());
-        let name: String = db.read(|c| c.query_row("SELECT name FROM files WHERE id=?1", [id], |r| r.get(0))).unwrap();
+        let name: String = db
+            .read(|c| c.query_row("SELECT name FROM files WHERE id=?1", [id], |r| r.get(0)))
+            .unwrap();
         assert_eq!(name, "IMG_1.jpg");
     }
 }

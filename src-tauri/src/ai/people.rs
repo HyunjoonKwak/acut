@@ -67,7 +67,10 @@ fn jobs(db: &Db, cache_base: &Path) -> Result<Vec<Job>> {
     })?;
     Ok(rows
         .into_iter()
-        .map(|(id, lib, rel)| Job { id, thumb: cache::cache_root(cache_base, lib).join(rel) })
+        .map(|(id, lib, rel)| Job {
+            id,
+            thumb: cache::cache_root(cache_base, lib).join(rel),
+        })
         .collect())
 }
 
@@ -76,11 +79,18 @@ thread_local! {
 }
 
 /// 이 스레드의 모델 한 벌 — 처음 쓸 때 올린다
-fn with_models<T>(det: &Path, rec: &Path, f: impl FnOnce(&Detector, &Recognizer) -> T) -> Result<T> {
+fn with_models<T>(
+    det: &Path,
+    rec: &Path,
+    f: impl FnOnce(&Detector, &Recognizer) -> T,
+) -> Result<T> {
     let m = MODELS.with(|slot| -> Result<Arc<(Detector, Recognizer)>> {
         let mut s = slot.borrow_mut();
         if s.is_none() {
-            *s = Some(Arc::new((Detector::load(det, 1)?, Recognizer::load(rec, 1)?)));
+            *s = Some(Arc::new((
+                Detector::load(det, 1)?,
+                Recognizer::load(rec, 1)?,
+            )));
         }
         Ok(Arc::clone(s.as_ref().unwrap()))
     })?;
@@ -119,7 +129,10 @@ pub fn run(
     on_progress: impl Fn(&FaceProgress) + Sync + Send,
 ) -> Result<FaceProgress> {
     let list = jobs(db, cache_base)?;
-    let progress = Mutex::new(FaceProgress { total: list.len(), ..Default::default() });
+    let progress = Mutex::new(FaceProgress {
+        total: list.len(),
+        ..Default::default()
+    });
     on_progress(&progress.lock().unwrap().clone());
     if list.is_empty() {
         return Ok(progress.into_inner().unwrap());
@@ -153,7 +166,8 @@ pub fn run(
         let now = chrono::Utc::now().timestamp();
         let n_faces: usize = results.iter().map(|(_, f)| f.len()).sum();
         db.transaction(|tx| {
-            let mut ins = tx.prepare("INSERT INTO faces(file_id, bbox, embedding) VALUES(?1, ?2, ?3)")?;
+            let mut ins =
+                tx.prepare("INSERT INTO faces(file_id, bbox, embedding) VALUES(?1, ?2, ?3)")?;
             let mut mark = tx.prepare("UPDATE files SET faces_at = ?2 WHERE id = ?1")?;
             for (id, faces) in &results {
                 for f in faces {
@@ -226,13 +240,19 @@ pub fn cluster(db: &Db) -> Result<ClusterResult> {
             let e = clip::from_blob(&blob);
             match out.last_mut() {
                 Some(p) if p.id == pid => p.add(&e),
-                _ => out.push(Person { id: pid, center: e, n: 1 }),
+                _ => out.push(Person {
+                    id: pid,
+                    center: e,
+                    n: 1,
+                }),
             }
         }
         out
     };
     let loose: Vec<(i64, i64, Vec<f32>)> = db.read(|c| {
-        let mut st = c.prepare("SELECT id, file_id, embedding FROM faces WHERE person_id IS NULL ORDER BY id")?;
+        let mut st = c.prepare(
+            "SELECT id, file_id, embedding FROM faces WHERE person_id IS NULL ORDER BY id",
+        )?;
         let it = st.query_map([], |r| {
             let blob: Vec<u8> = r.get(2)?;
             Ok((r.get(0)?, r.get(1)?, clip::from_blob(&blob)))
@@ -240,7 +260,10 @@ pub fn cluster(db: &Db) -> Result<ClusterResult> {
         it.collect::<rusqlite::Result<Vec<_>>>()
     })?;
     if loose.is_empty() {
-        return Ok(ClusterResult { persons: persons.len(), ..Default::default() });
+        return Ok(ClusterResult {
+            persons: persons.len(),
+            ..Default::default()
+        });
     }
 
     // (얼굴, 사람) — 사람이 새것이면 id는 음수 자리표, 나중에 진짜 id로 바꾼다
@@ -259,7 +282,11 @@ pub fn cluster(db: &Db) -> Result<ClusterResult> {
                 assign.push((*fid, i));
             }
             _ => {
-                persons.push(Person { id: -(fresh.len() as i64) - 1, center: e.clone(), n: 1 });
+                persons.push(Person {
+                    id: -(fresh.len() as i64) - 1,
+                    center: e.clone(),
+                    n: 1,
+                });
                 fresh.push(*file_id);
                 assign.push((*fid, persons.len() - 1));
             }
@@ -269,7 +296,10 @@ pub fn cluster(db: &Db) -> Result<ClusterResult> {
     db.transaction(|tx| {
         // 새 사람부터 만들어 진짜 id를 받는다
         for (k, cover) in fresh.iter().enumerate() {
-            tx.execute("INSERT INTO persons(name, cover_file) VALUES(NULL, ?1)", [cover])?;
+            tx.execute(
+                "INSERT INTO persons(name, cover_file) VALUES(NULL, ?1)",
+                [cover],
+            )?;
             persons[before + k].id = tx.last_insert_rowid();
         }
         let mut up = tx.prepare("UPDATE faces SET person_id = ?2 WHERE id = ?1")?;
@@ -278,7 +308,11 @@ pub fn cluster(db: &Db) -> Result<ClusterResult> {
         }
         Ok(())
     })?;
-    Ok(ClusterResult { assigned: assign.len(), new_persons: fresh.len(), persons: persons.len() })
+    Ok(ClusterResult {
+        assigned: assign.len(),
+        new_persons: fresh.len(),
+        persons: persons.len(),
+    })
 }
 
 #[cfg(test)]
@@ -319,17 +353,27 @@ mod tests {
     }
 
     fn person_of(db: &Db, face_id: i64) -> Option<i64> {
-        db.read(|c| c.query_row("SELECT person_id FROM faces WHERE id = ?1", [face_id], |r| r.get(0))).unwrap()
+        db.read(|c| {
+            c.query_row(
+                "SELECT person_id FROM faces WHERE id = ?1",
+                [face_id],
+                |r| r.get(0),
+            )
+        })
+        .unwrap()
     }
 
     #[test]
     fn close_faces_become_one_person_and_far_ones_another() {
         let (_d, db) = db();
-        seed(&db, &[
-            (1, unit(&[1.0, 0.0, 0.0])),
-            (2, unit(&[0.9, 0.1, 0.0])), // 1과 가깝다 (코사인 0.99)
-            (3, unit(&[0.0, 1.0, 0.0])), // 멀다
-        ]);
+        seed(
+            &db,
+            &[
+                (1, unit(&[1.0, 0.0, 0.0])),
+                (2, unit(&[0.9, 0.1, 0.0])), // 1과 가깝다 (코사인 0.99)
+                (3, unit(&[0.0, 1.0, 0.0])), // 멀다
+            ],
+        );
         let r = cluster(&db).unwrap();
         assert_eq!((r.assigned, r.new_persons, r.persons), (3, 2, 2));
         assert_eq!(person_of(&db, 1), person_of(&db, 2));
@@ -360,13 +404,19 @@ mod tests {
         let (_d, db) = db();
         seed(&db, &[(3, unit(&[0.0, 0.0, 1.0]))]);
         cluster(&db).unwrap();
-        let cover: i64 = db.read(|c| c.query_row("SELECT cover_file FROM persons", [], |r| r.get(0))).unwrap();
+        let cover: i64 = db
+            .read(|c| c.query_row("SELECT cover_file FROM persons", [], |r| r.get(0)))
+            .unwrap();
         assert_eq!(cover, 3);
     }
 
     #[test]
     fn person_center_moves_toward_new_members() {
-        let mut p = Person { id: 1, center: unit(&[1.0, 0.0]), n: 1 };
+        let mut p = Person {
+            id: 1,
+            center: unit(&[1.0, 0.0]),
+            n: 1,
+        };
         p.add(&unit(&[0.0, 1.0]));
         assert!((p.center[0] - p.center[1]).abs() < 1e-5);
         assert_eq!(p.n, 2);
@@ -377,14 +427,20 @@ mod tests {
     #[test]
     #[ignore = "실제 DB 사본과 얼굴 모델 필요"]
     fn real_library_copy() {
-        let Ok(copy) = std::env::var("ACUT_DB_COPY") else { return };
+        let Ok(copy) = std::env::var("ACUT_DB_COPY") else {
+            return;
+        };
         let home = std::env::var("HOME").unwrap();
-        let base = std::path::PathBuf::from(&home).join("Library/Application Support/com.acut.media");
+        let base =
+            std::path::PathBuf::from(&home).join("Library/Application Support/com.acut.media");
         if !models::face_present(&base) {
             eprintln!("얼굴 모델 없음 — 건너뜀");
             return;
         }
-        let limit: i64 = std::env::var("ACUT_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(2000);
+        let limit: i64 = std::env::var("ACUT_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2000);
         let db = Db::open(copy).unwrap();
         // 처음 N장만 남기고 나머지는 «본 것»으로 표시한다
         db.transaction(|tx| {
@@ -403,13 +459,26 @@ mod tests {
         let t = std::time::Instant::now();
         let p = run(&db, &base, &base, Arc::new(AtomicBool::new(false)), |_| {}).unwrap();
         let dt = t.elapsed().as_secs_f64();
-        eprintln!("\n[얼굴 찾기] {}장 · 얼굴 {}개 · {dt:.1}초 · 초당 {:.0}장", p.done, p.faces, p.done as f64 / dt);
+        eprintln!(
+            "\n[얼굴 찾기] {}장 · 얼굴 {}개 · {dt:.1}초 · 초당 {:.0}장",
+            p.done,
+            p.faces,
+            p.done as f64 / dt
+        );
         let t = std::time::Instant::now();
         let c = cluster(&db).unwrap();
-        eprintln!("[묶기] 얼굴 {} → 사람 {}명 (새 {}) · {:.2}초", c.assigned, c.persons, c.new_persons, t.elapsed().as_secs_f64());
+        eprintln!(
+            "[묶기] 얼굴 {} → 사람 {}명 (새 {}) · {:.2}초",
+            c.assigned,
+            c.persons,
+            c.new_persons,
+            t.elapsed().as_secs_f64()
+        );
         let sizes: Vec<i64> = db
             .read(|c| {
-                let mut st = c.prepare("SELECT COUNT(*) FROM faces GROUP BY person_id ORDER BY 1 DESC LIMIT 8")?;
+                let mut st = c.prepare(
+                    "SELECT COUNT(*) FROM faces GROUP BY person_id ORDER BY 1 DESC LIMIT 8",
+                )?;
                 let it = st.query_map([], |r| r.get(0))?;
                 it.collect()
             })
@@ -447,7 +516,9 @@ mod tests {
                 }
                 let v: serde_json::Value = serde_json::from_str(&bbox).unwrap();
                 let path = cache::cache_root(&base, lib).join(&rel);
-                let Ok(img) = image::open(&path) else { continue };
+                let Ok(img) = image::open(&path) else {
+                    continue;
+                };
                 let img = img.to_rgb8();
                 let (w, h) = (img.width() as f32, img.height() as f32);
                 let g = |k: &str| v[k].as_f64().unwrap() as f32;
@@ -458,8 +529,18 @@ mod tests {
                 let cw = ((cx + half).min(w) as u32).saturating_sub(x0).max(1);
                 let ch = ((cy + half).min(h) as u32).saturating_sub(y0).max(1);
                 let crop = image::imageops::crop_imm(&img, x0, y0, cw, ch).to_image();
-                let small = image::imageops::resize(&crop, side, side, image::imageops::FilterType::Triangle);
-                image::imageops::replace(&mut sheet, &small, (col * side) as i64, (row as u32 * side) as i64);
+                let small = image::imageops::resize(
+                    &crop,
+                    side,
+                    side,
+                    image::imageops::FilterType::Triangle,
+                );
+                image::imageops::replace(
+                    &mut sheet,
+                    &small,
+                    (col * side) as i64,
+                    (row as u32 * side) as i64,
+                );
                 col += 1;
             }
             let p = format!("{out}/people_sheet.png");

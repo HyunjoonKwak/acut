@@ -7,12 +7,14 @@ use crate::db::conn::{Db, Result};
 
 pub fn get(db: &Db, key: &str) -> Result<Option<String>> {
     db.read(|c| {
-        c.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                e => Err(e),
-            })
+        c.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+            r.get(0)
+        })
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(e),
+        })
     })
 }
 
@@ -52,9 +54,15 @@ mod tests {
     fn set_then_get_then_overwrite() {
         let (_d, db) = fresh();
         set(&db, "prefs", r#"{"thumbSize":180}"#).unwrap();
-        assert_eq!(get(&db, "prefs").unwrap().as_deref(), Some(r#"{"thumbSize":180}"#));
+        assert_eq!(
+            get(&db, "prefs").unwrap().as_deref(),
+            Some(r#"{"thumbSize":180}"#)
+        );
         set(&db, "prefs", r#"{"thumbSize":240}"#).unwrap();
-        assert_eq!(get(&db, "prefs").unwrap().as_deref(), Some(r#"{"thumbSize":240}"#));
+        assert_eq!(
+            get(&db, "prefs").unwrap().as_deref(),
+            Some(r#"{"thumbSize":240}"#)
+        );
     }
 
     #[test]

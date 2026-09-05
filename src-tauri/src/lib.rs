@@ -24,8 +24,10 @@ pub fn started() -> std::time::Instant {
 }
 
 /// 웹뷰가 페이지를 읽기 시작한·끝낸 시각(ms, run() 기준) — 시작 시간을 나눠 보기 위해
-pub static PAGE_MS: [std::sync::atomic::AtomicU64; 2] =
-    [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+pub static PAGE_MS: [std::sync::atomic::AtomicU64; 2] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
 
 /// 네이티브 구간 표식(ms, run() 기준). 웹뷰가 페이지를 읽기 시작하기까지 2초가
 /// 갔는데(실측 2026-09-01: DB 871ms → 페이지 시작 2,877ms) `db_ms` 하나로는

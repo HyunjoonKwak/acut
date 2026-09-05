@@ -63,11 +63,10 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>, responder: UriSchemeRespon
     // 무효화 키는 볼륨 기준 상대경로로 만든다 — 썸네일 생성 쪽과 같아야 한다
     let src = mount.join(&vol_rel);
     let key = crate::media::cache::key_for(&vol_rel, size as u64, mtime);
-    let out =
-        crate::media::cache::thumb_path(
-            &crate::media::cache::preview_root(&state.cache_base, lib_id),
-            &key,
-        );
+    let out = crate::media::cache::thumb_path(
+        &crate::media::cache::preview_root(&state.cache_base, lib_id),
+        &key,
+    );
 
     // 캐시에 있으면 그대로, 없으면 만든다.
     // 영상은 ImageIO가 못 여니 QuickLook이 대표 프레임을 준다.

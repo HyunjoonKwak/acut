@@ -10,7 +10,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 const REPO: &str = "HyunjoonKwak/photo_desk";
-const UA: &str = concat!("photo-desk/", env!("CARGO_PKG_VERSION"), " (github.com/HyunjoonKwak/photo_desk)");
+const UA: &str = concat!(
+    "photo-desk/",
+    env!("CARGO_PKG_VERSION"),
+    " (github.com/HyunjoonKwak/photo_desk)"
+);
 /// 자동 살피기는 하루 한 번. 오프라인 우선 앱이 바깥을 자주 두드리면 안 된다.
 const AUTO_GAP_SECS: i64 = 24 * 60 * 60;
 const LAST_CHECK_KEY: &str = "update.last_check";
@@ -34,7 +38,13 @@ struct Release {
 /// 그래야 «0.6» 과 «0.6.0» 이 같은 것으로 읽힌다.
 fn parts(version: &str) -> [u64; 3] {
     let mut out = [0u64; 3];
-    for (i, part) in version.trim().trim_start_matches(['v', 'V']).split('.').take(3).enumerate() {
+    for (i, part) in version
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .split('.')
+        .take(3)
+        .enumerate()
+    {
         out[i] = part
             .chars()
             .take_while(char::is_ascii_digit)
@@ -98,7 +108,10 @@ fn to_info(release: Release, current: &str) -> UpdateInfo {
 
 /// 사용자가 «확인»을 눌렀을 때. 살핀 시각을 적어 자동 살피기가 겹치지 않게 한다.
 #[tauri::command]
-pub async fn update_check(app: AppHandle, state: State<'_, AppState>) -> Result<UpdateInfo, String> {
+pub async fn update_check(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<UpdateInfo, String> {
     let info = fetch_latest(&app).await?;
     let now = chrono::Utc::now().timestamp();
     let _ = crate::db::settings::set(&state.db, LAST_CHECK_KEY, &now.to_string());
@@ -110,7 +123,10 @@ pub async fn update_check(app: AppHandle, state: State<'_, AppState>) -> Result<
 /// 새 판이 있을 때만 `Some` 을 돌려준다 — 화면은 그때만 무언가를 보여 준다.
 /// 실패는 오류가 아니라 «모름»이다. 인터넷이 없다고 앱이 잔소리하면 안 된다.
 #[tauri::command]
-pub async fn update_check_auto(app: AppHandle, state: State<'_, AppState>) -> Result<Option<UpdateInfo>, String> {
+pub async fn update_check_auto(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<UpdateInfo>, String> {
     let on = crate::db::settings::get(&state.db, AUTO_KEY)
         .map_err(err)?
         .map(|v| v != "off")
@@ -194,30 +210,41 @@ mod tests {
     /// 답에 없는 칸이 있어도 살아남아야 한다 — 없는 것과 못 읽는 것은 다르다
     #[test]
     fn a_release_with_only_required_fields_still_reads() {
-        let bare: Release = serde_json::from_str(r#"{"tag_name":"v0.7.0","html_url":"u"}"#).unwrap();
+        let bare: Release =
+            serde_json::from_str(r#"{"tag_name":"v0.7.0","html_url":"u"}"#).unwrap();
         let info = to_info(bare, "0.6.0");
         assert!(info.newer);
     }
 
     #[test]
     fn only_the_exact_release_path_can_be_opened() {
-        assert!(is_release_page("https://github.com/HyunjoonKwak/photo_desk/releases"));
+        assert!(is_release_page(
+            "https://github.com/HyunjoonKwak/photo_desk/releases"
+        ));
         assert!(is_release_page(
             "https://github.com/HyunjoonKwak/photo_desk/releases/tag/v0.8.0"
         ));
         assert!(!is_release_page(
             "https://github.com/HyunjoonKwak/photo_desk/releasesevil/tag/v0.8.0"
         ));
-        assert!(!is_release_page("https://evil.example/HyunjoonKwak/photo_desk/releases"));
+        assert!(!is_release_page(
+            "https://evil.example/HyunjoonKwak/photo_desk/releases"
+        ));
     }
 
     #[test]
     fn a_bigger_number_is_a_newer_version() {
         assert!(is_newer("0.6.1", "0.6.0"));
-        assert!(is_newer("0.10.0", "0.9.9"), "10 은 9 보다 크다 — 글자 순서로 견주면 진다");
+        assert!(
+            is_newer("0.10.0", "0.9.9"),
+            "10 은 9 보다 크다 — 글자 순서로 견주면 진다"
+        );
         assert!(is_newer("1.0.0", "0.99.99"));
         assert!(!is_newer("0.6.0", "0.6.0"));
-        assert!(!is_newer("0.5.9", "0.6.0"), "옛 판을 새 판이라 하면 안 된다");
+        assert!(
+            !is_newer("0.5.9", "0.6.0"),
+            "옛 판을 새 판이라 하면 안 된다"
+        );
     }
 
     #[test]
@@ -231,5 +258,4 @@ mod tests {
         assert_eq!(parts("그냥글자"), [0, 0, 0]);
         assert_eq!(parts("1.2.3.4"), [1, 2, 3], "네 번째 자리는 보지 않는다");
     }
-
 }

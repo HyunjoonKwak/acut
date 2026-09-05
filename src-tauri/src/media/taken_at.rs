@@ -243,9 +243,14 @@ fn valid_date(y: i64, mo: i64, da: i64) -> bool {
 /// EXIF와 파일명에는 대개 offset이 없다. 앱이 실행 중인 기기의 지역 시각으로
 /// 해석해 저장하면 파일시각·영상 컨테이너처럼 이미 UTC인 값과 같은 의미가 된다.
 pub fn civil_to_unix(y: i64, mo: i64, da: i64, h: i64, mi: i64, s: i64) -> i64 {
-    let Some(date) = chrono::NaiveDate::from_ymd_opt(y as i32, mo as u32, da as u32) else { return 0 };
-    let Some(naive) = date.and_hms_opt(h as u32, mi as u32, s as u32) else { return 0 };
-    Local.from_local_datetime(&naive)
+    let Some(date) = chrono::NaiveDate::from_ymd_opt(y as i32, mo as u32, da as u32) else {
+        return 0;
+    };
+    let Some(naive) = date.and_hms_opt(h as u32, mi as u32, s as u32) else {
+        return 0;
+    };
+    Local
+        .from_local_datetime(&naive)
         .earliest()
         .map(|t| t.timestamp())
         .unwrap_or_else(|| naive.and_utc().timestamp())
@@ -253,7 +258,9 @@ pub fn civil_to_unix(y: i64, mo: i64, da: i64, h: i64, mi: i64, s: i64) -> i64 {
 
 /// 구버전 DB가 UTC처럼 저장했던 floating civil 초를 실제 Unix 시각으로 바꾼다.
 pub fn floating_civil_to_unix(ts: i64) -> i64 {
-    let Some(old) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) else { return ts };
+    let Some(old) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) else {
+        return ts;
+    };
     civil_to_unix(
         old.year() as i64,
         old.month() as i64,
@@ -277,11 +284,20 @@ mod tests {
     #[test]
     fn unix_epoch_ms_in_names() {
         // 카카오톡·페이스북 저장본 — 13자리 밀리초
-        assert_eq!(from_filename("kakaotalk_1525225566458.mp4"), Some(1_525_225_566));
-        assert_eq!(from_filename("FB_IMG_1525225566458.jpg"), Some(1_525_225_566));
+        assert_eq!(
+            from_filename("kakaotalk_1525225566458.mp4"),
+            Some(1_525_225_566)
+        );
+        assert_eq!(
+            from_filename("FB_IMG_1525225566458.jpg"),
+            Some(1_525_225_566)
+        );
         // 카카오 내보내기는 13자리 epoch 뒤에 짧은 순번을 붙이기도 한다.
         assert_eq!(from_filename("1502088228879113.jpg"), Some(1_502_088_228));
-        assert_eq!(from_filename("Kakao_1502088228879000000.jpg"), Some(1_502_088_228));
+        assert_eq!(
+            from_filename("Kakao_1502088228879000000.jpg"),
+            Some(1_502_088_228)
+        );
         // 순번은 최대 6자리만. 더 긴 숫자 id의 앞을 epoch로 오인하지 않는다.
         assert_eq!(from_filename("15020882288790000000.jpg"), None);
         // 열 자리 초는 믿지 않는다 — 웹 이미지 id와 구분이 안 된다
@@ -297,24 +313,39 @@ mod tests {
 
     #[test]
     fn galaxy_format() {
-        assert_eq!(from_filename("20260101_123456.jpg"), Some(t(2026, 1, 1, 12, 34, 56)));
+        assert_eq!(
+            from_filename("20260101_123456.jpg"),
+            Some(t(2026, 1, 1, 12, 34, 56))
+        );
     }
     #[test]
     fn android_img_prefix() {
-        assert_eq!(from_filename("IMG_20260815_093012.jpg"), Some(t(2026, 8, 15, 9, 30, 12)));
+        assert_eq!(
+            from_filename("IMG_20260815_093012.jpg"),
+            Some(t(2026, 8, 15, 9, 30, 12))
+        );
     }
     #[test]
     fn pixel_format_with_extra_digits() {
         // PXL은 밀리초까지 붙는다. 앞 14자리만 쓴다.
-        assert_eq!(from_filename("PXL_20260815_093012345.jpg"), Some(t(2026, 8, 15, 9, 30, 12)));
+        assert_eq!(
+            from_filename("PXL_20260815_093012345.jpg"),
+            Some(t(2026, 8, 15, 9, 30, 12))
+        );
     }
     #[test]
     fn iphone_export_with_dots() {
-        assert_eq!(from_filename("2026-08-15 09.30.12.jpg"), Some(t(2026, 8, 15, 9, 30, 12)));
+        assert_eq!(
+            from_filename("2026-08-15 09.30.12.jpg"),
+            Some(t(2026, 8, 15, 9, 30, 12))
+        );
     }
     #[test]
     fn screenshot_with_hyphen() {
-        assert_eq!(from_filename("Screenshot_20260815-093012.png"), Some(t(2026, 8, 15, 9, 30, 12)));
+        assert_eq!(
+            from_filename("Screenshot_20260815-093012.png"),
+            Some(t(2026, 8, 15, 9, 30, 12))
+        );
     }
     #[test]
     fn date_only_becomes_midnight() {
@@ -322,7 +353,10 @@ mod tests {
     }
     #[test]
     fn video_prefix() {
-        assert_eq!(from_filename("VID_20260815_093012.mp4"), Some(t(2026, 8, 15, 9, 30, 12)));
+        assert_eq!(
+            from_filename("VID_20260815_093012.mp4"),
+            Some(t(2026, 8, 15, 9, 30, 12))
+        );
     }
 
     #[test]
@@ -346,7 +380,10 @@ mod tests {
     #[test]
     fn finds_the_date_even_with_a_prefix_number() {
         // 앞에 다른 숫자가 붙어 있어도 뒤의 날짜를 찾아낸다
-        assert_eq!(from_filename("3_20260815_093012.jpg"), Some(t(2026, 8, 15, 9, 30, 12)));
+        assert_eq!(
+            from_filename("3_20260815_093012.jpg"),
+            Some(t(2026, 8, 15, 9, 30, 12))
+        );
     }
 
     // ── min-plausible ─────────────────────────────────────────────────
@@ -385,7 +422,10 @@ mod tests {
 
     #[test]
     fn two_digit_year_with_seconds() {
-        assert_eq!(from_filename("AH001_am_sm_210609_155304.mp4"), Some(civil_to_unix(2021, 6, 9, 15, 53, 4)));
+        assert_eq!(
+            from_filename("AH001_am_sm_210609_155304.mp4"),
+            Some(civil_to_unix(2021, 6, 9, 15, 53, 4))
+        );
     }
 
     #[test]
@@ -394,19 +434,45 @@ mod tests {
         let re_encoded = civil_to_unix(2026, 7, 1, 0, 0, 0);
         let copied = civil_to_unix(2017, 11, 17, 14, 8, 32);
         // 컨테이너는 재인코딩 날, 파일 시각은 복사한 날, 폴더 이름이 행사 날
-        let (t, s) = resolve_video(Some(re_encoded), "2동 옥상뷰(1).mp4", "2017-11-12 반도4차 현장 방문", Some(copied), Some(copied), now);
-        assert_eq!((t, s), (civil_to_unix(2017, 11, 12, 0, 0, 0), Source::Filename));
+        let (t, s) = resolve_video(
+            Some(re_encoded),
+            "2동 옥상뷰(1).mp4",
+            "2017-11-12 반도4차 현장 방문",
+            Some(copied),
+            Some(copied),
+            now,
+        );
+        assert_eq!(
+            (t, s),
+            (civil_to_unix(2017, 11, 12, 0, 0, 0), Source::Filename)
+        );
         // 파일명에 두 자리 연도 — 컨테이너·파일 시각이 다 늦어도 파일명이 이긴다
         let late = civil_to_unix(2026, 8, 26, 13, 26, 7);
-        let (t, s) = resolve_video(Some(late), "AH001_am_sm_210609_155304.mp4", "2021년의 사진", Some(late), Some(late), now);
-        assert_eq!((t, s), (civil_to_unix(2021, 6, 9, 15, 53, 4), Source::Filename));
+        let (t, s) = resolve_video(
+            Some(late),
+            "AH001_am_sm_210609_155304.mp4",
+            "2021년의 사진",
+            Some(late),
+            Some(late),
+            now,
+        );
+        assert_eq!(
+            (t, s),
+            (civil_to_unix(2021, 6, 9, 15, 53, 4), Source::Filename)
+        );
         // 단서가 없으면 지금
-        assert_eq!(resolve_video(None, "a.mp4", "b", None, None, now).1, Source::Unknown);
+        assert_eq!(
+            resolve_video(None, "a.mp4", "b", None, None, now).1,
+            Source::Unknown
+        );
     }
 
     #[test]
     fn filename_with_minutes_only() {
-        assert_eq!(from_filename("2022_05_14 19_17 (1).mp4"), Some(civil_to_unix(2022, 5, 14, 19, 17, 0)));
+        assert_eq!(
+            from_filename("2022_05_14 19_17 (1).mp4"),
+            Some(civil_to_unix(2022, 5, 14, 19, 17, 0))
+        );
     }
 
     #[test]
@@ -454,10 +520,24 @@ mod tests {
     // ── 날짜 변환 ──────────────────────────────────────────────────────
     #[test]
     fn unix_epoch_conversion_is_correct() {
-        for (y, mo, d, h, mi, s) in [(1970, 1, 1, 0, 0, 0), (2000, 1, 1, 0, 0, 0), (2024, 2, 29, 12, 0, 0)] {
-            let actual = Local.timestamp_opt(t(y, mo, d, h, mi, s), 0).single().unwrap();
+        for (y, mo, d, h, mi, s) in [
+            (1970, 1, 1, 0, 0, 0),
+            (2000, 1, 1, 0, 0, 0),
+            (2024, 2, 29, 12, 0, 0),
+        ] {
+            let actual = Local
+                .timestamp_opt(t(y, mo, d, h, mi, s), 0)
+                .single()
+                .unwrap();
             assert_eq!(
-                (actual.year(), actual.month(), actual.day(), actual.hour(), actual.minute(), actual.second()),
+                (
+                    actual.year(),
+                    actual.month(),
+                    actual.day(),
+                    actual.hour(),
+                    actual.minute(),
+                    actual.second()
+                ),
                 (y as i32, mo as u32, d as u32, h as u32, mi as u32, s as u32)
             );
         }
@@ -466,8 +546,14 @@ mod tests {
     #[test]
     fn local_midnight_does_not_cross_a_date_boundary() {
         for (y, mo, d, h, mi, s) in [(2024, 1, 1, 0, 0, 1), (2024, 12, 31, 23, 59, 59)] {
-            let actual = Local.timestamp_opt(t(y, mo, d, h, mi, s), 0).single().unwrap();
-            assert_eq!((actual.year(), actual.month(), actual.day(), actual.hour()), (y as i32, mo as u32, d as u32, h as u32));
+            let actual = Local
+                .timestamp_opt(t(y, mo, d, h, mi, s), 0)
+                .single()
+                .unwrap();
+            assert_eq!(
+                (actual.year(), actual.month(), actual.day(), actual.hour()),
+                (y as i32, mo as u32, d as u32, h as u32)
+            );
         }
     }
 
@@ -480,8 +566,12 @@ mod tests {
 
     #[test]
     fn old_floating_timestamp_is_migrated_to_the_same_wall_clock() {
-        let old = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
-            .and_hms_opt(18, 0, 0).unwrap().and_utc().timestamp();
+        let old = chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(18, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
         assert_eq!(floating_civil_to_unix(old), t(2024, 1, 1, 18, 0, 0));
     }
 }

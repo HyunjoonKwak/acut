@@ -132,7 +132,10 @@ pub async fn backup_target(state: State<'_, AppState>) -> Result<TargetInfo, Str
 /// 백업 폴더를 정한다. 라이브러리 안이거나 라이브러리를 품으면 거절한다 —
 /// 자기 자신 안으로 복사하면 끝이 없다.
 #[tauri::command]
-pub async fn backup_set_target(state: State<'_, AppState>, path: String) -> Result<TargetInfo, String> {
+pub async fn backup_set_target(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<TargetInfo, String> {
     let dir = PathBuf::from(&path);
     if !dir.is_dir() {
         return Err(format!("폴더가 아닙니다: {path}"));
@@ -142,10 +145,17 @@ pub async fn backup_set_target(state: State<'_, AppState>, path: String) -> Resu
         .ok_or_else(|| format!("볼륨 안의 경로가 아닙니다: {path}"))?;
     for l in libraries::list(&state.db).map_err(err)? {
         if l.volume_uuid == v.uuid && libraries::overlaps(&l.rel_path, &rel) {
-            return Err(format!("라이브러리 「{}」와 겹칩니다. 다른 디스크의 빈 폴더를 고르세요.", l.name));
+            return Err(format!(
+                "라이브러리 「{}」와 겹칩니다. 다른 디스크의 빈 폴더를 고르세요.",
+                l.name
+            ));
         }
     }
-    let t = Target { uuid: v.uuid, rel, name: v.name };
+    let t = Target {
+        uuid: v.uuid,
+        rel,
+        name: v.name,
+    };
     settings::set(&state.db, KEY_TARGET, &serde_json::to_string(&t).unwrap()).map_err(err)?;
     info(&state)
 }
@@ -179,7 +189,13 @@ pub async fn backup_plan(app: AppHandle) -> Result<BackupPlan, String> {
     let target = load_target(&state)?.ok_or("백업 폴더를 먼저 정하세요")?;
     let root = target_dir(&target).ok_or("백업 디스크가 연결되어 있지 않습니다")?;
     let libs = libraries::list(&state.db).map_err(err)?;
-    let mut out = BackupPlan { libs: Vec::new(), files: 0, bytes: 0, conflicts: 0, orphans: 0 };
+    let mut out = BackupPlan {
+        libs: Vec::new(),
+        files: 0,
+        bytes: 0,
+        conflicts: 0,
+        orphans: 0,
+    };
     let mut planned: Vec<Planned> = Vec::new();
     for lib in &libs {
         let Some(src) = lib.dir.clone() else {
@@ -216,7 +232,11 @@ pub async fn backup_plan(app: AppHandle) -> Result<BackupPlan, String> {
             orphans: plan.orphan_files.len(),
             offline: false,
         });
-        planned.push(Planned { library_id: lib.id, name: lib.name.clone(), plan });
+        planned.push(Planned {
+            library_id: lib.id,
+            name: lib.name.clone(),
+            plan,
+        });
     }
     *state.backup_plans.lock().unwrap_or_else(|e| e.into_inner()) = Some(planned);
     Ok(out)
@@ -227,12 +247,18 @@ fn verify(plan: &SyncPlan, errors: &mut Vec<String>) -> usize {
     let mut bad = 0;
     for op in plan.files_to_copy.iter().chain(plan.files_to_update.iter()) {
         let (s, t) = (Path::new(&op.source), Path::new(&op.target));
-        let same_size = std::fs::metadata(t).map(|m| m.len() == op.file_size).unwrap_or(false);
-        let same_hash = same_size && crate::core::hasher::xxhash_file(s) == crate::core::hasher::xxhash_file(t);
+        let same_size = std::fs::metadata(t)
+            .map(|m| m.len() == op.file_size)
+            .unwrap_or(false);
+        let same_hash =
+            same_size && crate::core::hasher::xxhash_file(s) == crate::core::hasher::xxhash_file(t);
         if !same_hash {
             bad += 1;
             let _ = std::fs::remove_file(t);
-            errors.push(format!("사본이 원본과 다릅니다 — 지웠습니다, 다음에 다시: {}", op.target));
+            errors.push(format!(
+                "사본이 원본과 다릅니다 — 지웠습니다, 다음에 다시: {}",
+                op.target
+            ));
         }
     }
     bad
@@ -248,7 +274,9 @@ pub async fn backup_run(app: AppHandle) -> Result<(), String> {
         .unwrap_or_else(|e| e.into_inner())
         .take()
         .ok_or("먼저 「살펴보기」를 누르세요")?;
-    let Some(guard) = job::try_start_wait(&state.running, "백업", std::time::Duration::from_secs(20)) else {
+    let Some(guard) =
+        job::try_start_wait(&state.running, "백업", std::time::Duration::from_secs(20))
+    else {
         return Err("다른 작업이 도는 중입니다. 끝난 뒤에 하세요".into());
     };
     let cancel = Arc::clone(&state.cancel);
@@ -263,7 +291,10 @@ pub async fn backup_run(app: AppHandle) -> Result<(), String> {
             .map(|p| p.plan.files_to_copy.len() + p.plan.files_to_update.len())
             .sum();
         let total_bytes: u64 = planned.iter().map(|p| p.plan.total_bytes).sum();
-        let mut last = Last { at: chrono::Utc::now().timestamp(), ..Default::default() };
+        let mut last = Last {
+            at: chrono::Utc::now().timestamp(),
+            ..Default::default()
+        };
         let mut errors: Vec<String> = Vec::new();
         let (mut files_before, mut bytes_before) = (0usize, 0u64);
         for p in &planned {
@@ -361,14 +392,21 @@ mod tests {
         std::fs::write(src.join(".DS_Store"), b"junk").unwrap();
         let l = lib(1, "사진");
         let plan = sync::plan_sync(&task_for(&l, &src, &dst)).unwrap();
-        let mut names: Vec<String> = plan.files_to_copy.iter().map(|f| f.source.rsplit('/').next().unwrap().to_string()).collect();
+        let mut names: Vec<String> = plan
+            .files_to_copy
+            .iter()
+            .map(|f| f.source.rsplit('/').next().unwrap().to_string())
+            .collect();
         names.sort();
         assert_eq!(names, vec!["a.jpg", "b.CR2"]);
         let r = sync::execute_sync(&plan, |_| {});
         assert_eq!((r.files_copied, r.errors.len()), (2, 0));
         let mut errs = Vec::new();
         assert_eq!(verify(&plan, &mut errs), 0);
-        assert_eq!(std::fs::read(dst.join("2024/여행/b.CR2")).unwrap(), b"bbbbbbbb");
+        assert_eq!(
+            std::fs::read(dst.join("2024/여행/b.CR2")).unwrap(),
+            b"bbbbbbbb"
+        );
         // 두 번째 계획은 비어 있다 — 증분
         let again = sync::plan_sync(&task_for(&l, &src, &dst)).unwrap();
         assert_eq!(again.files_to_copy.len() + again.files_to_update.len(), 0);

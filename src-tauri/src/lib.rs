@@ -230,41 +230,41 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             // ── v2 (재설계) ──────────────────────────────────
-            api::libraries_list,
-            api::library_add,
-            api::library_remove,
-            api::library_set_area,
-            api::library_stats,
-            api::import_preview,
-            api::import_run,
-            api::settings_get,
-            api::settings_set,
-            api::settings_remove,
-            api::db_info,
-            api::db_backup,
-            api::db_backups,
-            api::db_restore,
-            api::db_backups_reveal,
-            api::open_in_default_app,
-            api::file_comment,
-            api::file_rename,
-            api::watch_set,
-            api::files_by_ids,
-            api::ai_status,
-            api::ai_model_download,
-            api::ai_embed_start,
-            api::ai_similar,
-            api::ai_text_search,
-            api::ai_faces_start,
-            api::people_list,
-            api::map_overview,
-            api::map_cells,
-            api::folder_size,
-            api::folder_offload,
-            api::startup_report,
-            api::heartbeat,
-            api::frontend_log,
-            api::video_dates_refresh,
+            api::library::libraries_list,
+            api::library::library_add,
+            api::library::library_remove,
+            api::library::library_set_area,
+            api::state::library_stats,
+            api::import::import_preview,
+            api::import::import_run,
+            api::settings::settings_get,
+            api::settings::settings_set,
+            api::settings::settings_remove,
+            api::db_backup::db_info,
+            api::db_backup::db_backup,
+            api::db_backup::db_backups,
+            api::db_backup::db_restore,
+            api::db_backup::db_backups_reveal,
+            api::db_backup::open_in_default_app,
+            api::naming::file_comment,
+            api::naming::file_rename,
+            api::watch::watch_set,
+            api::watch::files_by_ids,
+            api::ai::ai_status,
+            api::ai::ai_model_download,
+            api::ai::ai_embed_start,
+            api::ai::ai_similar,
+            api::ai::ai_text_search,
+            api::ai::ai_faces_start,
+            api::ai::people_list,
+            api::ai::map_overview,
+            api::ai::map_cells,
+            api::ai::folder_size,
+            api::ai::folder_offload,
+            api::ai::startup_report,
+            api::ai::heartbeat,
+            api::ai::frontend_log,
+            api::ai::video_dates_refresh,
             api::nas::nas_config,
             api::nas::nas_config_set,
             api::nas::nas_check,
@@ -278,11 +278,11 @@ pub fn run() {
             api::backup::backup_set_target,
             api::backup::backup_plan,
             api::backup::backup_run,
-            api::person_rename,
-            api::person_merge,
-            api::cache_usage,
-            api::cache_clear,
-            api::cache_migrate,
+            api::ai::person_rename,
+            api::ai::person_merge,
+            api::state::cache_usage,
+            api::state::cache_clear,
+            api::scan::cache_migrate,
             api::trash::trash_pending,
             api::trash::trash_summary,
             api::trash::trash_by_library,
@@ -305,10 +305,10 @@ pub fn run() {
             api::transfer::transfer_execute,
             api::folder::folder_operation_preview,
             api::folder::folder_operation_execute,
-            api::scan_start,
-            api::scan_cancel,
-            api::files_page,
-            api::files_facets,
+            api::scan::scan_start,
+            api::scan::scan_cancel,
+            api::list::files_page,
+            api::list::files_facets,
             api::update::update_check,
             api::update::update_check_auto,
             api::update::update_open_page,
@@ -322,13 +322,13 @@ pub fn run() {
             api::tags::tag_add,
             api::tags::tag_remove,
             api::tags::tag_delete,
-            api::files_timeline,
-            api::files_summary,
-            api::files_cursor_at,
-            api::files_mark,
-            api::file_detail,
-            api::reveal_in_finder,
-            api::folders_list,
+            api::list::files_timeline,
+            api::list::files_summary,
+            api::list::files_cursor_at,
+            api::marking::files_mark,
+            api::state::file_detail,
+            api::state::reveal_in_finder,
+            api::sidebar::folders_list,
             api::cull::cull_scan,
             api::cull::cull_scan_kind,
             api::cull::cull_groups,
@@ -343,16 +343,16 @@ pub fn run() {
             api::cull::cull_folder_set_unapply,
             api::cull::cull_folder_pair_photos,
             api::cull::cull_hash_folders,
-            api::folder_merge,
-            api::folder_leftovers,
-            api::husk_list,
-            api::husk_trash,
-            api::folder_merge_rest,
+            api::ai::folder_merge,
+            api::ai::folder_leftovers,
+            api::ai::husk_list,
+            api::ai::husk_trash,
+            api::ai::folder_merge_rest,
             api::trash::files_unmark_excluded,
             api::cull::cull_folder_sets,
             api::cull::cull_folder_set_apply,
             api::cull::cull_compare_folders,
-            api::folder_by_path,
+            api::sidebar::folder_by_path,
             api::cull::cull_skip,
             api::cull::cull_summary,
         ])
@@ -416,4 +416,76 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod command_registration_tests {
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn every_tauri_command_is_registered_once() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let api_dir = manifest.join("src/api");
+        let mut commands = Vec::new();
+
+        for entry in std::fs::read_dir(api_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(path).unwrap();
+            let mut command_follows = false;
+            for line in source.lines() {
+                let line = line.trim();
+                if line == "#[tauri::command]" {
+                    command_follows = true;
+                } else if command_follows {
+                    if let Some((_, tail)) = line.split_once("fn ") {
+                        commands.push(tail.split('(').next().unwrap().to_owned());
+                        command_follows = false;
+                    }
+                }
+            }
+        }
+
+        let lib = include_str!("lib.rs");
+        let handler = lib
+            .split_once("tauri::generate_handler![")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        let registered: Vec<_> = handler
+            .lines()
+            .filter_map(|line| {
+                let path = line.trim().strip_suffix(',')?;
+                path.strip_prefix("api::")?
+                    .rsplit("::")
+                    .next()
+                    .map(str::to_owned)
+            })
+            .collect();
+
+        assert_eq!(commands.len(), 125, "크레이트 command 수가 예상과 다릅니다");
+        assert_eq!(
+            registered.len(),
+            commands.len(),
+            "등록 수가 command 수와 다릅니다"
+        );
+        assert_eq!(
+            commands.iter().collect::<BTreeSet<_>>().len(),
+            commands.len(),
+            "command 이름이 중복됩니다"
+        );
+        assert_eq!(
+            registered.iter().collect::<BTreeSet<_>>().len(),
+            registered.len(),
+            "generate_handler 등록이 중복됩니다"
+        );
+        assert_eq!(
+            commands.into_iter().collect::<BTreeSet<_>>(),
+            registered.into_iter().collect::<BTreeSet<_>>()
+        );
+    }
 }

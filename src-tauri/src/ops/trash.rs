@@ -56,6 +56,7 @@ struct Item {
     lib_rel: String,
     size: i64,
     volume_uuid: String,
+    trash_path: Option<String>,
 }
 
 fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
@@ -72,7 +73,7 @@ fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
                 fo.rel_path || CASE WHEN fo.rel_path = '' THEN '' ELSE '/' END || fi.name,
                 CASE WHEN l.rel_path = '' THEN fo.rel_path
                      ELSE substr(fo.rel_path, length(l.rel_path) + 2) END,
-                fi.name, fi.size, fi.folder_id
+                fi.name, fi.size, fi.folder_id, fi.trash_path
          FROM files fi
          JOIN folders fo ON fo.id = fi.folder_id
          JOIN libraries l ON l.id = fo.library_id
@@ -93,6 +94,7 @@ fn load(db: &Db, ids: &[i64], trashed: bool) -> Result<Vec<Item>> {
                 vol_rel: r.get(3)?,
                 lib_rel: crate::media::cache::rel_path(&lib_dir, &name),
                 size: r.get(6)?,
+                trash_path: r.get(8)?,
             })
         })?;
         it.collect::<rusqlite::Result<Vec<_>>>()
@@ -120,9 +122,6 @@ fn lookups(db: &Db, items: &[Item]) -> Result<(LibrariesById, MountsByVolume)> {
 
 /// 겹치지 않는 이름을 찾는다. 같은 이름이 이미 휴지통에 있으면 뒤에 번호를 붙인다.
 pub fn free_path(want: PathBuf) -> PathBuf {
-    if !want.exists() {
-        return want;
-    }
     let stem = want.file_stem().map(|s| s.to_string_lossy().into_owned());
     let ext = want.extension().map(|s| s.to_string_lossy().into_owned());
     let dir = want.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -131,10 +130,36 @@ pub fn free_path(want: PathBuf) -> PathBuf {
         (Some(s), None) => format!("{s} ({n})"),
         _ => n.to_string(),
     };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        if !want.exists() {
+            return want;
+        }
+        for n in 2..10_000 {
+            let p = dir.join(name_for(&n.to_string()));
+            if !p.exists() {
+                return p;
+            }
+        }
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f").to_string();
+        return dir.join(name_for(&stamp));
+    };
+    let existing: std::collections::HashSet<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().to_lowercase())
+        .collect();
+    let wanted_name = want
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase());
+    if wanted_name
+        .as_ref()
+        .is_none_or(|name| !existing.contains(name))
+    {
+        return want;
+    }
     for n in 2..10_000 {
-        let p = dir.join(name_for(&n.to_string()));
-        if !p.exists() {
-            return p;
+        let name = name_for(&n.to_string());
+        if !existing.contains(&name.to_lowercase()) {
+            return dir.join(name);
         }
     }
     // 9,999개가 다 찼다 — 원래 경로를 돌려주면 덮어쓴다. 시각을 붙여 빈 이름을 만든다
@@ -528,11 +553,6 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
         ..Default::default()
     };
 
-    let paths: std::collections::HashMap<i64, String> = db.read(|c| {
-        let mut st = c.prepare("SELECT id, trash_path FROM files WHERE trashed_at IS NOT NULL")?;
-        let it = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))?;
-        it.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()
-    })?;
     let (libs, mounts) = lookups(db, &items)?;
 
     for it in &items {
@@ -541,7 +561,7 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
             lib.and_then(|l| l.dir.clone()),
             lib.map(|l| l.rel_path.clone()),
             mounts.get(&it.volume_uuid).cloned().flatten(),
-            paths.get(&it.id),
+            it.trash_path.as_ref(),
         ) else {
             out.failed += 1;
             out.failed_ids.push(it.id);
@@ -645,17 +665,11 @@ pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
         ..Default::default()
     };
 
-    let paths: std::collections::HashMap<i64, String> = db.read(|c| {
-        let mut st = c.prepare("SELECT id, trash_path FROM files WHERE trashed_at IS NOT NULL")?;
-        let it = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))?;
-        it.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()
-    })?;
-
     let (libs, _) = lookups(db, &items)?;
     for it in &items {
         let (Some(lib_dir), Some(tp)) = (
             libs.get(&it.library_id).and_then(|l| l.dir.clone()),
-            paths.get(&it.id),
+            it.trash_path.as_ref(),
         ) else {
             out.failed += 1;
             continue;
@@ -1056,6 +1070,29 @@ mod tests {
         assert_ne!(p, want);
         assert!(!p.exists());
         assert!(p.file_name().unwrap().to_string_lossy().starts_with("a ("));
+    }
+
+    #[test]
+    fn free_path_uses_the_first_free_number_from_one_directory_read() {
+        let d = tempfile::tempdir().unwrap();
+        for name in ["a.jpg", "a (2).jpg", "A (3).JPG"] {
+            std::fs::write(d.path().join(name), b"").unwrap();
+        }
+        assert_eq!(
+            free_path(d.path().join("a.jpg")),
+            d.path().join("a (4).jpg")
+        );
+    }
+
+    #[test]
+    fn restore_and_empty_ignore_unrequested_trash_rows() {
+        let (_dir, db, ids) = setup();
+        assert_eq!(to_trash(&db, &ids, "치우기").unwrap().moved, 3);
+        db.write(|c| c.execute("UPDATE files SET trash_path = NULL WHERE id = ?1", [ids[2]]))
+            .unwrap();
+
+        assert_eq!(restore(&db, &ids[..1]).unwrap().moved, 1);
+        assert_eq!(empty(&db, &ids[1..2]).unwrap().moved, 1);
     }
 
     fn alive(db: &Db) -> i64 {

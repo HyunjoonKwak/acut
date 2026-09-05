@@ -153,6 +153,10 @@ fn add_gallery_transition_p0(c: &Connection) -> rusqlite::Result<()> {
 /// 초기 버전이 UTC처럼 저장했던 시간대 없는 EXIF/파일명 시각을 실제 Unix
 /// 시각으로 한 번만 바꾼다. 파일명은 재파싱해 13자리 epoch 값은 이동하지 않는다.
 fn migrate_taken_at_to_utc(c: &Connection) -> rusqlite::Result<()> {
+    migrate_taken_at_to_utc_in_chunks(c, 5_000)
+}
+
+fn migrate_taken_at_to_utc_in_chunks(c: &Connection, chunk_size: usize) -> rusqlite::Result<()> {
     const KEY: &str = "internal.taken_at_utc_v1";
     let done: bool = c.query_row(
         "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
@@ -163,13 +167,24 @@ fn migrate_taken_at_to_utc(c: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
 
-    let rows: Vec<(i64, String, i32, i32, i64, String)> = {
-        let mut st = c.prepare(
-            "SELECT fi.id, fi.name, fi.kind, fi.taken_at_source, fi.taken_at, fo.rel_path
-             FROM files fi JOIN folders fo ON fo.id = fi.folder_id",
-        )?;
-        let rows = st
-            .query_map([], |r| {
+    assert!(chunk_size > 0, "날짜 마이그레이션 묶음 크기는 0일 수 없다");
+    let tx = c.unchecked_transaction()?;
+    let mut last_id = i64::MIN;
+    let mut first_chunk = true;
+    loop {
+        let rows: Vec<(i64, String, i32, i32, i64, String)> = {
+            let comparison = if first_chunk { ">=" } else { ">" };
+            let sql = format!(
+                "SELECT fi.id, fi.name, fi.kind, fi.taken_at_source, fi.taken_at, fo.rel_path
+                 FROM files fi JOIN folders fo ON fo.id = fi.folder_id
+                 WHERE fi.id {comparison} ?1
+                   AND ((fi.taken_at_source = 0 AND fi.kind != 1)
+                        OR fi.taken_at_source = 1)
+                 ORDER BY fi.id
+                 LIMIT ?2"
+            );
+            let mut st = tx.prepare(&sql)?;
+            let mapped = st.query_map(rusqlite::params![last_id, chunk_size as i64], |r| {
                 Ok((
                     r.get(0)?,
                     r.get(1)?,
@@ -178,13 +193,12 @@ fn migrate_taken_at_to_utc(c: &Connection) -> rusqlite::Result<()> {
                     r.get(4)?,
                     r.get(5)?,
                 ))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows
-    };
-
-    let tx = c.unchecked_transaction()?;
-    {
+            })?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let Some(next_last_id) = rows.last().map(|row| row.0) else {
+            break;
+        };
         let mut update = tx.prepare("UPDATE files SET taken_at = ?2 WHERE id = ?1")?;
         for (id, name, kind, source, old, folder) in rows {
             let migrated = match source {
@@ -203,6 +217,8 @@ fn migrate_taken_at_to_utc(c: &Connection) -> rusqlite::Result<()> {
                 update.execute(rusqlite::params![id, migrated])?;
             }
         }
+        last_id = next_last_id;
+        first_chunk = false;
     }
     tx.execute("INSERT INTO settings(key,value) VALUES(?1,'1')", [KEY])?;
     tx.commit()
@@ -1027,6 +1043,69 @@ mod tests {
         assert_eq!(
             again, migrated,
             "두 번 열어도 다시 시간대를 적용하면 안 된다"
+        );
+    }
+
+    #[test]
+    fn every_taken_at_source_keeps_the_previous_migration_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        let old = chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(18, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        db.write(|c| {
+            c.execute_batch(
+                "DELETE FROM settings WHERE key='internal.taken_at_utc_v1';
+                 INSERT INTO volumes(uuid,name,role) VALUES('V','v','library');
+                 INSERT INTO folders(id,volume_uuid,rel_path,name,area)
+                   VALUES(1,'V','album/20230304_050607','dates',1);",
+            )?;
+            for (id, name, kind, source) in [
+                (1, "photo.jpg", 0, 0),
+                (2, "video.mov", 1, 0),
+                (3, "20240203_040506.jpg", 0, 1),
+                (4, "folder-date.jpg", 0, 1),
+                (5, "mtime.jpg", 0, 2),
+                (6, "unknown.jpg", 0, 3),
+                (7, "override.jpg", 0, 4),
+            ] {
+                c.execute(
+                    "INSERT INTO files(id,folder_id,name,size,kind,taken_at,taken_at_source,scanned_at)
+                     VALUES(?1,1,?2,1,?3,?4,?5,0)",
+                    rusqlite::params![id, name, kind, old, source],
+                )?;
+            }
+            migrate_taken_at_to_utc_in_chunks(c, 1)
+        })
+        .unwrap();
+
+        let got: Vec<(i64, i64)> = db
+            .read(|c| {
+                let mut st = c.prepare("SELECT id,taken_at FROM files ORDER BY id")?;
+                let mapped = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap();
+        assert_eq!(
+            got,
+            vec![
+                (1, crate::media::taken_at::floating_civil_to_unix(old)),
+                (2, old),
+                (
+                    3,
+                    crate::media::taken_at::from_filename("20240203_040506.jpg").unwrap()
+                ),
+                (
+                    4,
+                    crate::media::taken_at::from_filename("20230304_050607").unwrap()
+                ),
+                (5, old),
+                (6, old),
+                (7, old),
+            ]
         );
     }
 

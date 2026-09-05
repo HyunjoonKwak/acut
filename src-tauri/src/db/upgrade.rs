@@ -59,8 +59,7 @@ fn add_release_091_integrity(c: &Connection) -> rusqlite::Result<()> {
             is_main INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (batch_id,file_id,seq),
             UNIQUE (batch_id,to_vol,to_path)
-         );
-         CREATE INDEX IF NOT EXISTS idx_publication_batch ON publication_ledger(batch_id);",
+         );",
     )
 }
 

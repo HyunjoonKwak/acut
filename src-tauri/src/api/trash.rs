@@ -157,6 +157,7 @@ pub async fn trash_empty(
 ) -> Result<trash::Outcome, String> {
     let db = std::sync::Arc::clone(&state.db);
     let running = std::sync::Arc::clone(&state.running);
+    let cache_base = state.cache_base.clone();
     tauri::async_runtime::spawn_blocking(move || {
         // 다른 긴 일(합치기·옮기기·스캔)과 겹쳐 돌지 않게 — 겹치면 서로의 폴더 행을 지우거나 이름이 부딪힌다
         let Some(_guard) = super::job::try_start_wait(&running, "휴지통 비우기", std::time::Duration::from_secs(20)) else {
@@ -164,7 +165,7 @@ pub async fn trash_empty(
         };
         let all = ids.is_empty();
         let ids = if all { trashed_ids(&db, library_id)? } else { ids };
-        let out = trash::empty(&db, &ids).map_err(err)?;
+        let out = trash::empty(&db, &cache_base, &ids).map_err(err)?;
         // 휴지통을 통째로 비우면 «사진 없는 폴더 정리»가 넣어 둔 _폴더 도 같이 사라진다
         if all {
             for lib in crate::db::libraries::list(&db).map_err(err)? {

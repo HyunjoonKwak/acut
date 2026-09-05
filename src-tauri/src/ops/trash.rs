@@ -13,6 +13,7 @@
 
 use crate::db::conn::{Db, Result};
 use crate::db::libraries;
+use rusqlite::OptionalExtension;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -651,7 +652,7 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
 ///
 /// 안전장치: 지우려는 경로가 그 라이브러리의 휴지통 안인지 정규화 후 다시
 /// 확인한다. 심볼릭 링크나 `..`으로 밖을 가리키면 건너뛴다.
-pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
+pub fn empty(db: &Db, cache_base: &Path, ids: &[i64]) -> Result<Outcome> {
     let items = load(db, ids, true)?;
     if items.is_empty() {
         return Ok(Outcome {
@@ -672,6 +673,10 @@ pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
             it.trash_path.as_ref(),
         ) else {
             out.failed += 1;
+            out.failed_ids.push(it.id);
+            out.first_error.get_or_insert(
+                "라이브러리가 연결되어 있지 않거나 휴지통 경로 기록이 없습니다".into(),
+            );
             continue;
         };
         let victim = lib_dir.join(tp);
@@ -692,6 +697,24 @@ pub fn empty(db: &Db, ids: &[i64]) -> Result<Outcome> {
             }
         }
         remove_sidecars(&victim);
+        let thumb_rel: Option<String> = db.read(|c| {
+            c.query_row(
+                "SELECT rel_path FROM thumbs WHERE file_id=?1",
+                [it.id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map(Option::flatten)
+        })?;
+        if let Some(rel) = thumb_rel {
+            let thumb = crate::media::cache::cache_root(cache_base, it.library_id).join(rel);
+            if let Err(error) = std::fs::remove_file(&thumb) {
+                log::warn!(
+                    "영구 삭제한 사진의 썸네일 파일을 지우지 못했습니다: {}: {error}",
+                    thumb.display()
+                );
+            }
+        }
         db.write(|c| c.execute("DELETE FROM files WHERE id = ?1", [it.id]))?;
         out.moved += 1;
         out.bytes += it.size;
@@ -860,7 +883,7 @@ mod tests {
         );
 
         // 나머지 둘을 비우면 — 폴더엔 아직 한 장이 있으니 행은 남는다
-        empty(&db, &ids[1..]).unwrap();
+        empty(&db, dir.path(), &ids[1..]).unwrap();
         let rows: i64 = db
             .read(|c| {
                 c.query_row(
@@ -1035,7 +1058,7 @@ mod tests {
         to_trash(&db, &ids[..1], "치우기").unwrap();
         let t = trash_root(dir.path());
         assert!(t.join("2020/여행/20200101_120000.xmp").is_file());
-        empty(&db, &ids[..1]).unwrap();
+        empty(&db, dir.path(), &ids[..1]).unwrap();
         assert!(
             !t.join("2020/여행/20200101_120000.xmp").exists(),
             "사진과 함께 지워진다"
@@ -1086,13 +1109,13 @@ mod tests {
 
     #[test]
     fn restore_and_empty_ignore_unrequested_trash_rows() {
-        let (_dir, db, ids) = setup();
+        let (dir, db, ids) = setup();
         assert_eq!(to_trash(&db, &ids, "치우기").unwrap().moved, 3);
         db.write(|c| c.execute("UPDATE files SET trash_path = NULL WHERE id = ?1", [ids[2]]))
             .unwrap();
 
         assert_eq!(restore(&db, &ids[..1]).unwrap().moved, 1);
-        assert_eq!(empty(&db, &ids[1..2]).unwrap().moved, 1);
+        assert_eq!(empty(&db, dir.path(), &ids[1..2]).unwrap().moved, 1);
     }
 
     fn alive(db: &Db) -> i64 {
@@ -1196,7 +1219,7 @@ mod tests {
         })
         .unwrap();
 
-        let out = empty(&db, &ids[..2]).unwrap();
+        let out = empty(&db, dir.path(), &ids[..2]).unwrap();
         assert_eq!(out.failed, 1, "휴지통 밖은 거부한다");
         assert_eq!(out.moved, 1);
         assert!(
@@ -1207,13 +1230,25 @@ mod tests {
 
     #[test]
     fn empty_removes_the_row_for_real() {
-        let (_d, db, ids) = setup();
+        let (dir, db, ids) = setup();
+        let thumb = crate::media::cache::cache_root(dir.path(), 1).join("aa/thumb.jpg");
+        std::fs::create_dir_all(thumb.parent().unwrap()).unwrap();
+        std::fs::write(&thumb, b"thumbnail").unwrap();
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO thumbs(file_id,rel_path,src_size,src_mtime,state)
+                 VALUES(?1,'aa/thumb.jpg',1,1,1)",
+                [ids[0]],
+            )
+        })
+        .unwrap();
         to_trash(&db, &ids[..1], "시험").unwrap();
-        empty(&db, &ids[..1]).unwrap();
+        empty(&db, dir.path(), &ids[..1]).unwrap();
         let n: i64 = db
             .read(|c| c.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(n, 2, "비우면 그때 행도 사라진다");
+        assert!(!thumb.exists(), "썸네일 파일도 함께 지워져야 한다");
     }
 
     #[test]

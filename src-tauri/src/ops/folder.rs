@@ -4,7 +4,7 @@
 //! 심볼릭 링크, 라이브러리 루트 작업을 막는다. 폴더 복사와 볼륨 간 이동은 임시
 //! 갈래에 전부 복사한 뒤 SHA-256 manifest를 확인하고 마지막에 이름을 바꾼다.
 
-use crate::db::conn::{Db, DbError, Result};
+use crate::db::conn::{Db, DbError, IoContext, Result};
 use crate::db::libraries::Library;
 use crate::ops::trash::{copy_mtime, free_path, Outcome};
 use sha2::{Digest, Sha256};
@@ -165,7 +165,9 @@ fn online_root(lib: &Library) -> Result<PathBuf> {
 }
 
 fn existing_inside(root: &Path, rel: &str) -> Result<PathBuf> {
-    let root = root.canonicalize()?;
+    let root = root
+        .canonicalize()
+        .io_context("라이브러리 루트 경로를 확인하다가 실패했습니다")?;
     let path = root.join(rel);
     let real = path
         .canonicalize()
@@ -177,7 +179,9 @@ fn existing_inside(root: &Path, rel: &str) -> Result<PathBuf> {
 }
 
 fn parent_inside(root: &Path, rel: &str) -> Result<PathBuf> {
-    let root = root.canonicalize()?;
+    let root = root
+        .canonicalize()
+        .io_context("목적지 라이브러리 경로를 확인하다가 실패했습니다")?;
     let path = if rel.is_empty() {
         root.clone()
     } else {
@@ -320,7 +324,10 @@ fn walk_tree(root: &Path, hash_contents: bool) -> Result<Manifest> {
             let size = meta.len();
             let mtime = filetime::FileTime::from_last_modification_time(&meta).unix_seconds();
             let hash = if hash_contents {
-                Some(crate::cull::hash::full(entry.path())?)
+                Some(
+                    crate::cull::hash::full(entry.path())
+                        .io_context("폴더 manifest용 파일 해시를 읽다가 실패했습니다")?,
+                )
             } else {
                 None
             };
@@ -596,9 +603,9 @@ fn copy_tree_verified(
 ) -> Result<()> {
     let temp = temp_sibling(target, batch);
     if temp.exists() {
-        remove_tree(&temp)?;
+        remove_tree(&temp).io_context("이전 폴더 복사 임시 경로를 지우다가 실패했습니다")?;
     }
-    std::fs::create_dir_all(&temp)?;
+    std::fs::create_dir_all(&temp).io_context("폴더 복사 임시 경로를 만들다가 실패했습니다")?;
     let result = (|| -> Result<()> {
         let mut copied = 0usize;
         for entry in WalkDir::new(source).min_depth(1).follow_links(false) {
@@ -615,17 +622,23 @@ fn copy_tree_verified(
                 .map_err(|_| bad("복사 경로 오류"))?;
             let dest = temp.join(rel);
             if entry.file_type().is_dir() {
-                std::fs::create_dir_all(&dest)?;
+                std::fs::create_dir_all(&dest)
+                    .io_context("복사할 하위 폴더를 만들다가 실패했습니다")?;
             } else if entry.file_type().is_file() {
                 if fail_after.is_some_and(|limit| copied >= limit) {
                     return Err(bad("시험용 부분 실패"));
                 }
                 if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent)?;
+                    std::fs::create_dir_all(parent)
+                        .io_context("복사할 파일의 부모 폴더를 만들다가 실패했습니다")?;
                 }
-                std::fs::copy(entry.path(), &dest)?;
+                std::fs::copy(entry.path(), &dest)
+                    .io_context("폴더 안의 파일을 복사하다가 실패했습니다")?;
                 copy_mtime(entry.path(), &dest);
-                std::fs::File::open(&dest)?.sync_all()?;
+                std::fs::File::open(&dest)
+                    .io_context("복사한 파일을 열다가 실패했습니다")?
+                    .sync_all()
+                    .io_context("복사한 파일을 디스크에 기록하다가 실패했습니다")?;
                 copied += 1;
             }
         }
@@ -637,11 +650,16 @@ fn copy_tree_verified(
             return Err(bad("실행 직전 목적지에 같은 이름이 생겼습니다"));
         }
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .io_context("폴더 복사 목적지의 부모를 만들다가 실패했습니다")?;
         }
-        std::fs::rename(&temp, target)?;
+        std::fs::rename(&temp, target)
+            .io_context("검증한 폴더 사본을 목적지로 옮기다가 실패했습니다")?;
         if let Some(parent) = target.parent() {
-            std::fs::File::open(parent)?.sync_all()?;
+            std::fs::File::open(parent)
+                .io_context("폴더 복사 목적지를 열다가 실패했습니다")?
+                .sync_all()
+                .io_context("폴더 복사 목적지를 디스크에 기록하다가 실패했습니다")?;
         }
         Ok(())
     })();
@@ -672,14 +690,17 @@ fn stage_move(
         );
         if let Err(error) = std::fs::rename(source, &backup) {
             let _ = remove_tree(destination);
-            return Err(error.into());
+            return Err(DbError::Invalid(format!(
+                "볼륨 간 이동 뒤 원본 폴더를 보관하다가 실패했습니다: {error}"
+            )));
         }
         Ok(Some(backup))
     } else {
         if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .io_context("이동 목적지의 부모 폴더를 만들다가 실패했습니다")?;
         }
-        std::fs::rename(source, destination)?;
+        std::fs::rename(source, destination).io_context("폴더를 목적지로 옮기다가 실패했습니다")?;
         Ok(None)
     }
 }
@@ -752,14 +773,15 @@ fn move_db_rows(
             let name = new_path.rsplit('/').next().unwrap_or(&new_path);
             tx.execute(
                 "UPDATE folders SET volume_uuid=?2,library_id=?3,rel_path=?4,name=?5,area=?6,
-                 parent_id=CASE WHEN id=?1 THEN NULL ELSE parent_id END WHERE id=?1",
+                 parent_id=CASE WHEN rel_path=?7 THEN NULL ELSE parent_id END WHERE id=?1",
                 rusqlite::params![
                     id,
                     destination_lib.volume_uuid,
                     destination_lib.id,
                     new_path,
                     name,
-                    destination_lib.area
+                    destination_lib.area,
+                    source_vol
                 ],
             )?;
         }
@@ -927,7 +949,7 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     &info,
                     false,
                 )?;
-                std::fs::create_dir(&destination)?;
+                std::fs::create_dir(&destination).io_context("새 폴더를 만들다가 실패했습니다")?;
                 if let Err(error) =
                     ensure_folder_row(db, &destination_lib, &preview.destination, -1)
                 {
@@ -1025,9 +1047,11 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     false,
                 )?;
                 if let Some(parent) = destination.parent() {
-                    std::fs::create_dir_all(parent)?;
+                    std::fs::create_dir_all(parent)
+                        .io_context("휴지통 폴더를 만들다가 실패했습니다")?;
                 }
-                std::fs::rename(&source, &destination)?;
+                std::fs::rename(&source, &destination)
+                    .io_context("폴더를 휴지통으로 옮기다가 실패했습니다")?;
                 let rows = rows_in_subtree(db, source_lib.id, &source_rel)?;
                 let source_vol = vol_rel(&source_lib, &source_rel);
                 let trash_prefix = preview.destination.clone();
@@ -1135,7 +1159,8 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
             return Ok(out);
         }
         let staged = free_path(temp_sibling(&destination, batch));
-        std::fs::rename(&destination, &staged)?;
+        std::fs::rename(&destination, &staged)
+            .io_context("생성한 폴더를 임시 위치로 옮기다가 실패했습니다")?;
         if let Err(error) = delete_copied_db(db, &destination_lib, &destination_rel) {
             let _ = std::fs::rename(&staged, &destination);
             return Err(error);
@@ -1177,7 +1202,8 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
         match row.op.as_str() {
             "copy" => {
                 let staged = free_path(temp_sibling(&destination, batch));
-                std::fs::rename(&destination, &staged)?;
+                std::fs::rename(&destination, &staged)
+                    .io_context("복사한 폴더를 임시 위치로 옮기다가 실패했습니다")?;
                 if let Err(error) = delete_copied_db(db, &destination_lib, &destination_rel) {
                     let _ = std::fs::rename(&staged, &destination);
                     return Err(error);
@@ -1209,9 +1235,11 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                 }
                 if source_lib.volume_uuid == destination_lib.volume_uuid {
                     if let Some(p) = target.parent() {
-                        std::fs::create_dir_all(p)?;
+                        std::fs::create_dir_all(p)
+                            .io_context("폴더 복원 목적지의 부모를 만들다가 실패했습니다")?;
                     }
-                    std::fs::rename(&destination, &target)?;
+                    std::fs::rename(&destination, &target)
+                        .io_context("폴더를 원래 위치로 복원하다가 실패했습니다")?;
                     if let Err(error) = move_db_rows(
                         db,
                         &destination_lib,
@@ -1233,7 +1261,9 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                     let staged = free_path(temp_sibling(&destination, batch));
                     if let Err(error) = std::fs::rename(&destination, &staged) {
                         let _ = remove_tree(&target);
-                        return Err(error.into());
+                        return Err(DbError::Invalid(format!(
+                            "복원할 폴더를 임시 위치로 옮기다가 실패했습니다: {error}"
+                        )));
                     }
                     if let Err(error) = move_db_rows(
                         db,
@@ -1262,9 +1292,11 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                     wanted
                 };
                 if let Some(p) = target.parent() {
-                    std::fs::create_dir_all(p)?;
+                    std::fs::create_dir_all(p)
+                        .io_context("휴지통 폴더 복원 경로를 만들다가 실패했습니다")?;
                 }
-                std::fs::rename(&destination, &target)?;
+                std::fs::rename(&destination, &target)
+                    .io_context("휴지통 폴더를 원래 위치로 복원하다가 실패했습니다")?;
                 let restored_rel = target
                     .strip_prefix(&source_root)
                     .map_err(|_| bad("복원 경로 오류"))?
@@ -1591,6 +1623,61 @@ mod tests {
             ))
             .unwrap(),
             0
+        );
+    }
+
+    #[test]
+    fn moving_a_folder_keeps_descendant_parent_links() {
+        let (_temp, db, la, lb) = setup();
+        let (root_id, root_rel): (i64, String) = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT id,rel_path FROM folders WHERE library_id=?1 AND name='자식'",
+                    [la.id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        let child_id = db
+            .write(|c| {
+                c.execute(
+                    "INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,parent_id)
+                 VALUES(?1,?2,?3,'손자',?4,?5)",
+                    rusqlite::params![
+                        la.volume_uuid,
+                        la.id,
+                        format!("{root_rel}/손자"),
+                        la.area,
+                        root_id
+                    ],
+                )?;
+                Ok(c.last_insert_rowid())
+            })
+            .unwrap();
+
+        move_db_rows(&db, &la, "부모/자식", &lb, "옮긴자식").unwrap();
+
+        let (root_parent, child_parent): (Option<i64>, Option<i64>) = db
+            .read(|c| {
+                Ok((
+                    c.query_row(
+                        "SELECT parent_id FROM folders WHERE id=?1",
+                        [root_id],
+                        |r| r.get(0),
+                    )?,
+                    c.query_row(
+                        "SELECT parent_id FROM folders WHERE id=?1",
+                        [child_id],
+                        |r| r.get(0),
+                    )?,
+                ))
+            })
+            .unwrap();
+        assert_eq!(root_parent, None, "옮긴 갈래의 뿌리만 부모가 없어진다");
+        assert_eq!(
+            child_parent,
+            Some(root_id),
+            "하위 폴더의 부모 연결은 유지된다"
         );
     }
 

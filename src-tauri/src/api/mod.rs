@@ -475,6 +475,8 @@ fn leaves_of(state: &AppState, library_id: i64, library_rel: &str) -> Result<Vec
     //
     // 자르는 길이는 SQL의 `length()`로 센다. Rust의 `len()`은 **바이트**라
     // 「사진통합작업」 같은 한글 경로에서 세 배로 잘라 낸다.
+    let acut_rel = cache::rel_path(library_rel, ".acut");
+    let escaped_acut_rel = crate::db::query::escape_like(&acut_rel);
     state
         .db
         .read(|c| {
@@ -486,18 +488,21 @@ fn leaves_of(state: &AppState, library_id: i64, library_rel: &str) -> Result<Vec
                  FROM folders
                  WHERE library_id = ?1
                    AND (file_count > 0 OR scanned_at = -1)
-                   AND rel_path <> CASE WHEN ?2 = '' THEN '.acut' ELSE ?2 || '/.acut' END
-                   AND rel_path NOT LIKE (CASE WHEN ?2 = '' THEN '.acut' ELSE ?2 || '/.acut' END) || '/%'
+                   AND rel_path <> ?3
+                   AND rel_path NOT LIKE ?4 || '/%' ESCAPE '\\'
                  ORDER BY rel_path",
             )?;
-            let it = st.query_map(rusqlite::params![library_id, library_rel], |r| {
-                Ok(tree::Leaf {
-                    id: r.get(0)?,
-                    path: r.get(1)?,
-                    rel_path: r.get(2)?,
-                    file_count: r.get(3)?,
-                })
-            })?;
+            let it = st.query_map(
+                rusqlite::params![library_id, library_rel, acut_rel, escaped_acut_rel],
+                |r| {
+                    Ok(tree::Leaf {
+                        id: r.get(0)?,
+                        path: r.get(1)?,
+                        rel_path: r.get(2)?,
+                        file_count: r.get(3)?,
+                    })
+                },
+            )?;
             it.collect::<rusqlite::Result<Vec<_>>>()
         })
         .map_err(err)
@@ -814,6 +819,31 @@ mod tests {
             ids
         }).unwrap();
         assert_eq!(ids, vec![2]);
+    }
+
+    #[test]
+    fn folder_tree_escapes_like_wildcards_in_library_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path().join("t.db")).unwrap();
+        db.write(|c| {
+            c.execute_batch(
+                "INSERT INTO volumes(uuid,name,role) VALUES('V','t','library');
+                 INSERT INTO libraries(id,volume_uuid,rel_path,name) VALUES(1,'V','lib_100%','lib');
+                 INSERT INTO folders(id,volume_uuid,library_id,rel_path,name,area,file_count) VALUES
+                    (1,'V',1,'lib_100%/사진','사진',1,1),
+                    (2,'V',1,'lib_100%/.acut/숨김','숨김',1,1),
+                    (3,'V',1,'libX100Y/.acut/보임','보임',1,1);",
+            )
+        })
+        .unwrap();
+        let state = AppState::new(db, dir.path().to_path_buf());
+
+        let rels: Vec<String> = leaves_of(&state, 1, "lib_100%")
+            .unwrap()
+            .into_iter()
+            .map(|leaf| leaf.rel_path)
+            .collect();
+        assert_eq!(rels, vec!["libX100Y/.acut/보임", "lib_100%/사진"]);
     }
 }
 

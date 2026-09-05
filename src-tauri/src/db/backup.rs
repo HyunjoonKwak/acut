@@ -6,7 +6,7 @@
 //!
 //! 이름에 시각을 넣고 오래된 것부터 지워 몇 벌만 남긴다.
 
-use crate::db::conn::{Db, Result};
+use crate::db::conn::{Db, DbError, Result};
 use std::path::{Path, PathBuf};
 
 /// 남겨 둘 벌 수. 매일 한 벌이면 사흘치다.
@@ -36,15 +36,20 @@ fn parse_stamp(name: &str) -> Option<i64> {
 
 /// 백업 한 벌을 만든다. 돌아오는 값은 만든 파일.
 pub fn make(db: &Db, dir: &Path, now: i64) -> Result<Backup> {
-    std::fs::create_dir_all(dir)?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| DbError::Invalid(format!("백업 폴더를 만들다가 실패했습니다: {e}")))?;
     let name = format!("acut-{}.db", stamp(now));
     let path = dir.join(&name);
     // 같은 초에 두 번 부르면 이름이 겹친다. VACUUM INTO는 있는 파일에 안 쓴다.
     if path.exists() {
-        std::fs::remove_file(&path)?;
+        std::fs::remove_file(&path).map_err(|e| {
+            DbError::Invalid(format!("기존 백업 파일을 지우다가 실패했습니다: {e}"))
+        })?;
     }
     db.write(|c| c.execute("VACUUM INTO ?1", [path.to_string_lossy().as_ref()]))?;
-    let bytes = std::fs::metadata(&path)?.len();
+    let bytes = std::fs::metadata(&path)
+        .map_err(|e| DbError::Invalid(format!("만든 백업 파일 정보를 읽다가 실패했습니다: {e}")))?
+        .len();
     prune(dir, KEEP)?;
     Ok(Backup { path, name, bytes, made_at: now })
 }
@@ -99,7 +104,9 @@ pub fn list(dir: &Path) -> Result<Vec<Backup>> {
 /// 최신 `keep`벌만 남기고 지운다.
 pub fn prune(dir: &Path, keep: usize) -> Result<()> {
     for old in list(dir)?.into_iter().skip(keep) {
-        std::fs::remove_file(&old.path)?;
+        std::fs::remove_file(&old.path).map_err(|e| {
+            DbError::Invalid(format!("오래된 백업 파일을 지우다가 실패했습니다: {e}"))
+        })?;
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
 //! 촬영일 감사·교정. 감사는 읽기만 하고, 쓰기는 성공 항목별 복구 자료를 남긴다.
 
-use crate::db::conn::{Db, DbError, Result};
+use crate::db::conn::{Db, DbError, IoContext, Result};
 use crate::media::{exif, taken_at};
 use crate::ops::trash::Outcome;
 use chrono::Utc;
@@ -289,7 +289,7 @@ fn backup_path(db: &Db, it: &Item, batch_id: i64) -> Result<(PathBuf, String)> {
 }
 
 fn refresh_values(path: &Path, wanted: i64, embedded: bool) -> Result<(i64, i32, u64, i64)> {
-    let meta = std::fs::metadata(path)?;
+    let meta = std::fs::metadata(path).io_context("촬영일 파일 정보를 읽다가 실패했습니다")?;
     let mtime = FileTime::from_last_modification_time(&meta).unix_seconds();
     let (resolved, source) = if embedded {
         let read = exif::read(path)
@@ -313,16 +313,22 @@ fn restore_backup(
         ".{}.capture-restore.tmp",
         target.file_name().unwrap_or_default().to_string_lossy()
     )));
-    std::fs::copy(backup, &temp)?;
-    if sha256(&temp)? != expected {
+    std::fs::copy(backup, &temp).io_context("촬영일 백업을 임시 파일로 복사하다가 실패했습니다")?;
+    if sha256(&temp).io_context("복원할 촬영일 백업의 해시를 읽다가 실패했습니다")? != expected
+    {
         let _ = std::fs::remove_file(&temp);
         return Err(DbError::Invalid(
             "촬영일 백업의 SHA-256이 원본 기록과 다릅니다".into(),
         ));
     }
-    std::fs::File::open(&temp)?.sync_all()?;
-    std::fs::rename(&temp, target)?;
-    filetime::set_file_times(target, atime, mtime)?;
+    std::fs::File::open(&temp)
+        .io_context("복원할 임시 파일을 열다가 실패했습니다")?
+        .sync_all()
+        .io_context("복원할 임시 파일을 디스크에 기록하다가 실패했습니다")?;
+    std::fs::rename(&temp, target)
+        .io_context("촬영일 백업을 원본 위치로 복원하다가 실패했습니다")?;
+    filetime::set_file_times(target, atime, mtime)
+        .io_context("복원한 파일의 시각을 되돌리다가 실패했습니다")?;
     Ok(())
 }
 
@@ -366,7 +372,8 @@ pub fn apply(db: &Db, changes: &[Change], label: &str) -> Result<CaptureOutcome>
                     ));
                 }
             }
-            let meta = std::fs::metadata(&path)?;
+            let meta = std::fs::metadata(&path)
+                .io_context("교정할 사진의 파일 정보를 읽다가 실패했습니다")?;
             let (atime, mtime) = times(&meta);
             let old_override: Option<i64> = db.read(|c| {
                 use rusqlite::OptionalExtension;
@@ -377,15 +384,23 @@ pub fn apply(db: &Db, changes: &[Change], label: &str) -> Result<CaptureOutcome>
                 )
                 .optional()
             })?;
-            let before_hash = sha256(&path)?;
+            let before_hash =
+                sha256(&path).io_context("교정 전 사진의 해시를 읽다가 실패했습니다")?;
             let (backup_vol, backup_rel) = if is_jpeg(&it) {
                 let (backup, rel) = backup_path(db, &it, batch_id)?;
                 if let Some(parent) = backup.parent() {
-                    std::fs::create_dir_all(parent)?;
+                    std::fs::create_dir_all(parent)
+                        .io_context("촬영일 백업 폴더를 만들다가 실패했습니다")?;
                 }
-                std::fs::copy(&path, &backup)?;
-                std::fs::File::open(&backup)?.sync_all()?;
-                if sha256(&backup)? != before_hash {
+                std::fs::copy(&path, &backup)
+                    .io_context("촬영일 교정 전 원본을 백업하다가 실패했습니다")?;
+                std::fs::File::open(&backup)
+                    .io_context("촬영일 백업 파일을 열다가 실패했습니다")?
+                    .sync_all()
+                    .io_context("촬영일 백업을 디스크에 기록하다가 실패했습니다")?;
+                if sha256(&backup).io_context("촬영일 백업의 해시를 확인하다가 실패했습니다")?
+                    != before_hash
+                {
                     let _ = std::fs::remove_file(&backup);
                     return Err(DbError::Invalid("촬영일 백업 검증에 실패했습니다".into()));
                 }
@@ -403,11 +418,13 @@ pub fn apply(db: &Db, changes: &[Change], label: &str) -> Result<CaptureOutcome>
                     &path,
                     atime,
                     FileTime::from_unix_time(change.taken_at, 0),
-                )?;
+                )
+                .io_context("교정한 파일의 수정 시각을 쓰다가 실패했습니다")?;
                 let embedded = is_jpeg(&it);
                 let (rescan_at, rescan_source, size, modified_at) =
                     refresh_values(&path, change.taken_at, embedded)?;
-                let after_hash = sha256(&path)?;
+                let after_hash =
+                    sha256(&path).io_context("교정 후 사진의 해시를 읽다가 실패했습니다")?;
                 let scope = if embedded {
                     "jpeg-exif+mtime"
                 } else {
@@ -472,7 +489,8 @@ pub fn apply(db: &Db, changes: &[Change], label: &str) -> Result<CaptureOutcome>
                                 restore_backup(&mount.join(rel), &path, &before_hash, atime, mtime)
                             })
                     } else {
-                        filetime::set_file_times(&path, atime, mtime).map_err(Into::into)
+                        filetime::set_file_times(&path, atime, mtime)
+                            .io_context("교정 실패 뒤 파일 시각을 복구하다가 실패했습니다")
                     };
                     match rollback {
                         Ok(()) => Err(error),
@@ -545,12 +563,17 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
                         .into(),
                 )
             })?;
-            if sha256(&target)? != expected_after {
+            if sha256(&target).io_context("되돌릴 교정 파일의 해시를 읽다가 실패했습니다")?
+                != expected_after
+            {
                 return Err(DbError::Invalid(
                     "교정 뒤 파일 내용이 바뀌어 원본으로 덮어쓰지 않았습니다".into(),
                 ));
             }
-            let corrected_times = times(&std::fs::metadata(&target)?);
+            let corrected_times = times(
+                &std::fs::metadata(&target)
+                    .io_context("되돌릴 교정 파일 정보를 읽다가 실패했습니다")?,
+            );
             let mut staged_corrected = None;
             if let (Some(vol), Some(rel)) = (row.backup_vol.as_deref(), row.backup_path.as_deref())
             {
@@ -563,7 +586,9 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
                 let expected_before = row.before_sha256.as_deref().ok_or_else(|| {
                     DbError::Invalid("원본 SHA-256 기록이 없어 되돌릴 수 없습니다".into())
                 })?;
-                if sha256(&backup)? != expected_before {
+                if sha256(&backup).io_context("되돌릴 촬영일 백업의 해시를 읽다가 실패했습니다")?
+                    != expected_before
+                {
                     return Err(DbError::Invalid(
                         "촬영일 백업의 SHA-256이 원본 기록과 다릅니다".into(),
                     ));
@@ -572,7 +597,8 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
                     ".{}.capture-undo-{batch_id}.tmp",
                     target.file_name().unwrap_or_default().to_string_lossy()
                 )));
-                std::fs::rename(&target, &corrected)?;
+                std::fs::rename(&target, &corrected)
+                    .io_context("교정 파일을 임시 위치로 옮기다가 실패했습니다")?;
                 if let Err(error) = restore_backup(
                     &backup,
                     &target,
@@ -589,7 +615,8 @@ pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
                     &target,
                     FileTime::from_unix_time(row.at_s, row.at_n),
                     FileTime::from_unix_time(row.mt_s, row.mt_n),
-                )?;
+                )
+                .io_context("원본 파일의 시각을 복원하다가 실패했습니다")?;
             }
             let updated = db.transaction(|tx| {
                 match row.old_override {

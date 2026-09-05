@@ -3,7 +3,7 @@
 //! 실행 전에 같은 이름과 이미 발행한 hash를 모두 보여 주고, 실제 작업은 기존
 //! 볼륨 경로·sidecar·batch journal 규칙을 따른다.
 
-use crate::db::conn::{Db, DbError, Result};
+use crate::db::conn::{Db, DbError, IoContext, Result};
 use crate::ops::trash::{copy_mtime, free_path, move_with_sidecars, sidecars, Outcome};
 use rusqlite::OptionalExtension;
 use std::path::{Path, PathBuf};
@@ -137,14 +137,18 @@ fn destination_inside(root: &Path, rel: &str) -> Result<PathBuf> {
             DbError::Invalid("목적지의 기존 부모 폴더를 확인할 수 없습니다".into())
         })?;
     }
-    let real = ancestor.canonicalize()?;
+    let real = ancestor
+        .canonicalize()
+        .io_context("목적지의 기존 부모 경로를 확인하다가 실패했습니다")?;
     if !real.starts_with(&root) {
         return Err(DbError::Invalid(
             "심볼릭 링크를 통해 라이브러리 밖으로 쓸 수 없습니다".into(),
         ));
     }
     if destination.exists() {
-        let real_destination = destination.canonicalize()?;
+        let real_destination = destination
+            .canonicalize()
+            .io_context("목적지 경로를 확인하다가 실패했습니다")?;
         if !real_destination.starts_with(&root) || !real_destination.is_dir() {
             return Err(DbError::Invalid(
                 "목적지가 라이브러리 밖이거나 폴더가 아닙니다".into(),
@@ -201,7 +205,7 @@ fn mount_path(it: &Item) -> Result<PathBuf> {
 }
 
 fn hash(path: &Path) -> Result<String> {
-    Ok(crate::cull::hash::full(path)?)
+    crate::cull::hash::full(path).io_context("전송할 파일의 해시를 읽다가 실패했습니다")
 }
 
 fn dest(db: &Db, request: &Request) -> Result<(crate::db::libraries::Library, String, PathBuf)> {
@@ -284,11 +288,13 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
         };
         let wanted = dir.join(&it.name);
         let (mut conflict, mut action, mut planned) = if let Some(path) = existing_publication {
-            let full = lib.dir.as_ref().unwrap().join(&path);
-            let valid = full.is_file()
-                && source_hash
-                    .as_deref()
-                    .is_some_and(|h| crate::cull::hash::full(&full).ok().as_deref() == Some(h));
+            let valid = lib.dir.as_ref().is_some_and(|dir| {
+                let full = dir.join(&path);
+                full.is_file()
+                    && source_hash
+                        .as_deref()
+                        .is_some_and(|h| crate::cull::hash::full(&full).ok().as_deref() == Some(h))
+            });
             if valid {
                 ("already_published", "skip", it.name.clone())
             } else if wanted.exists() {
@@ -594,7 +600,8 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
             let folder = match folder {
                 Some(folder) => folder,
                 None => {
-                    std::fs::create_dir_all(&dir)?;
+                    std::fs::create_dir_all(&dir)
+                        .io_context("전송 목적지 폴더를 만들다가 실패했습니다")?;
                     let made = ensure_folder(db, &lib, &rel)?;
                     folder = Some(made);
                     made
@@ -619,7 +626,8 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                             p.planned_name
                         )));
                     }
-                    move_with_sidecars(&source, &target)?;
+                    move_with_sidecars(&source, &target)
+                        .io_context("파일과 사이드카를 목적지로 옮기다가 실패했습니다")?;
                     let (to_size, to_mtime) = super::file_stat(&target);
                     let changed = db.transaction(|tx| {
                         tx.execute(
@@ -651,7 +659,8 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                 Mode::Copy => {
                     // 계획 해시를 넘기면 copy_verified 가 사본과 대조해 원본 변경을 잡는다
                     let (full, copied_sidecars) =
-                        copy_with_sidecars(&source, &target, p.source_sha256.as_deref())?;
+                        copy_with_sidecars(&source, &target, p.source_sha256.as_deref())
+                            .io_context("파일과 사이드카를 목적지로 복사하다가 실패했습니다")?;
                     let new_id = match clone_row(db, it.id, folder, &p.planned_name, &full) {
                         Ok(id) => id,
                         Err(e) => {
@@ -829,7 +838,10 @@ pub fn undo_copy(db: &Db, batch_id: i64) -> Result<Outcome> {
                         artifact.path
                     )));
                 }
-                if crate::cull::hash::full(&path)? != artifact.sha256 {
+                if crate::cull::hash::full(&path)
+                    .io_context("되돌릴 사본의 해시를 읽다가 실패했습니다")?
+                    != artifact.sha256
+                {
                     return Err(DbError::Invalid(format!(
                         "사본 내용이 작업 뒤 바뀌어 지우지 않았습니다: {}",
                         artifact.path
@@ -850,7 +862,9 @@ pub fn undo_copy(db: &Db, batch_id: i64) -> Result<Outcome> {
                     for (original, staged_path) in staged.iter().rev() {
                         let _ = std::fs::rename(staged_path, original);
                     }
-                    return Err(error.into());
+                    return Err(DbError::Invalid(format!(
+                        "되돌릴 사본을 임시 위치로 옮기다가 실패했습니다: {error}"
+                    )));
                 }
                 staged.push((path, temp));
             }

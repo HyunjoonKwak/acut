@@ -29,7 +29,7 @@ pub enum DbError {
     #[error("데이터베이스 폴더를 만들 수 없습니다: {0}")]
     CreateDir(std::io::Error),
     #[error("파일 시스템 오류: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
     /// 값이 규칙에 안 맞아 DB까지 갈 것도 없는 경우 (빈 이름 따위).
     /// 그대로 사용자에게 보여 줄 문장이어야 한다.
     #[error("{0}")]
@@ -37,6 +37,16 @@ pub enum DbError {
 }
 
 pub type Result<T> = std::result::Result<T, DbError>;
+
+pub trait IoContext<T> {
+    fn io_context(self, operation: &str) -> Result<T>;
+}
+
+impl<T> IoContext<T> for std::io::Result<T> {
+    fn io_context(self, operation: &str) -> Result<T> {
+        self.map_err(|error| DbError::Invalid(format!("{operation}: {error}")))
+    }
+}
 
 pub struct Db {
     path: PathBuf,
@@ -284,7 +294,7 @@ mod tests {
 
     #[test]
     fn filesystem_errors_are_not_mislabelled_as_database_directory_failures() {
-        let io = DbError::from(std::io::Error::new(
+        let io = DbError::Io(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "fixture denied",
         ));

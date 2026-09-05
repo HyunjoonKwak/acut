@@ -292,9 +292,16 @@ pub fn move_folder(
         for (id, rel) in &rows {
             tx.execute(
                 "UPDATE folders SET volume_uuid = ?2, library_id = ?3, rel_path = ?4, area = ?5,
-                        parent_id = CASE WHEN id = ?6 THEN NULL ELSE parent_id END
+                        parent_id = CASE WHEN rel_path = ?6 THEN NULL ELSE parent_id END
                   WHERE id = ?1",
-                rusqlite::params![id, dst_lib.volume_uuid, dst_lib.id, new_rel(rel), dst_lib.area, f.id],
+                rusqlite::params![
+                    id,
+                    dst_lib.volume_uuid,
+                    dst_lib.id,
+                    new_rel(rel),
+                    dst_lib.area,
+                    f.rel_path
+                ],
             )?;
         }
         Ok(())

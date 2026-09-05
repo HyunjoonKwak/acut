@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn journal_keeps_the_destination_volume_apart_from_the_source() {
-        let (_d, db, _lib, ids) = setup();
+        let (_dir, db, _lib, ids) = setup();
         let batch = crate::ops::open_batch(&db, "move", "볼륨 넘어가기").unwrap();
         crate::ops::record_to(
             &db,
@@ -628,9 +628,9 @@ mod tests {
 
     #[test]
     fn a_permanent_delete_cannot_be_undone() {
-        let (_d, db, _lib, ids) = setup();
+        let (dir, db, _lib, ids) = setup();
         trash::to_trash(&db, &ids[..1], "휴지통으로").unwrap();
-        let e = trash::empty(&db, &ids[..1]).unwrap();
+        let e = trash::empty(&db, dir.path(), &ids[..1]).unwrap();
         let u = undo(&db, e.batch_id).unwrap();
         assert_eq!(u.moved, 0);
         assert!(u
@@ -756,10 +756,10 @@ mod tests {
     /// 휴지통 화면에서 영구히 비운 «휴지통으로» 묶음 — «이미 되돌렸다»가 아니라 «지웠다»
     #[test]
     fn an_emptied_trash_batch_says_it_was_deleted_not_undone() {
-        let (_dir, db, _lib, ids) = setup();
+        let (dir, db, _lib, ids) = setup();
         let t = trash::to_trash(&db, &ids, "치우기").unwrap();
         assert_eq!(t.moved, 2);
-        let e = trash::empty(&db, &ids).unwrap();
+        let e = trash::empty(&db, dir.path(), &ids).unwrap();
         assert_eq!(e.moved, 2, "{:?}", e.first_error);
         recent(&db, 10).unwrap();
         let u = undo(&db, t.batch_id).unwrap();

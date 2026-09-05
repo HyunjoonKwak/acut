@@ -42,13 +42,15 @@ export default function EventDiscoveryDialog({
   const [error, setError] = useState<string | null>(null);
 
   const search = async () => {
+    const safeGapMinutes = Math.max(1, Math.trunc(Number.isFinite(gapMinutes) ? gapMinutes : 1));
+    const safeMinCount = Math.max(2, Math.trunc(Number.isFinite(minCount) ? minCount : 2));
     setBusy(true);
     setError(null);
     try {
       const found = await invoke<Candidate[]>("event_candidates", {
         libraryId,
-        gapMinutes,
-        minCount,
+        gapMinutes: safeGapMinutes,
+        minCount: safeMinCount,
       });
       setCandidates(found);
       setExpanded(new Set());
@@ -90,7 +92,7 @@ export default function EventDiscoveryDialog({
             이벤트 자동 발견
           </h2>
           <p className="mt-1 text-[12.5px] text-fg-mute">
-            {libraryName} 작업대의 사진만 묶습니다. 후보 확인은 파일을 바꾸지 않으며,
+            「{libraryName}」의 사진만 묶습니다. 후보 확인은 파일을 바꾸지 않으며,
             사진별로 제외한 뒤 기존 정리 화면에서 최종 목적지를 확인합니다.
           </p>
           <div className="mt-3 flex flex-wrap items-end gap-3">

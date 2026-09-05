@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { useSelection } from "./selectionStore.ts";
 import { useUi } from "./uiStore.ts";
@@ -7,6 +7,10 @@ const reset = () =>
   useSelection.setState({ selected: null, picked: new Set() });
 const order = [10, 20, 30, 40, 50];
 const S = () => useSelection.getState();
+
+afterEach(() => {
+  useUi.setState({ organizing: false, organizeSelection: null });
+});
 
 test("그냥 누르면 그것 하나만", () => {
   reset();
@@ -93,6 +97,11 @@ test("이벤트 자동 발견의 정리 대상은 그리드 쪽 전환으로 잘
   S().setPicked([10, 20, 30]);
   S().focusWithin([10]);
   assert.deepEqual([...S().picked], [10], "보이는 선택은 안전을 위해 현재 쪽으로 줄인다");
+  assert.deepEqual(
+    useUi.getState().organizeSelection?.ids,
+    [10, 20, 30],
+    "그리드에서 빠진 사진도 고정 정리 대상에는 남는다",
+  );
   assert.deepEqual(useUi.getState().organizeSelection, {
     ids: [10, 20, 30],
     libraryId: 7,

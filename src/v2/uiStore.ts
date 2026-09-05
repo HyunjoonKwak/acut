@@ -1,6 +1,5 @@
 import { create } from "zustand";
-import type { MenuAt } from "./ContextMenu";
-import type { FolderOperationTarget } from "./FolderOperationDialog";
+import type { FolderOperationTarget, MenuAt } from "./uiTypes";
 
 /**
  * 위에 무엇이 떠 있나 — 뷰어·상자·메뉴.

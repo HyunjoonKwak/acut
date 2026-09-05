@@ -164,6 +164,7 @@ export default function ScrollBar({
         ref={colRef}
         role="slider"
         tabIndex={empty ? -1 : 0}
+        aria-disabled={empty ? "true" : undefined}
         aria-label="사진 촬영일 타임라인"
         aria-orientation="vertical"
         aria-valuemin={0}

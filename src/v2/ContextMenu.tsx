@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import { restoreFocusIfUnclaimed } from "./focus";
 
+export type { MenuAt } from "./uiTypes";
+import type { MenuAt } from "./uiTypes";
+
 export type MenuItem =
   | {
       kind: "item";
@@ -17,8 +20,6 @@ const MENU_W = 180;
 const ROW_H = 30;
 const SEP_H = 9;
 const PAD_V = 4;
-
-export type MenuAt = { x: number; y: number } | null;
 
 /**
  * 우클릭 메뉴.

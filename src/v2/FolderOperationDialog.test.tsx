@@ -68,4 +68,60 @@ describe("FolderOperationDialog", () => {
     expect(onChanged).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("실행 호출이 실패하면 오류를 보여 주고 닫지 않는다", async () => {
+    invoke
+      .mockResolvedValueOnce({
+        source: "2026/여행", destination: "2026/여행2", planned_name: "여행2",
+        conflict: "none", action: "run", files: 20, directories: 3,
+        bytes: 2048, cross_volume: false, drive_sync_warning: false,
+      })
+      .mockRejectedValueOnce(new Error("디스크 연결 끊김"));
+    const onChanged = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <FolderOperationDialog
+        target={{ action: "rename", sourceLibraryId: 1, sourceDir: "2026/여행", sourceName: "여행" }}
+        onChanged={onChanged}
+        onClose={onClose}
+      />,
+    );
+    await userEvent.clear(screen.getByLabelText("폴더 이름"));
+    await userEvent.type(screen.getByLabelText("폴더 이름"), "여행2");
+    await userEvent.click(screen.getByRole("button", { name: "충돌 미리보기" }));
+    await userEvent.click(await screen.findByRole("button", { name: "이름 변경 실행" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("디스크 연결 끊김");
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("실행 성공 시 변경을 알린 뒤 닫는다", async () => {
+    invoke
+      .mockResolvedValueOnce({
+        source: "2026/여행", destination: "2026/여행2", planned_name: "여행2",
+        conflict: "none", action: "run", files: 20, directories: 3,
+        bytes: 2048, cross_volume: false, drive_sync_warning: false,
+      })
+      .mockResolvedValueOnce({
+        batch_id: 1, completed: 1, failed: 0, files: 20, directories: 3,
+        bytes: 2048, first_error: null, manifest_sha256: "sha256",
+      });
+    const calls: string[] = [];
+    const onChanged = vi.fn(async () => { calls.push("changed"); });
+    const onClose = vi.fn(() => { calls.push("closed"); });
+    render(
+      <FolderOperationDialog
+        target={{ action: "rename", sourceLibraryId: 1, sourceDir: "2026/여행", sourceName: "여행" }}
+        onChanged={onChanged}
+        onClose={onClose}
+      />,
+    );
+    await userEvent.clear(screen.getByLabelText("폴더 이름"));
+    await userEvent.type(screen.getByLabelText("폴더 이름"), "여행2");
+    await userEvent.click(screen.getByRole("button", { name: "충돌 미리보기" }));
+    await userEvent.click(await screen.findByRole("button", { name: "이름 변경 실행" }));
+    expect(onChanged).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(calls).toEqual(["changed", "closed"]);
+  });
 });

@@ -3,15 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { useData } from "./dataStore";
 import { areaLabel } from "./areaItems";
 import { useModalFocus } from "./focus";
+import type { FolderAction, FolderOperationTarget } from "./uiTypes";
 
-export type FolderAction = "create" | "rename" | "move" | "copy" | "trash";
-
-export type FolderOperationTarget = {
-  action: FolderAction;
-  sourceLibraryId: number;
-  sourceDir: string;
-  sourceName: string;
-};
+export type { FolderAction, FolderOperationTarget } from "./uiTypes";
 
 type Policy = "skip" | "rename";
 type Preview = {
@@ -123,6 +117,7 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
     if (!preview || preview.action === "skip") return;
     setBusy(true);
     setError(null);
+    let shouldClose = false;
     try {
       const result = await invoke<Result>("folder_operation_execute", {
         request,
@@ -137,13 +132,14 @@ export default function FolderOperationDialog({ target, onChanged, onClose }: {
               : "폴더 작업 일부를 완료하지 못했습니다"),
         );
       } else {
-        onClose();
+        shouldClose = true;
       }
     } catch (caught) {
       setError(String(caught));
     } finally {
       setBusy(false);
     }
+    if (shouldClose) onClose();
   };
 
   const needsDestination = action === "move" || action === "copy";

@@ -84,6 +84,7 @@ export default function TransferDialog({ ids, sourceLibraryId, onChanged, onClos
   const execute = async () => {
     if (!preview || destinationLibraryId === null) return;
     setBusy(true); setError(null);
+    let shouldClose = false;
     try {
       const out = await invoke<Result>("transfer_execute", {
         request,
@@ -98,10 +99,11 @@ export default function TransferDialog({ ids, sourceLibraryId, onChanged, onClos
           : `${out.skipped}장을 충돌 때문에 건너뛰었습니다.`;
         setError(`${reason} 미리보기와 충돌 정책을 확인하세요.`);
       } else {
-        onClose();
+        shouldClose = true;
       }
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
+    if (shouldClose) onClose();
   };
 
   const conflicts = preview?.items.filter((i) => i.conflict !== "none").length ?? 0;

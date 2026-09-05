@@ -117,13 +117,22 @@ fn changed_since_recorded(path: &std::path::Path, row: &Row) -> bool {
 
 /// 배치 하나를 되돌린다.
 pub fn undo(db: &Db, batch_id: i64) -> Result<Outcome> {
-    let (kind, undone): (String, Option<i64>) = db.read(|c| {
+    let found: Option<(String, Option<i64>)> = db.read(|c| {
+        use rusqlite::OptionalExtension;
         c.query_row(
             "SELECT kind, undone_at FROM batches WHERE id = ?1",
             [batch_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
+        .optional()
     })?;
+    let Some((kind, undone)) = found else {
+        return Ok(Outcome {
+            batch_id,
+            first_error: Some("없는 작업입니다. 목록을 다시 읽으세요".into()),
+            ..Default::default()
+        });
+    };
     if undone.is_some() {
         // «휴지통으로» 묶음의 사진을 휴지통 화면에서 영구히 비우면 `recent()` 가 그 묶음도
         // 닫는다. 그건 되돌린 게 아니라 지운 것이다 — 남은 행이 없으면 그렇게 말한다.

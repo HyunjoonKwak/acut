@@ -911,6 +911,8 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
         Action::Trash => "folder_trash",
     };
     let batch = super::open_batch(db, kind, label)?;
+    // 작업은 끝났지만 사용자가 알아야 할 뒷정리 실패 — 결과의 first_error 로 보여 준다
+    let mut warning: Option<String> = None;
     let operation = (|| -> Result<Manifest> {
         match request.action {
             Action::Create => {
@@ -995,7 +997,18 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                     return Err(error);
                 }
                 if let Some(backup) = backup {
-                    let _ = remove_tree(&backup);
+                    if let Err(error) = remove_tree(&backup) {
+                        // 원본 전체가 든 숨은 폴더가 출발 디스크에 남는다 — 조용히 넘기면
+                        // 사용자는 공간이 왜 안 비는지 모른다
+                        log::warn!(
+                            "볼륨 간 이동 뒤 백업 정리 실패 {}: {error}",
+                            backup.display()
+                        );
+                        warning = Some(format!(
+                            "옮기기는 끝났지만 원본 쪽 임시 백업을 지우지 못했습니다: {} ({error}). Finder 에서 지워 주세요",
+                            backup.display()
+                        ));
+                    }
                 }
                 Ok(info.clone())
             }
@@ -1049,7 +1062,7 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<FolderOutcome>
                 files: info.files,
                 directories: info.directories,
                 bytes: info.bytes,
-                first_error: None,
+                first_error: warning,
                 manifest_sha256: Some(info.sha256).filter(|digest| !digest.is_empty()),
             })
         }
@@ -1188,6 +1201,12 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                     .map_err(|_| bad("복원 경로 오류"))?
                     .to_string_lossy()
                     .into_owned();
+                if restored_rel != row.source_path {
+                    // 원래 자리가 차 있어 옆 이름으로 돌아왔다 — «되돌렸다»만 보이면 사용자는 모른다
+                    out.first_error = Some(format!(
+                        "원래 자리에 같은 이름이 있어 «{restored_rel}» 로 되돌렸습니다"
+                    ));
+                }
                 if source_lib.volume_uuid == destination_lib.volume_uuid {
                     if let Some(p) = target.parent() {
                         std::fs::create_dir_all(p)?;
@@ -1251,6 +1270,12 @@ pub fn undo(db: &Db, batch: i64) -> Result<Outcome> {
                     .map_err(|_| bad("복원 경로 오류"))?
                     .to_string_lossy()
                     .into_owned();
+                if restored_rel != row.source_path {
+                    // 원래 자리가 차 있어 옆 이름으로 돌아왔다 — «되돌렸다»만 보이면 사용자는 모른다
+                    out.first_error = Some(format!(
+                        "원래 자리에 같은 이름이 있어 «{restored_rel}» 로 되돌렸습니다"
+                    ));
+                }
                 let moved_in_db = restored_rel != row.source_path;
                 if moved_in_db {
                     if let Err(error) = move_db_rows(

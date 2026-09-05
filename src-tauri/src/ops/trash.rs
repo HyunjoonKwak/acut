@@ -287,12 +287,20 @@ pub fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
             copy_mtime(from, &temp);
             std::fs::File::open(&temp)?.sync_all()?;
             std::fs::rename(&temp, to)?;
-            sync_parent(to)?;
+            if let Err(error) = sync_parent(to) {
+                // 사본이 목적지 이름으로 남은 채 실패를 돌려주면 원본과 사본이 둘 다 남는다
+                let _ = std::fs::remove_file(to);
+                return Err(error);
+            }
             if let Err(error) = std::fs::remove_file(from) {
                 let _ = std::fs::remove_file(to);
                 return Err(error);
             }
-            sync_parent(from)?;
+            // 원본은 이미 지워졌다 — 여기서 실패를 돌려주면 호출자가 DB 를 갱신하지 않아
+            // 파일은 목적지에, 행은 출발지에 남는다. 동기화 실패는 기록만 한다.
+            if let Err(error) = sync_parent(from) {
+                log::warn!("원본 폴더 동기화 실패 {}: {error}", from.display());
+            }
             Ok(())
         }
         Err(error) => Err(error),
@@ -543,6 +551,15 @@ pub fn restore(db: &Db, ids: &[i64]) -> Result<Outcome> {
         };
 
         let src = lib_dir.join(tp);
+        // `empty()` 와 같은 경계: trash_path 가 휴지통 밖(다른 사진, 링크 너머)을 가리키면
+        // 그 파일을 «되돌린다»며 옮기면 안 된다
+        if !is_inside(&src, &trash_root(&lib_dir)) {
+            out.failed += 1;
+            out.failed_ids.push(it.id);
+            out.first_error
+                .get_or_insert("휴지통 밖의 경로는 되돌리지 않습니다".into());
+            continue;
+        }
         let dest = free_path(mount.join(&it.vol_rel));
         match move_with_sidecars(&src, &dest) {
             Ok(()) => {
@@ -840,6 +857,40 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rows, 1);
+    }
+
+    /// trash_path 가 휴지통 밖의 살아 있는 사진을 가리켜도 그 파일을 옮기지 않는다
+    #[test]
+    fn restore_refuses_a_trash_path_outside_the_trash() {
+        let (dir, db, ids) = setup();
+        let a = dir.path().join("2020/여행");
+        to_trash(&db, &ids[..1], "치우기").unwrap();
+        db.write(|c| {
+            c.execute(
+                "UPDATE files SET trash_path='2020/여행/20200101_120001.jpg' WHERE id=?1",
+                [ids[0]],
+            )
+        })
+        .unwrap();
+        let out = restore(&db, &ids[..1]).unwrap();
+        assert_eq!((out.moved, out.failed), (0, 1), "{:?}", out.first_error);
+        assert!(out
+            .first_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("휴지통 밖"));
+        assert!(
+            a.join("20200101_120001.jpg").is_file(),
+            "살아 있는 사진은 그대로다"
+        );
+        let trashed: Option<i64> = db
+            .read(|c| {
+                c.query_row("SELECT trashed_at FROM files WHERE id=?1", [ids[0]], |r| {
+                    r.get(0)
+                })
+            })
+            .unwrap();
+        assert!(trashed.is_some());
     }
 
     /// 되돌릴 이름의 행이 이미 있으면(파일은 없고 행만 남은 상태) 디스크만 돌아오면 안 된다

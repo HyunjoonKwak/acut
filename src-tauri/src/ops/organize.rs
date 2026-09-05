@@ -6,7 +6,7 @@
 //! 옮긴 뒤 `files.folder_id`를 새 폴더로 바꾼다. 재스캔을 기다리지 않는다 —
 //! 옮기자마자 그리드에서 새 폴더로 보여야 손에 맞는다.
 
-use crate::db::conn::{Db, Result};
+use crate::db::conn::{Db, DbError, Result};
 use crate::db::libraries;
 use crate::ops::trash::{free_path, move_with_sidecars, Outcome};
 
@@ -69,21 +69,30 @@ fn ensure_folder(db: &Db, library_id: i64, vol_rel_dir: &str, area: i32) -> Resu
             |r| r.get(0),
         )
     })?;
+    // 같은 볼륨에 라이브러리가 겹쳐 등록돼 있으면 그 경로의 행이 이미 다른
+    // 라이브러리 소유일 수 있다. 그때 library_id 를 덮어쓰면 그쪽 트리에서 폴더가
+    // 사라진다 — 빼앗지 않고 거절한다 (2차 리뷰 후속)
     db.write(|c| {
         c.execute(
             "INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,scanned_at)
              VALUES(?1,?2,?3,?4,?5,strftime('%s','now'))
-             ON CONFLICT(volume_uuid,rel_path) DO UPDATE SET library_id=excluded.library_id",
+             ON CONFLICT(volume_uuid,rel_path) DO NOTHING",
             rusqlite::params![uuid, library_id, vol_rel_dir, name, area],
         )
     })?;
-    db.read(|c| {
+    let (id, owner): (i64, i64) = db.read(|c| {
         c.query_row(
-            "SELECT id FROM folders WHERE volume_uuid=?1 AND rel_path=?2",
+            "SELECT id, library_id FROM folders WHERE volume_uuid=?1 AND rel_path=?2",
             rusqlite::params![uuid, vol_rel_dir],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
-    })
+    })?;
+    if owner != library_id {
+        return Err(DbError::Invalid(
+            "목적지 폴더가 이미 다른 라이브러리에 속해 있습니다".into(),
+        ));
+    }
+    db.read(|c| c.query_row("SELECT id FROM folders WHERE id=?1", [id], |r| r.get(0)))
 }
 
 /// 고른 사진을 목적지 폴더로 옮긴다.
@@ -421,6 +430,46 @@ mod tests {
 
         // DB도 새 폴더를 가리켜야 한다 — 재스캔을 기다리지 않는다
         assert_eq!(lib_rel_of(&db, ids[0]), "2024/2024-08-27 거제통영 가족여행");
+    }
+
+    /// 같은 볼륨에 겹쳐 등록된 다른 라이브러리의 폴더 행을 빼앗지 않는다
+    #[test]
+    fn organizing_into_a_folder_owned_by_another_library_is_refused() {
+        let (dir, db, lib, ids) = setup();
+        // 겹치는 등록은 libraries::add 가 막는다. 같은 볼륨의 다른 라이브러리 소유로 남은
+        // (옛 등록의) 폴더 행을 흉내 낸다.
+        let other_root = tempfile::tempdir().unwrap();
+        let other = libraries::add(&db, other_root.path(), 1).unwrap();
+        let mine = libraries::get(&db, lib).unwrap().unwrap();
+        let vol_rel = crate::media::cache::rel_path(&mine.rel_path, "2024/행사");
+        db.write(|c| {
+            c.execute(
+                "INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,scanned_at)
+                 VALUES(?1,?2,?3,'행사',1,-1)",
+                rusqlite::params![mine.volume_uuid, other.id, vol_rel],
+            )
+        })
+        .unwrap();
+        let dest = Dest {
+            library_id: lib,
+            rel_dir: "2024/행사".into(),
+        };
+        let error = move_to(&db, &ids, &dest, "정리").unwrap_err().to_string();
+        assert!(error.contains("다른 라이브러리"), "{error}");
+        assert!(
+            dir.path().join("작업대/20240827_120000.jpg").is_file(),
+            "아무것도 옮기지 않는다"
+        );
+        let owner: i64 = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT library_id FROM folders WHERE rel_path=?1",
+                    [vol_rel],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(owner, other.id, "행의 소유가 바뀌지 않는다");
     }
 
     /// 같은 이벤트로 다시 «정리»해도 제자리 사진에 번호가 붙으면 안 된다

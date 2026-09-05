@@ -253,8 +253,28 @@ pub fn preview(db: &Db, request: &Request) -> Result<Preview> {
                 continue;
             }
         };
+        // 읽을 수 없는 파일 하나가 미리보기 전체를 막으면 안 된다 — 그 항목만 표시하고
+        // 실행에서 제 오류로 실패하게 둔다 (source_missing 과 같은 규칙)
         let source_hash = if publish {
-            Some(hash(&source_path)?)
+            match hash(&source_path) {
+                Ok(digest) => Some(digest),
+                Err(_) => {
+                    out.push(PreviewItem {
+                        id: it.id,
+                        source: it.vol_rel,
+                        destination: if rel.is_empty() {
+                            it.name.clone()
+                        } else {
+                            format!("{rel}/{}", it.name)
+                        },
+                        planned_name: it.name,
+                        conflict: "source_unreadable".into(),
+                        action: "run".into(),
+                        source_sha256: None,
+                    });
+                    continue;
+                }
+            }
         } else {
             None
         };
@@ -416,7 +436,12 @@ fn copy_verified(
     let dest_hash = crate::cull::hash::full(&temp)?;
     if source_hash != dest_hash {
         let _ = std::fs::remove_file(&temp);
-        return Err(std::io::Error::other("사본 SHA-256이 원본과 다릅니다"));
+        // 계획 해시와 다르면 «사본이 틀렸다»가 아니라 «원본이 그새 바뀌었다»는 뜻이다
+        return Err(std::io::Error::other(if expected_source_hash.is_some() {
+            "미리보기 뒤 원본 내용이 바뀌었습니다. 다시 미리보기 하세요"
+        } else {
+            "사본 SHA-256이 원본과 다릅니다"
+        }));
     }
     copy_mtime(from, &temp);
     std::fs::File::open(&temp)?.sync_all()?;
@@ -472,14 +497,21 @@ fn copy_with_sidecars(
 fn ensure_folder(db: &Db, lib: &crate::db::libraries::Library, rel: &str) -> Result<i64> {
     let vol_rel = crate::media::cache::rel_path(&lib.rel_path, rel);
     let name = rel.rsplit('/').next().unwrap_or(&lib.name);
-    db.write(|c|c.execute("INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,scanned_at) VALUES(?1,?2,?3,?4,?5,strftime('%s','now')) ON CONFLICT(volume_uuid,rel_path) DO UPDATE SET library_id=excluded.library_id",rusqlite::params![lib.volume_uuid,lib.id,vol_rel,name,lib.area]))?;
-    db.read(|c| {
+    // 겹쳐 등록된 다른 라이브러리의 행은 빼앗지 않는다 — organize::ensure_folder 와 같은 규칙
+    db.write(|c|c.execute("INSERT INTO folders(volume_uuid,library_id,rel_path,name,area,scanned_at) VALUES(?1,?2,?3,?4,?5,strftime('%s','now')) ON CONFLICT(volume_uuid,rel_path) DO NOTHING",rusqlite::params![lib.volume_uuid,lib.id,vol_rel,name,lib.area]))?;
+    let (id, owner): (i64, i64) = db.read(|c| {
         c.query_row(
-            "SELECT id FROM folders WHERE volume_uuid=?1 AND rel_path=?2",
+            "SELECT id, library_id FROM folders WHERE volume_uuid=?1 AND rel_path=?2",
             rusqlite::params![lib.volume_uuid, vol_rel],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
-    })
+    })?;
+    if owner != lib.id {
+        return Err(DbError::Invalid(
+            "목적지 폴더가 이미 다른 라이브러리에 속해 있습니다".into(),
+        ));
+    }
+    Ok(id)
 }
 
 pub(crate) fn clone_row(db: &Db, source: i64, folder: i64, name: &str, hash: &str) -> Result<i64> {
@@ -521,8 +553,9 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
         ));
     }
     let (lib, rel, dir) = dest(db, request)?;
-    std::fs::create_dir_all(&dir)?;
-    let folder = ensure_folder(db, &lib, &rel)?;
+    // 목적지 폴더는 실제로 옮길 사진이 있을 때 만든다 — 전부 건너뛰는 실행이 빈 폴더를
+    // 디스크에 남기면 안 된다
+    let mut folder: Option<i64> = None;
     let kind = if plan.publish {
         "publish"
     } else if request.mode == Mode::Copy {
@@ -558,6 +591,15 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                     p.planned_name
                 )));
             }
+            let folder = match folder {
+                Some(folder) => folder,
+                None => {
+                    std::fs::create_dir_all(&dir)?;
+                    let made = ensure_folder(db, &lib, &rel)?;
+                    folder = Some(made);
+                    made
+                }
+            };
             let dest_vol_rel = crate::media::cache::rel_path(
                 &crate::media::cache::rel_path(&lib.rel_path, &rel),
                 &p.planned_name,
@@ -607,17 +649,9 @@ pub fn execute(db: &Db, request: &Request, label: &str) -> Result<TransferOutcom
                     }
                 }
                 Mode::Copy => {
+                    // 계획 해시를 넘기면 copy_verified 가 사본과 대조해 원본 변경을 잡는다
                     let (full, copied_sidecars) =
                         copy_with_sidecars(&source, &target, p.source_sha256.as_deref())?;
-                    if p.source_sha256.as_deref().is_some_and(|h| h != full) {
-                        let _ = std::fs::remove_file(&target);
-                        for sidecar in &copied_sidecars {
-                            let _ = std::fs::remove_file(&sidecar.target);
-                        }
-                        return Err(DbError::Invalid(
-                            "미리보기 뒤 원본 내용이 바뀌었습니다".into(),
-                        ));
-                    }
                     let new_id = match clone_row(db, it.id, folder, &p.planned_name, &full) {
                         Ok(id) => id,
                         Err(e) => {

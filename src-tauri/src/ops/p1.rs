@@ -277,7 +277,15 @@ pub fn undo_folder_audit(db: &Db, parent: i64) -> Result<crate::ops::trash::Outc
         ..Default::default()
     };
     for child in children {
-        let child_out = folder::undo(db, child)?;
+        // 한 자식이 실패해도 앞서 되돌린 집계를 버리지 않는다 — 재시도는 남은 자식만 돈다
+        let child_out = match folder::undo(db, child) {
+            Ok(child_out) => child_out,
+            Err(error) => {
+                out.failed += 1;
+                out.first_error.get_or_insert(error.to_string());
+                continue;
+            }
+        };
         out.moved += child_out.moved;
         out.failed += child_out.failed;
         out.bytes += child_out.bytes;

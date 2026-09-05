@@ -194,7 +194,10 @@ export function useOps(cb: {
       if (r.failed === 0)
         toast(
           r.moved > 0
-            ? `«${last.label ?? "최근 작업"}» 되돌렸습니다 — ${r.moved.toLocaleString()}장`
+            ? `«${last.label ?? "최근 작업"}» 되돌렸습니다 — ${r.moved.toLocaleString()}장${
+                // 성공했어도 알아야 할 것(옆 이름으로 복원 등)은 first_error 로 온다
+                r.first_error ? ` · ${r.first_error}` : ""
+              }`
             : (r.first_error ?? "되돌릴 것이 없습니다"),
         );
       await after();

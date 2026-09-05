@@ -17,7 +17,8 @@ pub fn rename(db: &Db, id: i64, new_name: &str) -> Result<String> {
         return Err(DbError::Invalid("이름에 쓸 수 없는 글자가 있습니다".into()));
     }
 
-    let (uuid, rel_dir, old_name): (String, String, String) = db.read(|c| {
+    let found: Option<(String, String, String)> = db.read(|c| {
+        use rusqlite::OptionalExtension;
         c.query_row(
             "SELECT fo.volume_uuid, fo.rel_path, fi.name
                FROM files fi JOIN folders fo ON fo.id = fi.folder_id
@@ -25,7 +26,13 @@ pub fn rename(db: &Db, id: i64, new_name: &str) -> Result<String> {
             [id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
+        .optional()
     })?;
+    let Some((uuid, rel_dir, old_name)) = found else {
+        return Err(DbError::Invalid(
+            "사진을 찾을 수 없습니다 — 휴지통에 있거나 이미 지워졌습니다".into(),
+        ));
+    };
     if old_name == new_name {
         return Ok(new_name);
     }

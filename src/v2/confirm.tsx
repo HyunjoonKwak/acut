@@ -64,6 +64,9 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
             onKeyDown={(e) => {
               // 확인창 뒤의 격자 단축키(P/X/별점)가 함께 실행되면 안 된다.
               e.stopPropagation();
+              // Enter 는 일부러 듣지 않는다 — 초점 있는 단추가 브라우저 기본으로 눌린다
+              // (확인 단추가 첫 초점, Tab 으로 취소로 옮기면 취소). «항상 확인»은
+              // 영구 삭제 같은 물음에서 실수 여지가 커서 뺐다 (2026-09-05 결정).
               if (e.key === "Escape") close(false);
               if (e.key !== "Tab") return;
               const focusable = Array.from(

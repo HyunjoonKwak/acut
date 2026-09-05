@@ -180,12 +180,11 @@ fn append_complete_date_ifds(
         .iter()
         .find(|entry| u16_at(*entry, 0, endian) == Some(0x8769))
         .and_then(|entry| u32_at(entry, 8, endian));
-    let (mut exif, next_exif) = match exif_pointer {
-        Some(relative) => {
-            ifd_snapshot(bytes, tiff, relative, endian, segment_end).ok_or(WriteError::Metadata)?
-        }
-        None => (Vec::new(), 0),
-    };
+    // Exif IFD 포인터가 segment 밖을 가리키면 «없는 것»으로 보고 새로 만든다 —
+    // 어차피 읽을 수 없던 항목이고, 거절하면 이 파일은 영영 교정할 수 없다
+    let (mut exif, next_exif) = exif_pointer
+        .and_then(|relative| ifd_snapshot(bytes, tiff, relative, endian, segment_end))
+        .unwrap_or((Vec::new(), 0));
 
     ifd0.retain(|entry| !matches!(u16_at(entry, 0, endian), Some(0x0132) | Some(0x8769)));
     exif.retain(|entry| !matches!(u16_at(entry, 0, endian), Some(0x9003) | Some(0x9004)));
@@ -193,8 +192,11 @@ fn append_complete_date_ifds(
         return Err(WriteError::Metadata);
     }
 
-    let base = u32::try_from(segment_end.checked_sub(tiff).ok_or(WriteError::Metadata)?)
-        .map_err(|_| WriteError::Metadata)?;
+    // TIFF 는 IFD 가 워드(2바이트) 경계에서 시작하길 요구한다. segment 길이가 홀수면
+    // 패딩 한 바이트를 먼저 붙인다.
+    let raw_base = segment_end.checked_sub(tiff).ok_or(WriteError::Metadata)?;
+    let pad = raw_base % 2;
+    let base = u32::try_from(raw_base + pad).map_err(|_| WriteError::Metadata)?;
     let ifd0_len = 2_usize
         .checked_add(
             (ifd0.len() + 2)
@@ -225,7 +227,8 @@ fn append_complete_date_ifds(
     exif.push(ascii_entry(0x9003, date_original, endian));
     exif.push(ascii_entry(0x9004, date_digitized, endian));
 
-    let mut appended = Vec::with_capacity(ifd0_len + exif_len + 60);
+    let mut appended = Vec::with_capacity(ifd0_len + exif_len + 61);
+    appended.resize(pad, 0);
     push_ifd(&mut appended, &mut ifd0, next_ifd, endian);
     push_ifd(&mut appended, &mut exif, next_exif, endian);
     appended.extend_from_slice(date);
@@ -598,15 +601,75 @@ mod tests {
         );
     }
 
+    /// segment 길이가 홀수인 JPEG 를 보완하면 새 IFD 는 짝수 offset 에서 시작한다
+    #[test]
+    fn completed_ifds_start_on_a_word_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("odd.jpg");
+        image::RgbImage::from_pixel(8, 8, image::Rgb([1, 2, 3]))
+            .save(&path)
+            .unwrap();
+        let first = crate::media::taken_at::civil_to_unix(2024, 1, 2, 3, 4, 5);
+        write_capture_time(&path, first).unwrap();
+
+        // DateTimeDigitized 를 지우고 segment 끝에 한 바이트를 덧붙여 길이를 홀수로 만든다
+        let mut bytes = std::fs::read(&path).unwrap();
+        let exif = bytes
+            .windows(6)
+            .position(|window| window == b"Exif\0\0")
+            .unwrap();
+        let cursor = exif - 4;
+        let tiff = exif + 6;
+        let ifd0 = ifd_entries(&bytes, tiff, 8, Endian::Big, bytes.len()).unwrap();
+        let exif_pointer = ifd0
+            .iter()
+            .find(|&&entry| u16_at(&bytes, entry, Endian::Big) == Some(0x8769))
+            .and_then(|&entry| u32_at(&bytes, entry + 8, Endian::Big))
+            .unwrap();
+        let exif_ifd = ifd_entries(&bytes, tiff, exif_pointer, Endian::Big, bytes.len()).unwrap();
+        let digitized = *exif_ifd
+            .iter()
+            .find(|&&entry| u16_at(&bytes, entry, Endian::Big) == Some(0x9004))
+            .unwrap();
+        bytes[digitized..digitized + 2].copy_from_slice(&0xa000_u16.to_be_bytes());
+        let segment_len = u16::from_be_bytes([bytes[cursor + 2], bytes[cursor + 3]]) as usize;
+        let segment_end = cursor + 2 + segment_len;
+        bytes.insert(segment_end, 0);
+        bytes[cursor + 2..cursor + 4].copy_from_slice(&((segment_len + 1) as u16).to_be_bytes());
+        assert_eq!(
+            (segment_end + 1 - tiff) % 2,
+            1,
+            "fixture 는 홀수 길이여야 한다"
+        );
+        std::fs::write(&path, &bytes).unwrap();
+
+        let second = first + 60;
+        write_capture_time(&path, second).unwrap();
+        let written = std::fs::read(&path).unwrap();
+        let tiff_at = written
+            .windows(6)
+            .position(|window| window == b"Exif\0\0")
+            .unwrap()
+            + 6;
+        let ifd0_relative = u32_at(&written, tiff_at + 4, Endian::Big).unwrap();
+        assert_eq!(ifd0_relative % 2, 0, "새 IFD0 은 워드 경계에서 시작한다");
+        assert_eq!(
+            crate::media::exif::read(&path).and_then(|meta| meta.taken_at),
+            Some(second)
+        );
+    }
+
     /// next 포인터 없이 segment 끝에서 끝나는 Exif IFD — 보완하면서 segment 밖의
     /// 다음 마커 바이트를 IFD 포인터로 옮겨 적으면 안 된다.
     #[test]
     fn completing_an_ifd_that_ends_flush_with_the_segment_does_not_read_past_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("flush.jpg");
-        image::RgbImage::from_fn(16, 16, |x, y| image::Rgb([(x * 9) as u8, (y * 3) as u8, 45]))
-            .save(&path)
-            .unwrap();
+        image::RgbImage::from_fn(16, 16, |x, y| {
+            image::Rgb([(x * 9) as u8, (y * 3) as u8, 45])
+        })
+        .save(&path)
+        .unwrap();
         let pixels = image::open(&path).unwrap().to_rgb8();
 
         // IFD0(DateTime, ExifIFD→78) · 문자열 둘 · Exif IFD(DateTimeOriginal 만, next 없음)
@@ -656,7 +719,8 @@ mod tests {
             .unwrap();
         let tiff_at = exif + 6;
         let ifd0_relative = u32_at(&written, tiff_at + 4, Endian::Big).unwrap();
-        let ifd0 = ifd_entries(&written, tiff_at, ifd0_relative, Endian::Big, written.len()).unwrap();
+        let ifd0 =
+            ifd_entries(&written, tiff_at, ifd0_relative, Endian::Big, written.len()).unwrap();
         let exif_relative = ifd0
             .iter()
             .find(|&&entry| u16_at(&written, entry, Endian::Big) == Some(0x8769))
@@ -666,7 +730,10 @@ mod tests {
             let start = tiff_at + relative as usize;
             let count = u16_at(&written, start, Endian::Big).unwrap() as usize;
             let next = u32_at(&written, start + 2 + count * 12, Endian::Big).unwrap();
-            assert_eq!(next, 0, "보완한 IFD의 next 포인터는 segment 밖 바이트가 아니라 0 이어야 한다");
+            assert_eq!(
+                next, 0,
+                "보완한 IFD의 next 포인터는 segment 밖 바이트가 아니라 0 이어야 한다"
+            );
         }
     }
 }
